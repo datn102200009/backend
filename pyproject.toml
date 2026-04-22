@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datn-backend"
+version = "0.1.0"
+description = "DATN Backend - Django RESTful API"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "DATN Team", email = "team@datn.local"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django :: 5.2",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[tool.black]
+line-length = 120
+target-version = ['py310', 'py311', 'py312', 'py313']
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | migrations
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip_glob = ["*/migrations/*", "*/venv/*"]
+known_first_party = ["apps", "datn_backend"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "datn_backend.settings.dev"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+python_classes = ["Test"]
+python_functions = ["test_"]
+addopts = "--cov=apps --cov-report=html --cov-report=term-missing"
+testpaths = ["apps"]

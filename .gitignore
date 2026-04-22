@@ -62,3 +62,4 @@ logs/
 
 # Ignore any other files that should not be committed
 document/
+.github/
