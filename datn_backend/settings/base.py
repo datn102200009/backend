@@ -28,6 +28,12 @@ INSTALLED_APPS = [
     "corsheaders",
     # Local apps
     "apps.common",
+    "apps.accounts",
+    "apps.master_data",
+    "apps.manufacturing",
+    "apps.inventory",
+    "apps.hrm",
+    "apps.finance",
 ]
 
 MIDDLEWARE = [
