@@ -184,3 +184,82 @@ class ModeOfPayment(BaseModel):
 
     def __str__(self):
         return self.name
+
+
+class WorkOrder(BaseModel):
+    """
+    Work Order / Manufacturing Order.
+    """
+
+    name = models.CharField(max_length=255, unique=True)
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    qty = models.DecimalField(max_digits=15, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("draft", "Draft"),
+            ("released", "Released"),
+            ("started", "Started"),
+            ("completed", "Completed"),
+            ("cancelled", "Cancelled"),
+        ],
+        default="draft",
+    )
+    planned_start_date = models.DateTimeField()
+    planned_end_date = models.DateTimeField()
+    description = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "work_order"
+        verbose_name = "Work Order"
+        verbose_name_plural = "Work Orders"
+
+    def __str__(self):
+        return self.name
+
+
+class BOM(BaseModel):
+    """
+    Bill of Materials (Định mức vật tư).
+    """
+
+    name = models.CharField(max_length=255, unique=True)
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("draft", "Draft"),
+            ("active", "Active"),
+            ("inactive", "Inactive"),
+        ],
+        default="draft",
+    )
+    description = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "bom"
+        verbose_name = "Bill of Materials"
+        verbose_name_plural = "Bills of Materials"
+
+    def __str__(self):
+        return self.name
+
+
+class BOMItem(BaseModel):
+    """
+    Item detail in BOM.
+    """
+
+    bom = models.ForeignKey(BOM, on_delete=models.CASCADE, related_name="items")
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    qty = models.DecimalField(max_digits=15, decimal_places=2)
+    uom = models.ForeignKey(UOM, on_delete=models.SET_NULL, null=True)
+
+    class Meta:
+        db_table = "bom_item"
+        verbose_name = "BOM Item"
+        verbose_name_plural = "BOM Items"
+        unique_together = ("bom", "item")
+
+    def __str__(self):
+        return f"{self.bom.name} - {self.item.item_code}"

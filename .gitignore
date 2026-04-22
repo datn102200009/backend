@@ -60,6 +60,10 @@ logs/
 .env
 .env.*.local
 
+# Test temp file
+.coverage
+htmlcov/
+
 # Ignore any other files that should not be committed
 document/
 .github/

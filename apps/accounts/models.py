@@ -76,6 +76,11 @@ class User(BaseModel):
     def __str__(self):
         return self.username
 
+    @property
+    def is_authenticated(self):
+        """Return True if user is authenticated (always True for User instances)."""
+        return True
+
 
 class SystemLog(BaseModel):
     """
