@@ -1,6 +1,7 @@
 """
 Test configuration for manufacturing app.
 """
+
 import pytest
 
 

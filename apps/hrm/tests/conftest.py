@@ -1,6 +1,7 @@
 """
 Test configuration for hrm app.
 """
+
 import pytest
 
 

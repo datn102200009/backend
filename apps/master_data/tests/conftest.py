@@ -1,6 +1,7 @@
 """
 Test configuration for master_data app.
 """
+
 import pytest
 
 

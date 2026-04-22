@@ -1,6 +1,7 @@
 """
 Test configuration for accounts app.
 """
+
 import pytest
 
 

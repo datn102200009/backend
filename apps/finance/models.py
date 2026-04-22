@@ -10,13 +10,9 @@ class SalarySlip(BaseModel):
     """
 
     name = models.CharField(max_length=255, unique=True)
-    employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE, related_name="salary_slips"
-    )
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="salary_slips")
     salary_period = models.CharField(max_length=10)  # Format: YYYY-MM
-    union_fee_2pct = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True
-    )
+    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     gross_pay = models.DecimalField(max_digits=15, decimal_places=2)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     net_pay = models.DecimalField(max_digits=15, decimal_places=2)
@@ -59,9 +55,7 @@ class TaxReport(BaseModel):
     period = models.CharField(max_length=10)  # Format: YYYY-MM or YYYY-Q1
     total_revenue = models.DecimalField(max_digits=18, decimal_places=2)
     tax_payable_amount = models.DecimalField(max_digits=18, decimal_places=2)
-    tax_paid_amount = models.DecimalField(
-        max_digits=18, decimal_places=2, default=0
-    )
+    tax_paid_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     due_date = models.DateField(null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
 
@@ -81,13 +75,9 @@ class TechnicalCertification(BaseModel):
     """
 
     cert_id = models.CharField(max_length=100, unique=True)
-    item = models.ForeignKey(
-        Item, on_delete=models.CASCADE, related_name="certifications"
-    )
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="certifications")
     cert_type = models.CharField(max_length=100)
-    assessment_fee = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True
-    )
+    assessment_fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     issue_date = models.DateField(auto_now_add=True)
     remarks = models.TextField(null=True, blank=True)

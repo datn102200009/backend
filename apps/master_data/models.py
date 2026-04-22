@@ -111,9 +111,7 @@ class Employee(BaseModel):
     employee_id = models.CharField(max_length=50, unique=True)
     full_name = models.CharField(max_length=255)
     department = models.CharField(max_length=255, null=True, blank=True)
-    salary_base = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True
-    )
+    salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     is_union_member = models.BooleanField(default=False)
     email = models.EmailField(null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
@@ -134,19 +132,11 @@ class Item(BaseModel):
 
     item_code = models.CharField(max_length=100, unique=True)
     item_name = models.CharField(max_length=255)
-    item_group = models.ForeignKey(
-        ItemGroup, on_delete=models.SET_NULL, null=True, blank=True
-    )
-    stock_uom = models.ForeignKey(
-        UOM, on_delete=models.SET_NULL, null=True, blank=True
-    )
+    item_group = models.ForeignKey(ItemGroup, on_delete=models.SET_NULL, null=True, blank=True)
+    stock_uom = models.ForeignKey(UOM, on_delete=models.SET_NULL, null=True, blank=True)
     hs_code = models.CharField(max_length=20, null=True, blank=True)
-    weight_kg = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True
-    )
-    recycling_coef_a = models.DecimalField(
-        max_digits=5, decimal_places=3, null=True, blank=True
-    )
+    weight_kg = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    recycling_coef_a = models.DecimalField(max_digits=5, decimal_places=3, null=True, blank=True)
     vat_group = models.CharField(max_length=50, null=True, blank=True)
     is_import = models.BooleanField(default=False)
     status = models.CharField(

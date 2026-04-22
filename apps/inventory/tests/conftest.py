@@ -1,6 +1,7 @@
 """
 Test configuration for inventory app.
 """
+
 import pytest
 
 

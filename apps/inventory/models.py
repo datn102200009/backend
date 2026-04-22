@@ -46,9 +46,7 @@ class StockEntryDetail(BaseModel):
     Details of items in a stock entry.
     """
 
-    parent = models.ForeignKey(
-        StockEntry, on_delete=models.CASCADE, related_name="details"
-    )
+    parent = models.ForeignKey(StockEntry, on_delete=models.CASCADE, related_name="details")
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
     quantity = models.DecimalField(max_digits=15, decimal_places=2)
     source_warehouse = models.ForeignKey(

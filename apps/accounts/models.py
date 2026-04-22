@@ -43,12 +43,8 @@ class RolePermission(BaseModel):
     Junction table for Role and Permission relationship.
     """
 
-    role = models.ForeignKey(
-        Role, on_delete=models.CASCADE, related_name="permissions"
-    )
-    permission = models.ForeignKey(
-        Permission, on_delete=models.CASCADE, related_name="roles"
-    )
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name="permissions")
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="roles")
 
     class Meta:
         db_table = "role_permission"
@@ -86,9 +82,7 @@ class SystemLog(BaseModel):
     Audit log for tracking system changes.
     """
 
-    user = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="logs"
-    )
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="logs")
     action = models.CharField(max_length=50)
     table_name = models.CharField(max_length=100)
     record_id = models.CharField(max_length=255)
@@ -111,9 +105,7 @@ class Notification(BaseModel):
     Notification model for user notifications.
     """
 
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="notifications"
-    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     title = models.CharField(max_length=255)
     content = models.TextField()
     is_read = models.BooleanField(default=False)

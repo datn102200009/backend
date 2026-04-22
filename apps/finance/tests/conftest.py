@@ -1,6 +1,7 @@
 """
 Test configuration for finance app.
 """
+
 import pytest
 
 
