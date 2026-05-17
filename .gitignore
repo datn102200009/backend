@@ -60,5 +60,19 @@ logs/
 .env
 .env.*.local
 
+# Test temp file
+.coverage
+htmlcov/
+
+
+# Cache and Temporary files
+.pytest_cache/
+.cache/
+.ruff_cache/
+*.sqlite3
+
 # Ignore any other files that should not be committed
 document/
+.github/
+
+setup/
