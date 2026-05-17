@@ -281,7 +281,7 @@ def work_order_create(
     user: User,
     name: str,
     bom_id: str,
-    quantity: int,
+    quantity: Decimal,
     source_warehouse_id: str,
     target_warehouse_id: str,
     production_warehouse_id: str,
@@ -382,7 +382,7 @@ def work_order_approve(
     details = []
     ledgers = []
     for bom_item in work_order.bom.items.all():
-        required_qty = bom_item.quantity * Decimal(str(work_order.quantity))
+        required_qty = bom_item.quantity * (Decimal(str(work_order.quantity)) / work_order.bom.quantity)
         details.append(
             StockEntryDetail(
                 parent=stock_entry,
@@ -475,7 +475,7 @@ def work_order_declare_production(
     ledgers = []
 
     for bom_item in work_order.bom.items.all():
-        consumed_qty = bom_item.quantity * produced_qty
+        consumed_qty = bom_item.quantity * (produced_qty / work_order.bom.quantity)
         details.append(
             StockEntryDetail(
                 parent=stock_entry,
@@ -517,7 +517,7 @@ def work_order_declare_production(
     StockEntryDetail.objects.bulk_create(details)
     StockLedger.objects.bulk_create(ledgers)
 
-    work_order.produced_qty += int(produced_qty)
+    work_order.produced_qty += Decimal(str(produced_qty))
     work_order.save()
 
     create_system_log(

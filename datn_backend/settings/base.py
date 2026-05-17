@@ -170,10 +170,11 @@ _cors_origins = config("CORS_ALLOWED_ORIGINS", default="").split(",")
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in _cors_origins if origin.strip()]
 
 # Allow all localhost ports for development
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://localhost:\d+$",
-    r"^http://127\.0\.0\.1:\d+$",
-]
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^http://localhost:\d+$",
+        r"^http://127\.0\.0\.1:\d+$",
+    ]
 
 CORS_ALLOW_CREDENTIALS = True
 

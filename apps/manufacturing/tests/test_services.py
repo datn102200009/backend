@@ -224,7 +224,7 @@ class TestWorkOrderServices:
             )
 
     def test_work_order_approve_success(self, production_user):
-        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
         item1 = ItemFactory()
         BOMItemFactory(parent=bom, item=item1, quantity=Decimal("2.0"))
 
@@ -250,7 +250,7 @@ class TestWorkOrderServices:
         trf_se = StockEntry.objects.filter(purpose="transfer", name__contains="RAW").first()
         assert trf_se is not None
         assert trf_se.details.count() == 1
-        assert trf_se.details.first().quantity == Decimal("20.0")  # 10 * 2.0
+        assert trf_se.details.first().quantity == Decimal("10.0")  # 2.0 * (10 / 2.0)
         assert trf_se.details.first().source_warehouse == source
         assert trf_se.details.first().target_warehouse == production
 
@@ -263,7 +263,7 @@ class TestWorkOrderServices:
             work_order_approve(user=production_user, work_order_id=str(wo.id))
 
     def test_work_order_declare_production_success(self, production_user):
-        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
         item1 = ItemFactory()
         BOMItemFactory(parent=bom, item=item1, quantity=Decimal("2.0"))
 
@@ -296,7 +296,7 @@ class TestWorkOrderServices:
         assert details.count() == 2
 
         consumption = details.get(item=item1)
-        assert consumption.quantity == Decimal("10.0")  # 5 * 2.0
+        assert consumption.quantity == Decimal("5.0")  # 2.0 * (5.0 / 2.0)
         assert consumption.source_warehouse == production
 
         receipt = details.get(item=bom.item)

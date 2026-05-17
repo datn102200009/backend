@@ -205,8 +205,8 @@ class WorkOrder(BaseModel):
         related_name="work_orders",
         db_column="production_item_id",
     )
-    quantity = models.IntegerField()
-    produced_qty = models.IntegerField(default=0)
+    quantity = models.DecimalField(max_digits=15, decimal_places=2)
+    produced_qty = models.DecimalField(max_digits=15, decimal_places=2, default=0.0)
     source_warehouse = models.ForeignKey(
         "Warehouse",
         on_delete=models.PROTECT,

@@ -34,10 +34,12 @@ def admin_user():
         "manufacturing.bom_create",
         "manufacturing.bom_update",
         "manufacturing.bom_delete",
+        "manufacturing.bom_view",
         "manufacturing.work_order_create",
         "manufacturing.work_order_approve",
         "manufacturing.work_order_declare",
         "manufacturing.work_order_complete",
+        "manufacturing.work_order_view",
     ]
     for code in permissions:
         perm = PermissionFactory(code=code)
@@ -59,10 +61,12 @@ def production_user():
         "manufacturing.bom_create",
         "manufacturing.bom_update",
         "manufacturing.bom_delete",
+        "manufacturing.bom_view",
         "manufacturing.work_order_create",
         "manufacturing.work_order_approve",
         "manufacturing.work_order_declare",
         "manufacturing.work_order_complete",
+        "manufacturing.work_order_view",
     ]
 
     for code in permissions:

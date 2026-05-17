@@ -148,7 +148,7 @@ def get_material_preview(*, bom_id: str, quantity: int, source_warehouse_id: str
 
     preview = []
     for bom_item in bom.items.all():
-        required_qty = bom_item.quantity * Decimal(str(quantity))
+        required_qty = bom_item.quantity * (Decimal(str(quantity)) / bom.quantity)
         available_qty = balance_map.get(str(bom_item.item_id), Decimal("0.0"))
         missing_qty = max(Decimal("0.0"), required_qty - available_qty)
 

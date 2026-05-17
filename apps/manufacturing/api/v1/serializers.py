@@ -95,7 +95,7 @@ class WorkOrderCreateSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=255)
     bom_id = serializers.UUIDField()
-    quantity = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
     source_warehouse_id = serializers.UUIDField()
     target_warehouse_id = serializers.UUIDField()
     production_warehouse_id = serializers.UUIDField()
@@ -126,7 +126,7 @@ class MaterialPreviewRequestSerializer(serializers.Serializer):
     """Serializer cho request preview nguyên liệu."""
 
     bom_id = serializers.UUIDField()
-    quantity = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
     source_warehouse_id = serializers.UUIDField()
 
 

@@ -82,7 +82,7 @@ class TestWorkOrderSelectors:
 
         from django.utils import timezone
 
-        bom = BOMFactory(quantity=Decimal("1.0"))
+        bom = BOMFactory(quantity=Decimal("5.0"))
         item1 = ItemFactory()
         item2 = ItemFactory()
         BOMItemFactory(parent=bom, item=item1, quantity=Decimal("2.0"))
@@ -113,9 +113,9 @@ class TestWorkOrderSelectors:
         )
 
         assert len(preview) == 2
-        # item1 needs 20, has 100
+        # item1 needs 2.0 * (10.0 / 5.0) = 4.0, has 100
         p1 = next(p for p in preview if p["item_id"] == str(item1.id))
-        assert p1["required_qty"] == 20.0
+        assert p1["required_qty"] == 4.0
         assert p1["available_qty"] == 100.0
         assert p1["missing_qty"] == 0.0
 
@@ -124,7 +124,7 @@ class TestWorkOrderSelectors:
 
         from django.utils import timezone
 
-        bom = BOMFactory(quantity=Decimal("1.0"))
+        bom = BOMFactory(quantity=Decimal("2.0"))
         item1 = ItemFactory()
         BOMItemFactory(parent=bom, item=item1, quantity=Decimal("2.0"))
 
@@ -146,8 +146,8 @@ class TestWorkOrderSelectors:
         )
 
         assert len(preview) == 1
-        # item1 needs 20, has 5, missing 15
+        # item1 needs 2.0 * (10.0 / 2.0) = 10.0, has 5, missing 5
         p1 = preview[0]
-        assert p1["required_qty"] == 20.0
+        assert p1["required_qty"] == 10.0
         assert p1["available_qty"] == 5.0
-        assert p1["missing_qty"] == 15.0
+        assert p1["missing_qty"] == 5.0

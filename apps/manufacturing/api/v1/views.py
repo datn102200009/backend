@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from apps.common.xlib.exceptions import NotFoundException, PermissionException, ValidationException
+from apps.common.xlib.permissions import PermissionChecker
 from apps.manufacturing.api.v1.serializers import (
     BOMCreateSerializer,
     BOMDetailSerializer,
@@ -146,6 +147,14 @@ def bom_list_view(request):
     Lấy danh sách định mức (BOM).
     """
     try:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {"error": "User không được xác thực"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        PermissionChecker.check_permission(user, "manufacturing.bom_view")
+
         search = request.query_params.get("search")
         is_active_str = request.query_params.get("is_active")
 
@@ -167,6 +176,14 @@ def bom_detail_view(request, bom_id):
     Lấy chi tiết một định mức (BOM).
     """
     try:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {"error": "User không được xác thực"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        PermissionChecker.check_permission(user, "manufacturing.bom_view")
+
         bom = bom_detail(bom_id=bom_id)
         if not bom:
             return Response(
@@ -339,6 +356,14 @@ def work_order_list_view(request):
     Lấy danh sách lệnh sản xuất.
     """
     try:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {"error": "User không được xác thực"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        PermissionChecker.check_permission(user, "manufacturing.work_order_view")
+
         search = request.query_params.get("search")
         status_param = request.query_params.get("status")
 
@@ -359,6 +384,14 @@ def work_order_detail_view(request, work_order_id):
     Lấy chi tiết một lệnh sản xuất.
     """
     try:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {"error": "User không được xác thực"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        PermissionChecker.check_permission(user, "manufacturing.work_order_view")
+
         work_order = work_order_detail(work_order_id=work_order_id)
         if not work_order:
             return Response(
