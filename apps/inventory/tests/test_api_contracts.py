@@ -31,40 +31,29 @@ class TestStockInAPIContract:
     """Test API contract cho Stock In endpoints."""
 
     @pytest.fixture
-    def setup(self):
-        """Setup user, warehouse, items."""
-        role = RoleFactory()
-        for code in ["inventory.stock_in", "inventory.stock_in_approve", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
+    def contract_setup_data(self):
+        """Setup warehouse, items."""
         warehouse = WarehouseFactory()
         item = ItemFactory()
 
-        return {"user": user, "warehouse": warehouse, "item": item}
+        return {"warehouse": warehouse, "item": item}
 
-    def test_create_response_structure(self, setup):
+    def test_create_response_structure(self, authenticated_api_client, contract_setup_data):
         """Response create phải có structure chuẩn."""
-        client = APIClient()
-        client.force_authenticate(user=setup["user"])
-
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(
-                {
-                    "name": "SI-001",
-                    "posting_date": datetime.now().isoformat(),
-                    "details": [
-                        {
-                            "item_id": str(setup["item"].id),
-                            "quantity": "100.00",
-                            "target_warehouse_id": str(setup["warehouse"].id),
-                        }
-                    ],
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "SI-001",
+                "posting_date": datetime.now().isoformat(),
+                "details": [
+                    {
+                        "item_id": str(contract_setup_data["item"].id),
+                        "quantity": "100.00",
+                        "target_warehouse_id": str(contract_setup_data["warehouse"].id),
+                    }
+                ],
+            },
+            format="json",
         )
 
         assert response.status_code == 201
@@ -73,7 +62,15 @@ class TestStockInAPIContract:
         data = response.data
 
         # Bắt buộc có những field này
-        required_fields = ["id", "name", "status", "posting_date", "details", "created_at", "remarks"]
+        required_fields = [
+            "id",
+            "name",
+            "status",
+            "posting_date",
+            "details",
+            "created_at",
+            "remarks",
+        ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
 
@@ -87,41 +84,42 @@ class TestStockInAPIContract:
 
         # Kiểm tra detail structure
         detail = data["details"][0]
-        detail_fields = ["id", "item_id", "item_code", "quantity", "target_warehouse_id"]
+        detail_fields = [
+            "id",
+            "item_id",
+            "item_code",
+            "quantity",
+            "target_warehouse_id",
+        ]
         for field in detail_fields:
             assert field in detail, f"Missing detail field: {field}"
 
         assert isinstance(detail["quantity"], str)
         assert detail["quantity"] == "100.00"
 
-    def test_approve_response_structure(self, setup):
+    def test_approve_response_structure(self, authenticated_api_client, contract_setup_data):
         """Response approve phải có structure chuẩn."""
-        client = APIClient()
-        client.force_authenticate(user=setup["user"])
-
         # Create trước
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(
-                {
-                    "name": "SI-APPROVE",
-                    "posting_date": datetime.now().isoformat(),
-                    "details": [
-                        {
-                            "item_id": str(setup["item"].id),
-                            "quantity": "100.00",
-                            "target_warehouse_id": str(setup["warehouse"].id),
-                        }
-                    ],
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "SI-APPROVE",
+                "posting_date": datetime.now().isoformat(),
+                "details": [
+                    {
+                        "item_id": str(contract_setup_data["item"].id),
+                        "quantity": "100.00",
+                        "target_warehouse_id": str(contract_setup_data["warehouse"].id),
+                    }
+                ],
+            },
+            format="json",
         )
 
         entry_id = response.data["id"]
 
         # Approve
-        response = client.post(
+        response = authenticated_api_client.post(
             f"/api/v1/inventory/stock-in/{entry_id}/approve/",
         )
 
@@ -138,13 +136,8 @@ class TestStockInAPIContract:
 class TestStockLedgerAPIContract:
     """Test API contract cho Stock Ledger endpoints."""
 
-    def test_balance_endpoint_response_structure(self):
+    def test_balance_endpoint_response_structure(self, authenticated_api_client):
         """GET balance endpoint phải trả về structure chuẩn."""
-        role = RoleFactory()
-        perm = PermissionFactory(code="inventory.view")
-        RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
         warehouse = WarehouseFactory()
         item1 = ItemFactory()
         item2 = ItemFactory()
@@ -153,10 +146,7 @@ class TestStockLedgerAPIContract:
         StockLedgerFactory(item=item1, warehouse=warehouse, actual_quantity=Decimal("100.00"))
         StockLedgerFactory(item=item2, warehouse=warehouse, actual_quantity=Decimal("50.00"))
 
-        client = APIClient()
-        client.force_authenticate(user=user)
-
-        response = client.get(
+        response = authenticated_api_client.get(
             f"/api/v1/inventory/stock-ledger/balance/?warehouse_id={warehouse.id}",
         )
 
@@ -168,24 +158,21 @@ class TestStockLedgerAPIContract:
 
         # Mỗi item phải có structure
         for item_balance in response.data:
-            required_fields = ["item_id", "item_code", "item_name", "total_quantity", "uom"]
+            required_fields = [
+                "item_id",
+                "item_code",
+                "item_name",
+                "total_quantity",
+                "uom",
+            ]
             for field in required_fields:
                 assert field in item_balance, f"Missing field: {field}"
 
             assert isinstance(item_balance["total_quantity"], (int, float, str, Decimal))
 
-    def test_list_endpoint_response_structure(self):
+    def test_list_endpoint_response_structure(self, authenticated_api_client):
         """GET list endpoint phải trả về structure chuẩn."""
-        role = RoleFactory()
-        perm = PermissionFactory(code="inventory.view")
-        RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
-
-        client = APIClient()
-        client.force_authenticate(user=user)
-
-        response = client.get("/api/v1/inventory/stock-entry/list/")
+        response = authenticated_api_client.get("/api/v1/inventory/stock-entry/list/")
 
         assert response.status_code == 200
 
@@ -204,20 +191,11 @@ class TestStockLedgerAPIContract:
 class TestErrorResponseContract:
     """Test API contract cho error responses."""
 
-    def test_404_response_structure(self):
+    def test_404_response_structure(self, authenticated_api_client):
         """404 error phải có structure chuẩn."""
-        role = RoleFactory()
-        perm = PermissionFactory(code="inventory.stock_in_approve")
-        RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
-
-        client = APIClient()
-        client.force_authenticate(user=user)
-
         # Try approve non-existent entry
         fake_id = "00000000-0000-0000-0000-000000000000"
-        response = client.post(
+        response = authenticated_api_client.post(
             f"/api/v1/inventory/stock-in/{fake_id}/approve/",
         )
 
@@ -226,28 +204,17 @@ class TestErrorResponseContract:
         # Error response structure
         assert "error" in response.data or "detail" in response.data
 
-    def test_400_validation_error_structure(self):
+    def test_400_validation_error_structure(self, authenticated_api_client):
         """400 validation error phải có structure chuẩn."""
-        role = RoleFactory()
-        perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
-
-        client = APIClient()
-        client.force_authenticate(user=user)
-
         # Invalid data
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(
-                {
-                    "name": "",  # Empty name
-                    "posting_date": datetime.now().isoformat(),
-                    "details": [],  # No details
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "",  # Empty name
+                "posting_date": datetime.now().isoformat(),
+                "details": [],  # No details
+            },
+            format="json",
         )
 
         assert response.status_code == 400
@@ -255,17 +222,15 @@ class TestErrorResponseContract:
         # Error response phải có chi tiết lỗi
         assert "error" in response.data or len(response.data) > 0
 
-    def test_403_permission_error_structure(self):
+    def test_403_permission_error_structure(self, api_client):
         """403 permission error phải có structure chuẩn."""
         user = UserFactory(role=RoleFactory())  # No permissions
+        api_client.force_authenticate(user=user)
 
-        client = APIClient()
-        client.force_authenticate(user=user)
-
-        response = client.post(
+        response = api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps({"name": "SI-001"}),
-            content_type="application/json",
+            data={"name": "SI-001"},
+            format="json",
         )
 
         assert response.status_code == 403
@@ -276,36 +241,25 @@ class TestErrorResponseContract:
 class TestDataTypeConsistency:
     """Test consistency của data types trong responses."""
 
-    def test_quantity_as_string_not_float(self):
+    def test_quantity_as_string_not_float(self, authenticated_api_client):
         """Quantity phải là string để tránh floating-point precision issues."""
-        role = RoleFactory()
-        for code in ["inventory.stock_in", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
         warehouse = WarehouseFactory()
         item = ItemFactory()
 
-        client = APIClient()
-        client.force_authenticate(user=user)
-
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(
-                {
-                    "name": "SI-QUANTITY-TEST",
-                    "posting_date": datetime.now().isoformat(),
-                    "details": [
-                        {
-                            "item_id": str(item.id),
-                            "quantity": "123.45",
-                            "target_warehouse_id": str(warehouse.id),
-                        }
-                    ],
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "SI-QUANTITY-TEST",
+                "posting_date": datetime.now().isoformat(),
+                "details": [
+                    {
+                        "item_id": str(item.id),
+                        "quantity": "123.45",
+                        "target_warehouse_id": str(warehouse.id),
+                    }
+                ],
+            },
+            format="json",
         )
 
         assert response.status_code == 201
@@ -315,35 +269,25 @@ class TestDataTypeConsistency:
         assert isinstance(detail["quantity"], str)
         assert detail["quantity"] == "123.45"
 
-    def test_ids_as_strings(self):
+    def test_ids_as_strings(self, authenticated_api_client):
         """IDs phải là string (UUID format)."""
-        role = RoleFactory()
-        perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
         warehouse = WarehouseFactory()
         item = ItemFactory()
 
-        client = APIClient()
-        client.force_authenticate(user=user)
-
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(
-                {
-                    "name": "SI-ID-TEST",
-                    "posting_date": datetime.now().isoformat(),
-                    "details": [
-                        {
-                            "item_id": str(item.id),
-                            "quantity": "100.00",
-                            "target_warehouse_id": str(warehouse.id),
-                        }
-                    ],
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "SI-ID-TEST",
+                "posting_date": datetime.now().isoformat(),
+                "details": [
+                    {
+                        "item_id": str(item.id),
+                        "quantity": "100.00",
+                        "target_warehouse_id": str(warehouse.id),
+                    }
+                ],
+            },
+            format="json",
         )
 
         assert response.status_code == 201
@@ -358,14 +302,8 @@ class TestDataTypeConsistency:
 class TestStockTransferContractWithDoubleTransaction:
     """Test contract của stock transfer response with double transaction."""
 
-    def test_transfer_response_includes_transaction_info(self):
+    def test_transfer_response_includes_transaction_info(self, authenticated_api_client):
         """Stock transfer response phải có thông tin về double transaction."""
-        role = RoleFactory()
-        for code in ["inventory.stock_transfer", "inventory.stock_transfer_approve"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
         w1 = WarehouseFactory(name="W1")
         w2 = WarehouseFactory(name="W2")
         item = ItemFactory()
@@ -373,34 +311,28 @@ class TestStockTransferContractWithDoubleTransaction:
         # Setup initial stock
         StockLedgerFactory(item=item, warehouse=w1, actual_quantity=Decimal("100.00"))
 
-        client = APIClient()
-        client.force_authenticate(user=user)
-
         # Create transfer
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-transfer/create/",
-            data=json.dumps(
-                {
-                    "name": "ST-CONTRACT",
-                    "posting_date": datetime.now().isoformat(),
-                    "source_warehouse_id": str(w1.id),
-                    "target_warehouse_id": str(w2.id),
-                    "details": [
-                        {
-                            "item_id": str(item.id),
-                            "quantity": "50.00",
-                        }
-                    ],
-                }
-            ),
-            content_type="application/json",
+            data={
+                "name": "ST-CONTRACT",
+                "posting_date": datetime.now().isoformat(),
+                "source_warehouse_id": str(w1.id),
+                "target_warehouse_id": str(w2.id),
+                "details": [
+                    {
+                        "item_id": str(item.id),
+                        "quantity": "50.00",
+                    }
+                ],
+            },
+            format="json",
         )
 
         assert response.status_code == 201
         entry_id = response.data["id"]
 
-        # Approve - triggers double transaction
-        response = client.post(
+        response = authenticated_api_client.post(
             f"/api/v1/inventory/stock-transfer/{entry_id}/approve/",
         )
 

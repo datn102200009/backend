@@ -20,7 +20,16 @@ def django_db_setup(django_db_setup, django_db_blocker):
 @pytest.fixture
 def api_client():
     """Fixture để tạo APIClient."""
+    from rest_framework.test import APIClient
+
     return APIClient()
+
+
+@pytest.fixture
+def authenticated_api_client(api_client, warehouse_keeper_user):
+    """Fixture để tạo APIClient đã xác thực."""
+    api_client.force_authenticate(user=warehouse_keeper_user)
+    return api_client
 
 
 @pytest.fixture

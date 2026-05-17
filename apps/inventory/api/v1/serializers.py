@@ -18,6 +18,7 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
     item_id = serializers.UUIDField(read_only=True)
     item_code = serializers.CharField(source="item.item_code", read_only=True)
     item_name = serializers.CharField(source="item.item_name", read_only=True)
+    uom_name = serializers.CharField(source="item.stock_uom.name", read_only=True)
     source_warehouse_id = serializers.UUIDField(read_only=True, allow_null=True)
     source_warehouse_name = serializers.CharField(source="source_warehouse.name", read_only=True)
     target_warehouse_id = serializers.UUIDField(read_only=True, allow_null=True)
@@ -30,6 +31,7 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "item_id",
             "item_code",
             "item_name",
+            "uom_name",
             "quantity",
             "source_warehouse_id",
             "source_warehouse_name",
@@ -41,6 +43,7 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "item_id",
             "item_code",
             "item_name",
+            "uom_name",
             "source_warehouse_id",
             "source_warehouse_name",
             "target_warehouse_id",
@@ -112,18 +115,23 @@ class StockInCreateSerializer(serializers.Serializer):
         return value
 
 
-class StockIssueForManufacturingSerializer(serializers.Serializer):
-    """Serializer để tạo phiếu xuất kho cho sản xuất."""
+class StockIssueCreateSerializer(serializers.Serializer):
+    """Serializer để tạo phiếu xuất kho."""
 
     name = serializers.CharField(max_length=255)
     posting_date = serializers.DateTimeField()
-    work_order_id = serializers.UUIDField()
     source_warehouse_id = serializers.UUIDField()
     remarks = serializers.CharField(required=False, allow_blank=True)
+    details = StockEntryDetailCreateSerializer(many=True)
 
     def validate_name(self, value):
         if not value.strip():
             raise serializers.ValidationError("Tên phiếu không được để trống")
+        return value
+
+    def validate_details(self, value):
+        if not value:
+            raise serializers.ValidationError("Phiếu phải có ít nhất một chi tiết")
         return value
 
 
@@ -209,7 +217,6 @@ class ItemSerializer(serializers.ModelSerializer):
             "stock_uom",
             "stock_uom_name",
             "hs_code",
-            "weight_kg",
             "recycling_coef_a",
             "vat_group",
             "is_import",
@@ -234,7 +241,6 @@ class ItemCreateUpdateSerializer(serializers.ModelSerializer):
             "item_group",
             "stock_uom",
             "hs_code",
-            "weight_kg",
             "recycling_coef_a",
             "vat_group",
             "is_import",
@@ -261,7 +267,6 @@ class BOMItemSerializer(serializers.ModelSerializer):
 
     item_code = serializers.CharField(source="item.item_code", read_only=True)
     item_name = serializers.CharField(source="item.item_name", read_only=True)
-    uom_name = serializers.CharField(source="uom.name", read_only=True)
 
     class Meta:
         model = BOMItem
@@ -270,15 +275,12 @@ class BOMItemSerializer(serializers.ModelSerializer):
             "item",
             "item_code",
             "item_name",
-            "qty",
-            "uom",
-            "uom_name",
+            "quantity",
         ]
         read_only_fields = [
             "id",
             "item_code",
             "item_name",
-            "uom_name",
         ]
 
 
@@ -286,6 +288,7 @@ class BOMSerializer(serializers.ModelSerializer):
     """Serializer cho BOM."""
 
     item_code = serializers.CharField(source="item.item_code", read_only=True)
+    item_name = serializers.CharField(source="item.item_name", read_only=True)
     items = BOMItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -295,11 +298,14 @@ class BOMSerializer(serializers.ModelSerializer):
             "name",
             "item",
             "item_code",
-            "status",
+            "item_name",
+            "quantity",
+            "is_active",
             "description",
             "items",
         ]
         read_only_fields = [
             "id",
             "item_code",
+            "item_name",
         ]

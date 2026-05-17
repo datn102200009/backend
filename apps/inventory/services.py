@@ -166,24 +166,24 @@ def stock_in_approve(
 
 
 @transaction.atomic
-def stock_issue_for_manufacturing_create(
+def stock_issue_create(
     *,
     user: User,
     name: str,
     posting_date: str,
-    work_order_id: str,
     source_warehouse_id: str,
+    details: List[Dict[str, Any]],
     remarks: Optional[str] = None,
 ) -> StockEntry:
     """
-    Tạo phiếu xuất kho cho sản xuất dựa trên BOM của sản phẩm.
+    Tạo phiếu xuất kho.
 
     Args:
         user: User thực hiện hành động
         name: Tên phiếu xuất
         posting_date: Ngày hạch toán
-        work_order_id: ID của lệnh sản xuất
         source_warehouse_id: ID của kho nguồn
+        details: Danh sách chi tiết [{"item_id": "...", "quantity": 10}]
         remarks: Ghi chú
 
     Returns:
@@ -191,23 +191,11 @@ def stock_issue_for_manufacturing_create(
 
     Raises:
         PermissionException: Nếu user không có quyền
-        NotFoundException: Nếu lệnh hoặc BOM không tồn tại
+        NotFoundException: Nếu kho hoặc item không tồn tại
         ValidationException: Nếu không đủ tồn kho
     """
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_issue")
-
-    from apps.master_data.models import WorkOrder
-
-    # Lấy lệnh sản xuất
-    work_order = WorkOrder.objects.filter(id=work_order_id).first()
-    if not work_order:
-        raise NotFoundException(f"Work Order với ID {work_order_id} không tồn tại")
-
-    # Lấy BOM
-    bom = BOM.objects.filter(item=work_order.item, status="active").first()
-    if not bom:
-        raise NotFoundException(f"Không tìm thấy BOM hoạt động cho sản phẩm {work_order.item.item_code}")
 
     # Lấy kho nguồn
     warehouse = Warehouse.objects.filter(id=source_warehouse_id).first()
@@ -216,14 +204,18 @@ def stock_issue_for_manufacturing_create(
 
     # Kiểm tra tồn kho cho từng linh kiện
     insufficient_items = []
-    for bom_item in bom.items.all():
-        required_qty = bom_item.qty * work_order.qty
-        available_qty = _get_available_stock(bom_item.item, warehouse)
+    for detail in details:
+        item = Item.objects.filter(id=detail["item_id"]).first()
+        if not item:
+            raise NotFoundException(f"Item với ID {detail['item_id']} không tồn tại")
+
+        required_qty = detail["quantity"]
+        available_qty = _get_available_stock(item, warehouse)
 
         if available_qty < required_qty:
             insufficient_items.append(
                 {
-                    "item_code": bom_item.item.item_code,
+                    "item_code": item.item_code,
                     "required": required_qty,
                     "available": available_qty,
                 }
@@ -231,8 +223,8 @@ def stock_issue_for_manufacturing_create(
 
     if insufficient_items:
         error_msg = "Không đủ tồn kho:\n"
-        for item in insufficient_items:
-            error_msg += f"- {item['item_code']}: cần {item['required']}, " f"có {item['available']}\n"
+        for i_item in insufficient_items:
+            error_msg += f"- {i_item['item_code']}: cần {i_item['required']}, có {i_item['available']}\n"
         raise ValidationException(error_msg)
 
     # Tạo phiếu xuất
@@ -244,13 +236,13 @@ def stock_issue_for_manufacturing_create(
         status="draft",
     )
 
-    # Thêm chi tiết từ BOM
-    for bom_item in bom.items.all():
-        required_qty = bom_item.qty * work_order.qty
+    # Thêm chi tiết
+    for detail in details:
+        item = Item.objects.filter(id=detail["item_id"]).first()
         StockEntryDetail.objects.create(
             parent=stock_entry,
-            item=bom_item.item,
-            quantity=required_qty,
+            item=item,
+            quantity=detail["quantity"],
             source_warehouse=warehouse,
         )
 
@@ -263,7 +255,7 @@ def stock_issue_for_manufacturing_create(
         new_value={
             "name": stock_entry.name,
             "purpose": stock_entry.purpose,
-            "work_order_id": work_order_id,
+            "source_warehouse": str(warehouse.id),
         },
     )
 

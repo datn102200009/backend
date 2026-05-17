@@ -9,10 +9,6 @@ from apps.inventory.tests.factories import PermissionFactory, RoleFactory, UserF
 @pytest.mark.django_db
 class TestCustomJWTAuthentication:
 
-    @pytest.fixture
-    def api_client(self):
-        return APIClient()
-
     def test_access_protected_route_with_valid_token(self, api_client):
         # Arrange: Setup user with permissions
         role = RoleFactory()
@@ -25,7 +21,10 @@ class TestCustomJWTAuthentication:
         access_token = str(refresh.access_token)
 
         # Act
-        response = api_client.get("/api/v1/inventory/stock-entry/list/", HTTP_AUTHORIZATION=f"Bearer {access_token}")
+        response = api_client.get(
+            "/api/v1/inventory/stock-entry/list/",
+            HTTP_AUTHORIZATION=f"Bearer {access_token}",
+        )
 
         # Assert
         if response.status_code == 500:
@@ -42,7 +41,8 @@ class TestCustomJWTAuthentication:
     def test_access_protected_route_with_invalid_token(self, api_client):
         # Act
         response = api_client.get(
-            "/api/v1/inventory/stock-entry/list/", HTTP_AUTHORIZATION="Bearer invalid.token.string"
+            "/api/v1/inventory/stock-entry/list/",
+            HTTP_AUTHORIZATION="Bearer invalid.token.string",
         )
 
         # Assert

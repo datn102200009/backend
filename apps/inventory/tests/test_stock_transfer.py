@@ -26,15 +26,6 @@ class TestStockTransferCreate:
     """Test suite cho stock_transfer_create service."""
 
     @pytest.fixture
-    def setup_user_with_permission(self):
-        """Setup user với quyền stock_transfer."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_transfer")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    @pytest.fixture
     def setup_warehouses_and_stock(self):
         """Setup kho và tồn kho."""
         warehouse1 = WarehouseFactory(name="Kho 1")
@@ -50,9 +41,9 @@ class TestStockTransferCreate:
             "item": item,
         }
 
-    def test_stock_transfer_create_success(self, setup_user_with_permission, setup_warehouses_and_stock):
+    def test_stock_transfer_create_success(self, warehouse_keeper_user, setup_warehouses_and_stock):
         """Test tạo phiếu chuyển kho thành công."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         data = setup_warehouses_and_stock
 
         # Test
@@ -97,9 +88,9 @@ class TestStockTransferCreate:
                 ],
             )
 
-    def test_stock_transfer_create_same_warehouse(self, setup_user_with_permission, setup_warehouses_and_stock):
+    def test_stock_transfer_create_same_warehouse(self, warehouse_keeper_user, setup_warehouses_and_stock):
         """Test tạo phiếu chuyển kho với kho nguồn = kho đích."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         data = setup_warehouses_and_stock
 
         with pytest.raises(ValidationException) as exc_info:
@@ -119,9 +110,9 @@ class TestStockTransferCreate:
 
         assert "khác nhau" in str(exc_info.value)
 
-    def test_stock_transfer_create_insufficient_stock(self, setup_user_with_permission):
+    def test_stock_transfer_create_insufficient_stock(self, warehouse_keeper_user):
         """Test tạo phiếu chuyển kho khi không đủ tồn kho."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         warehouse1 = WarehouseFactory()
         warehouse2 = WarehouseFactory()
         item = ItemFactory()
@@ -146,9 +137,9 @@ class TestStockTransferCreate:
 
         assert "Không đủ tồn kho" in str(exc_info.value)
 
-    def test_stock_transfer_create_invalid_item(self, setup_user_with_permission, setup_warehouses_and_stock):
+    def test_stock_transfer_create_invalid_item(self, warehouse_keeper_user, setup_warehouses_and_stock):
         """Test tạo phiếu chuyển kho với item không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         data = setup_warehouses_and_stock
 
         with pytest.raises(NotFoundException) as exc_info:
@@ -168,9 +159,9 @@ class TestStockTransferCreate:
 
         assert "Item" in str(exc_info.value)
 
-    def test_stock_transfer_create_invalid_warehouse(self, setup_user_with_permission, setup_warehouses_and_stock):
+    def test_stock_transfer_create_invalid_warehouse(self, warehouse_keeper_user, setup_warehouses_and_stock):
         """Test tạo phiếu chuyển kho với warehouse không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         data = setup_warehouses_and_stock
 
         with pytest.raises(NotFoundException) as exc_info:
@@ -195,18 +186,9 @@ class TestStockTransferCreate:
 class TestStockTransferApprove:
     """Test suite cho stock_transfer_approve service."""
 
-    @pytest.fixture
-    def setup_user_with_permission(self):
-        """Setup user với quyền stock_transfer_approve."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_transfer_approve")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    def test_stock_transfer_approve_success(self, setup_user_with_permission):
+    def test_stock_transfer_approve_success(self, warehouse_keeper_user):
         """Test phê duyệt phiếu chuyển kho thành công (Double Transaction)."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         entry = StockEntryFactory(purpose="transfer", status="draft")
 
         # Test
@@ -236,9 +218,9 @@ class TestStockTransferApprove:
                 stock_entry_id=str(entry.id),
             )
 
-    def test_stock_transfer_approve_invalid_status(self, setup_user_with_permission):
+    def test_stock_transfer_approve_invalid_status(self, warehouse_keeper_user):
         """Test phê duyệt phiếu chuyển kho ở trạng thái không hợp lệ."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         entry = StockEntryFactory(purpose="transfer", status="posted")
 
         with pytest.raises(ValidationException) as exc_info:
@@ -249,9 +231,9 @@ class TestStockTransferApprove:
 
         assert "Draft" in str(exc_info.value)
 
-    def test_stock_transfer_approve_not_found(self, setup_user_with_permission):
+    def test_stock_transfer_approve_not_found(self, warehouse_keeper_user):
         """Test phê duyệt phiếu chuyển kho không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
 
         with pytest.raises(NotFoundException) as exc_info:
             stock_transfer_approve(

@@ -43,4 +43,7 @@ def auth_login_view(request):
     except NotFoundException as e:
         return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        return Response({"error": f"Lỗi server: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(
+            {"error": f"Lỗi server: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

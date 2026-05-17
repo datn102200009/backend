@@ -33,17 +33,16 @@ def stock_entry_list_by_status(
     Ví dụ:
         stock_entry_list_by_status("draft", purpose="receipt")
     """
-    qs = (
-        StockEntry.objects.select_related(
-            # Có thể thêm if cần
-        )
-        .prefetch_related(
-            "details__item",
-            "details__source_warehouse",
-            "details__target_warehouse",
-        )
-        .filter(status=status)
+    qs = StockEntry.objects.select_related(
+        # Có thể thêm if cần
+    ).prefetch_related(
+        "details__item",
+        "details__source_warehouse",
+        "details__target_warehouse",
     )
+
+    if status and status != "all":
+        qs = qs.filter(status=status)
 
     if purpose:
         qs = qs.filter(purpose=purpose)
@@ -96,43 +95,52 @@ def stock_ledger_balance_by_item_warehouse(
     return result["balance"] or Decimal("0.00")
 
 
-def stock_ledger_balance_by_warehouse(
-    warehouse: Warehouse,
+def stock_ledger_balance(
+    warehouse: Optional[Warehouse] = None,
 ) -> QuerySet:
     """
-    Lấy tồn kho của tất cả items trong một warehouse.
+    Lấy tồn kho của tất cả items (có thể lọc theo một warehouse cụ thể).
 
     Args:
-        warehouse: Warehouse object
+        warehouse: Warehouse object (optional)
 
     Returns:
-        QuerySet với balance cho từng item
+        QuerySet với balance cho từng item (và warehouse)
     """
-    from django.db import models as django_models
-    from django.db.models import F
-    from django.db.models.functions import Cast
+    from django.db.models import CharField, DecimalField, F, OuterRef, Subquery, Sum, Value
+    from django.db.models.functions import Coalesce
 
-    return (
-        StockLedger.objects.filter(
-            warehouse=warehouse,
+    ledger_qs = StockLedger.objects.filter(item=OuterRef("pk"))
+    if warehouse:
+        ledger_qs = ledger_qs.filter(warehouse=warehouse)
+
+    total_qty_subquery = ledger_qs.values("item").annotate(total=Sum("actual_quantity")).values("total")
+
+    qs = Item.objects.all().annotate(
+        total_quantity=Coalesce(Subquery(total_qty_subquery), Value(0, output_field=DecimalField())),
+        item_id=F("id"),
+        uom=F("stock_uom__name"),
+    )
+
+    if warehouse:
+        qs = qs.annotate(
+            warehouse_id=Value(str(warehouse.id), output_field=CharField()),
+            warehouse_name=Value(warehouse.name, output_field=CharField()),
         )
-        .annotate(
-            item_code=F("item__item_code"),
-            item_name=F("item__item_name"),
-            uom=F("item__stock_uom__name"),
+    else:
+        qs = qs.annotate(
+            warehouse_id=Value(None, output_field=CharField()),
+            warehouse_name=Value(None, output_field=CharField()),
         )
-        .values(
-            "item_id",
-            "item_code",
-            "item_name",
-            "uom",
-        )
-        .annotate(
-            total_quantity=Sum("actual_quantity"),
-        )
-        .filter(
-            total_quantity__gt=0,
-        )
+
+    return qs.values(
+        "item_id",
+        "item_code",
+        "item_name",
+        "uom",
+        "warehouse_id",
+        "warehouse_name",
+        "total_quantity",
     )
 
 
@@ -346,10 +354,8 @@ def bom_list_active() -> QuerySet:
         )
         .prefetch_related(
             "items__item",
-            "items__uom",
         )
         .filter(
-            status="active",
             is_active=True,
         )
         .order_by("name")
@@ -372,11 +378,9 @@ def bom_by_item(item_id: str) -> QuerySet:
         )
         .prefetch_related(
             "items__item",
-            "items__uom",
         )
         .filter(
             item_id=item_id,
-            status="active",
             is_active=True,
         )
     )

@@ -12,7 +12,10 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Core Settings
-SECRET_KEY = config("SECRET_KEY", default="django-insecure-*i15f-t1dfnzh)4#_y%_+raw*+%@0e$xlpv7o10^%$7%^w=&@&")
+SECRET_KEY = config(
+    "SECRET_KEY",
+    default="django-insecure-*i15f-t1dfnzh)4#_y%_+raw*+%@0e$xlpv7o10^%$7%^w=&@&",
+)
 DEBUG = config("DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
 
@@ -39,6 +42,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.common.middleware.SecurityHeaderMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -137,6 +141,14 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/day",
+        "user": "1000/day",
+    },
     "EXCEPTION_HANDLER": "apps.common.exceptions.custom_exception_handler",
 }
 
@@ -153,7 +165,16 @@ SIMPLE_JWT = {
 }
 
 # CORS Configuration
-CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000,http://localhost:8000").split(",")
+# Allow specific origins from environment (production frontend URL)
+_cors_origins = config("CORS_ALLOWED_ORIGINS", default="").split(",")
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in _cors_origins if origin.strip()]
+
+# Allow all localhost ports for development
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^http://localhost:\d+$",
+        r"^http://127\.0\.0\.1:\d+$",
+    ]
 
 CORS_ALLOW_CREDENTIALS = True
 

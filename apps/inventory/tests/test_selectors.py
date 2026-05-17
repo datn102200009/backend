@@ -13,8 +13,8 @@ from apps.inventory.selectors import (
     item_list_active,
     item_search,
     stock_entry_list_by_status,
+    stock_ledger_balance,
     stock_ledger_balance_by_item_warehouse,
-    stock_ledger_balance_by_warehouse,
 )
 from apps.inventory.tests.factories import (
     BOMFactory,
@@ -114,10 +114,28 @@ class TestStockLedgerSelectors:
         StockLedgerFactory(item=item2, warehouse=warehouse, actual_quantity=Decimal("50.00"))
 
         # Test
-        result = stock_ledger_balance_by_warehouse(warehouse)
+        result = stock_ledger_balance(warehouse)
 
         # Assert
         assert result.count() == 2
+
+    def test_stock_ledger_balance_all_warehouses(self):
+        """Test tồn kho tất cả items trên mọi warehouse."""
+        # Setup
+        warehouse1 = WarehouseFactory()
+        warehouse2 = WarehouseFactory()
+        item1 = ItemFactory()
+
+        StockLedgerFactory(item=item1, warehouse=warehouse1, actual_quantity=Decimal("100.00"))
+        StockLedgerFactory(item=item1, warehouse=warehouse2, actual_quantity=Decimal("50.00"))
+
+        # Test
+        result = stock_ledger_balance()
+
+        assert result.count() == 1
+        item_balance = list(result)[0]
+        assert item_balance["total_quantity"] == Decimal("150.00")
+        assert item_balance["warehouse_id"] is None
 
 
 @pytest.mark.django_db
@@ -230,25 +248,24 @@ class TestBOMSelectors:
     def test_bom_list_active(self):
         """Test lấy danh sách BOM hoạt động."""
         # Setup
-        BOMFactory(status="active")
-        BOMFactory(status="active")
-        BOMFactory(status="inactive")
-        BOMFactory(status="active", is_active=False)
+        BOMFactory(is_active=True)
+        BOMFactory(is_active=True)
+        BOMFactory(is_active=False)
 
         # Test
         result = bom_list_active()
 
         # Assert
         assert result.count() == 2
-        assert all(bom.status == "active" and bom.is_active for bom in result)
+        assert all(bom.is_active for bom in result)
 
     def test_bom_by_item(self):
         """Test lấy BOM của một sản phẩm."""
         # Setup
         item = ItemFactory()
-        BOMFactory(item=item, status="active")
-        BOMFactory(item=item, status="active")
-        BOMFactory(item=ItemFactory(), status="active")
+        BOMFactory(item=item, is_active=True)
+        BOMFactory(item=item, is_active=True)
+        BOMFactory(item=ItemFactory(), is_active=True)
 
         # Test
         result = bom_by_item(str(item.id))
@@ -260,8 +277,8 @@ class TestBOMSelectors:
         """Test BOM không hoạt động không được trả về."""
         # Setup
         item = ItemFactory()
-        BOMFactory(item=item, status="active")
-        BOMFactory(item=item, status="inactive")
+        BOMFactory(item=item, is_active=True)
+        BOMFactory(item=item, is_active=False)
 
         # Test
         result = bom_by_item(str(item.id))

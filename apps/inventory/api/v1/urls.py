@@ -23,7 +23,7 @@ urlpatterns = [
     # Stock Issue (Xuất Kho)
     path(
         "stock-issue/create/",
-        views.stock_issue_for_manufacturing_view,
+        views.stock_issue_create_view,
         name="stock_issue_create",
     ),
     path(

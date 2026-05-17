@@ -31,27 +31,19 @@ class TestCompleteStockInFlow:
     """Test toàn bộ luồng nhập kho từ đầu đến cuối."""
 
     @pytest.fixture
-    def setup(self):
-        """Setup user, warehouse, items."""
-        role = RoleFactory(name="Thủ kho")
-
-        # Gán tất cả quyền nhập kho
-        for code in ["inventory.stock_in", "inventory.stock_in_approve", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-
-        user = UserFactory(role=role)
+    def flow_setup_data(self, warehouse_keeper_user):
+        """Setup warehouse, items."""
         warehouse = WarehouseFactory(name="Kho Chính")
         item1 = ItemFactory(item_code="ITEM-001")
         item2 = ItemFactory(item_code="ITEM-002")
 
         return {
-            "user": user,
+            "user": warehouse_keeper_user,
             "warehouse": warehouse,
             "items": [item1, item2],
         }
 
-    def test_full_stock_in_flow(self, setup):
+    def test_full_stock_in_flow(self, flow_setup_data):
         """
         Luồng đầy đủ nhập kho:
         1. Tạo phiếu nhập (draft)
@@ -60,9 +52,9 @@ class TestCompleteStockInFlow:
         """
         from apps.inventory.services import stock_in_approve, stock_in_create
 
-        user = setup["user"]
-        warehouse = setup["warehouse"]
-        items = setup["items"]
+        user = flow_setup_data["user"]
+        warehouse = flow_setup_data["warehouse"]
+        items = flow_setup_data["items"]
 
         # STEP 1: Tạo phiếu nhập
         stock_entry = stock_in_create(
@@ -117,7 +109,7 @@ class TestCompleteStockInFlow:
 class TestCompleteStockIssueFlow:
     """Test toàn bộ luồng xuất kho sản xuất."""
 
-    def test_full_stock_issue_flow(self):
+    def test_full_stock_issue_flow(self, warehouse_keeper_user):
         """
         Luồng đầy đủ xuất kho sản xuất:
         1. Chuẩn bị tồn kho
@@ -125,25 +117,13 @@ class TestCompleteStockIssueFlow:
         3. Phê duyệt
         4. Kiểm tra tồn kho trừ đi
         """
-        from apps.inventory.services import stock_issue_approve, stock_issue_for_manufacturing_create
+        from apps.inventory.services import stock_issue_approve, stock_issue_create
 
         # Setup
-        role = RoleFactory()
-        for code in ["inventory.stock_issue", "inventory.stock_issue_approve", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
+        user = warehouse_keeper_user
 
         warehouse = WarehouseFactory()
-        main_item = ItemFactory()
         material = ItemFactory()
-
-        # Tạo BOM
-        bom = BOMFactory(item=main_item)
-        BOMItemFactory(bom=bom, item=material, qty=Decimal("5.00"))
-
-        # Tạo work order
-        work_order = WorkOrderFactory(item=main_item, qty=Decimal("10.00"))
 
         # Tạo tồn kho ban đầu
         StockLedgerFactory(
@@ -155,16 +135,20 @@ class TestCompleteStockIssueFlow:
         initial_stock = Decimal("100.00")
 
         # STEP 1: Tạo phiếu xuất
-        stock_entry = stock_issue_for_manufacturing_create(
+        stock_entry = stock_issue_create(
             user=user,
             name="SO-2024-001",
             posting_date=datetime.now(),
-            work_order_id=str(work_order.id),
             source_warehouse_id=str(warehouse.id),
+            details=[
+                {
+                    "item_id": str(material.id),
+                    "quantity": Decimal("50.00"),
+                }
+            ],
         )
 
         assert stock_entry.status == "draft"
-        # BOM qty (5) * work order qty (10) = 50
         assert stock_entry.details.first().quantity == Decimal("50.00")
 
         # STEP 2: Phê duyệt
@@ -187,7 +171,7 @@ class TestCompleteStockIssueFlow:
 class TestCompleteStockTransferFlow:
     """Test toàn bộ luồng chuyển kho nội bộ."""
 
-    def test_full_transfer_with_double_transaction(self):
+    def test_full_transfer_with_double_transaction(self, warehouse_keeper_user):
         """
         Luồng chuyển kho:
         1. Chuẩn bị tồn kho tại warehouse 1
@@ -198,11 +182,7 @@ class TestCompleteStockTransferFlow:
         from apps.inventory.services import stock_transfer_approve, stock_transfer_create
 
         # Setup
-        role = RoleFactory()
-        for code in ["inventory.stock_transfer", "inventory.stock_transfer_approve", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
+        user = warehouse_keeper_user
 
         warehouse1 = WarehouseFactory(name="Kho 1")
         warehouse2 = WarehouseFactory(name="Kho 2")
@@ -270,24 +250,13 @@ class TestCompleteStockTransferFlow:
 class TestCompleteAPIFlow:
     """Test toàn bộ luồng thông qua API."""
 
-    def test_api_stock_in_workflow(self):
+    def test_api_stock_in_workflow(self, authenticated_api_client):
         """Kiểm tra luồng nhập kho thông qua REST API."""
         import json
 
-        from rest_framework.test import APIClient
-
         # Setup
-        role = RoleFactory()
-        for code in ["inventory.stock_in", "inventory.stock_in_approve", "inventory.view"]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-
         warehouse = WarehouseFactory()
         item = ItemFactory()
-
-        client = APIClient()
-        client.force_authenticate(user=user)
 
         # STEP 1: Tạo phiếu qua API
         payload = {
@@ -303,26 +272,24 @@ class TestCompleteAPIFlow:
             ],
         }
 
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 201
         entry_id = response.data["id"]
         assert response.data["status"] == "draft"
 
-        # STEP 2: Phê duyệt qua API
-        response = client.post(
+        response = authenticated_api_client.post(
             f"/api/v1/inventory/stock-in/{entry_id}/approve/",
         )
 
         assert response.status_code == 200
         assert response.data["status"] == "posted"
 
-        # STEP 3: Kiểm tra tồn kho qua API
-        response = client.get(
+        response = authenticated_api_client.get(
             f"/api/v1/inventory/stock-ledger/balance/?warehouse_id={warehouse.id}",
         )
 
@@ -335,7 +302,7 @@ class TestCompleteAPIFlow:
 class TestComplexScenarios:
     """Test các kịch bản phức tạp."""
 
-    def test_multiple_stock_operations_sequence(self):
+    def test_multiple_stock_operations_sequence(self, warehouse_keeper_user):
         """
         Test chuỗi nhiều phiếu:
         1. Nhập 100 + 100 = 200
@@ -350,18 +317,7 @@ class TestComplexScenarios:
             stock_transfer_create,
         )
 
-        role = RoleFactory()
-        for code in [
-            "inventory.stock_in",
-            "inventory.stock_in_approve",
-            "inventory.stock_transfer",
-            "inventory.stock_transfer_approve",
-            "inventory.stock_issue",
-            "inventory.stock_issue_approve",
-        ]:
-            perm = PermissionFactory(code=code)
-            RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
+        user = warehouse_keeper_user
 
         warehouse1 = WarehouseFactory()
         warehouse2 = WarehouseFactory()
@@ -393,19 +349,19 @@ class TestComplexScenarios:
         assert stock == Decimal("200.00")
 
         # STEP 2: Xuất 50
-        from apps.inventory.services import stock_issue_approve, stock_issue_for_manufacturing_create
+        from apps.inventory.services import stock_issue_approve, stock_issue_create
 
-        main_item = ItemFactory()
-        bom = BOMFactory(item=main_item)
-        BOMItemFactory(bom=bom, item=item, qty=Decimal("5.00"))
-        work_order = WorkOrderFactory(item=main_item, qty=Decimal("10.00"))
-
-        issue_entry = stock_issue_for_manufacturing_create(
+        issue_entry = stock_issue_create(
             user=user,
             name="SO-1",
             posting_date=datetime.now(),
-            work_order_id=str(work_order.id),
             source_warehouse_id=str(warehouse1.id),
+            details=[
+                {
+                    "item_id": str(item.id),
+                    "quantity": Decimal("50.00"),
+                }
+            ],
         )
         stock_issue_approve(user=user, stock_entry_id=str(issue_entry.id))
 

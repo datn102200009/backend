@@ -4,6 +4,9 @@ Views for inventory API v1.
 Orchestrates request processing: validate input, call services/selectors, return response.
 """
 
+import logging
+
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -16,7 +19,7 @@ from apps.inventory.api.v1.serializers import (
     ItemSerializer,
     StockEntrySerializer,
     StockInCreateSerializer,
-    StockIssueForManufacturingSerializer,
+    StockIssueCreateSerializer,
     StockLedgerSerializer,
     StockTransferCreateSerializer,
 )
@@ -29,8 +32,8 @@ from apps.inventory.selectors import (
     item_search,
     stock_entry_detail_list,
     stock_entry_list_by_status,
+    stock_ledger_balance,
     stock_ledger_balance_by_item_warehouse,
-    stock_ledger_balance_by_warehouse,
     stock_ledger_list_by_item,
     stock_ledger_list_by_warehouse,
 )
@@ -38,11 +41,13 @@ from apps.inventory.services import (
     stock_in_approve,
     stock_in_create,
     stock_issue_approve,
-    stock_issue_for_manufacturing_create,
+    stock_issue_create,
     stock_transfer_approve,
     stock_transfer_create,
 )
 from apps.master_data.models import BOM, Item, Warehouse
+
+logger = logging.getLogger(__name__)
 
 # ======================== Stock In (Nhập Kho) ========================
 
@@ -116,8 +121,9 @@ def stock_in_create_view(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -165,8 +171,9 @@ def stock_in_approve_view(request, stock_entry_id):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -175,17 +182,19 @@ def stock_in_approve_view(request, stock_entry_id):
 
 
 @api_view(["POST"])
-def stock_issue_for_manufacturing_view(request):
+def stock_issue_create_view(request):
     """
-    Tạo phiếu xuất kho cho sản xuất.
+    Tạo phiếu xuất kho.
 
     POST /api/v1/inventory/stock-issue/create/
     {
         "name": "SI-001",
         "posting_date": "2024-01-15T10:00:00Z",
-        "work_order_id": "...",
         "source_warehouse_id": "...",
-        "remarks": "Xuất cho lệnh sản xuất"
+        "remarks": "Xuất kho",
+        "details": [
+            {"item_id": "...", "quantity": 5}
+        ]
     }
     """
     try:
@@ -198,19 +207,19 @@ def stock_issue_for_manufacturing_view(request):
 
         PermissionChecker.check_permission(user, "inventory.stock_issue")
 
-        serializer = StockIssueForManufacturingSerializer(data=request.data)
+        serializer = StockIssueCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
                 {"errors": serializer.errors},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        stock_entry = stock_issue_for_manufacturing_create(
+        stock_entry = stock_issue_create(
             user=user,
             name=serializer.validated_data["name"],
             posting_date=serializer.validated_data["posting_date"],
-            work_order_id=str(serializer.validated_data["work_order_id"]),
             source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
+            details=serializer.validated_data["details"],
             remarks=serializer.validated_data.get("remarks", ""),
         )
 
@@ -235,8 +244,9 @@ def stock_issue_for_manufacturing_view(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -284,8 +294,9 @@ def stock_issue_approve_view(request, stock_entry_id):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -361,8 +372,9 @@ def stock_transfer_create_view(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -410,8 +422,9 @@ def stock_transfer_approve_view(request, stock_entry_id):
             status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -438,20 +451,16 @@ def stock_ledger_balance_view(request):
         PermissionChecker.check_permission(user, "inventory.view")
 
         warehouse_id = request.query_params.get("warehouse_id")
-        if not warehouse_id:
-            return Response(
-                {"error": "warehouse_id là bắt buộc"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        warehouse = None
+        if warehouse_id:
+            warehouse = Warehouse.objects.filter(id=warehouse_id).first()
+            if not warehouse:
+                return Response(
+                    {"error": f"Warehouse với ID {warehouse_id} không tồn tại"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-        warehouse = Warehouse.objects.filter(id=warehouse_id).first()
-        if not warehouse:
-            return Response(
-                {"error": f"Warehouse với ID {warehouse_id} không tồn tại"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        data = stock_ledger_balance_by_warehouse(warehouse)
+        data = stock_ledger_balance(warehouse)
         return Response(list(data), status=status.HTTP_200_OK)
 
     except PermissionException as e:
@@ -459,9 +468,15 @@ def stock_ledger_balance_view(request):
             {"error": str(e)},
             status=status.HTTP_403_FORBIDDEN,
         )
-    except Exception as e:
+    except ValidationError:
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "warehouse_id không hợp lệ (phải là UUID)"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except Exception as e:
+        logger.error(f"Stock ledger error: {str(e)}", exc_info=True)
+        return Response(
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -501,7 +516,8 @@ def stock_entry_list_view(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
         return Response(
-            {"error": f"Lỗi server: {str(e)}"},
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

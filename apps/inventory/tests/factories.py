@@ -89,7 +89,6 @@ class ItemFactory(factory.django.DjangoModelFactory):
     stock_uom = factory.SubFactory(UOMFactory)
     status = "active"
     is_import = False
-    weight_kg = Decimal("1.00")
     recycling_coef_a = Decimal("0.05")
 
 
@@ -101,7 +100,8 @@ class BOMFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: f"BOM-{n:04d}")
     item = factory.SubFactory(ItemFactory)
-    status = "active"
+    quantity = Decimal("1.00")
+    is_active = True
     description = factory.Faker("text")
 
 
@@ -111,10 +111,9 @@ class BOMItemFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = BOMItem
 
-    bom = factory.SubFactory(BOMFactory)
+    parent = factory.SubFactory(BOMFactory)
     item = factory.SubFactory(ItemFactory)
-    qty = Decimal("10.00")
-    uom = factory.SubFactory(UOMFactory)
+    quantity = Decimal("10.00")
 
 
 class WorkOrderFactory(factory.django.DjangoModelFactory):
@@ -124,11 +123,12 @@ class WorkOrderFactory(factory.django.DjangoModelFactory):
         model = WorkOrder
 
     name = factory.Sequence(lambda n: f"WO-{n:04d}")
-    item = factory.SubFactory(ItemFactory)
-    qty = Decimal("100.00")
+    production_item = factory.SubFactory(ItemFactory)
+    quantity = 100
+    produced_qty = 0
     status = "released"
-    planned_start_date = factory.Faker("date_time")
-    planned_end_date = factory.Faker("date_time")
+    planned_start_date = factory.Faker("date_object")
+    planned_end_date = factory.Faker("date_object")
 
 
 class StockEntryFactory(factory.django.DjangoModelFactory):

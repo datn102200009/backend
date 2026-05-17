@@ -7,17 +7,15 @@ from apps.inventory.tests.factories import UserFactory
 @pytest.mark.django_db
 class TestAuthLoginAPI:
 
-    @pytest.fixture
-    def api_client(self):
-        return APIClient()
-
     def test_login_endpoint_success(self, api_client):
         # Arrange
         user = UserFactory(username="api_user", password_hash="api_pass123")
 
         # Act
         response = api_client.post(
-            "/api/v1/accounts/auth/login/", data={"username": "api_user", "password": "api_pass123"}, format="json"
+            "/api/v1/accounts/auth/login/",
+            data={"username": "api_user", "password": "api_pass123"},
+            format="json",
         )
 
         # Assert
@@ -30,7 +28,9 @@ class TestAuthLoginAPI:
     def test_login_endpoint_missing_fields(self, api_client):
         # Act
         response = api_client.post(
-            "/api/v1/accounts/auth/login/", data={"username": "api_user"}, format="json"  # missing password
+            "/api/v1/accounts/auth/login/",
+            data={"username": "api_user"},
+            format="json",  # missing password
         )
 
         # Assert
@@ -42,7 +42,9 @@ class TestAuthLoginAPI:
 
         # Act
         response = api_client.post(
-            "/api/v1/accounts/auth/login/", data={"username": "v_user", "password": "invalid_pass"}, format="json"
+            "/api/v1/accounts/auth/login/",
+            data={"username": "v_user", "password": "invalid_pass"},
+            format="json",
         )
 
         # Assert
@@ -52,7 +54,9 @@ class TestAuthLoginAPI:
     def test_login_endpoint_not_found(self, api_client):
         # Act
         response = api_client.post(
-            "/api/v1/accounts/auth/login/", data={"username": "no_user", "password": "123"}, format="json"
+            "/api/v1/accounts/auth/login/",
+            data={"username": "no_user", "password": "123"},
+            format="json",
         )
 
         # Assert

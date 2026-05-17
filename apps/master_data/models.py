@@ -135,7 +135,6 @@ class Item(BaseModel):
     item_group = models.ForeignKey(ItemGroup, on_delete=models.SET_NULL, null=True, blank=True)
     stock_uom = models.ForeignKey(UOM, on_delete=models.SET_NULL, null=True, blank=True)
     hs_code = models.CharField(max_length=20, null=True, blank=True)
-    weight_kg = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     recycling_coef_a = models.DecimalField(max_digits=5, decimal_places=3, null=True, blank=True)
     vat_group = models.CharField(max_length=50, null=True, blank=True)
     is_import = models.BooleanField(default=False)
@@ -189,25 +188,60 @@ class ModeOfPayment(BaseModel):
 class WorkOrder(BaseModel):
     """
     Work Order / Manufacturing Order.
+    Lệnh sản xuất liên kết với BOM và sản phẩm cần sản xuất.
     """
 
     name = models.CharField(max_length=255, unique=True)
-    item = models.ForeignKey(Item, on_delete=models.PROTECT)
-    qty = models.DecimalField(max_digits=15, decimal_places=2)
+    bom = models.ForeignKey(
+        "BOM",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="work_orders",
+    )
+    production_item = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+        related_name="work_orders",
+        db_column="production_item_id",
+    )
+    quantity = models.DecimalField(max_digits=15, decimal_places=2)
+    produced_qty = models.DecimalField(max_digits=15, decimal_places=2, default=0.0)
+    source_warehouse = models.ForeignKey(
+        "Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="wo_source",
+    )
+    target_warehouse = models.ForeignKey(
+        "Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="wo_target",
+    )
+    production_warehouse = models.ForeignKey(
+        "Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="wo_production",
+    )
     status = models.CharField(
         max_length=20,
         choices=[
-            ("draft", "Draft"),
-            ("released", "Released"),
-            ("started", "Started"),
+            ("pending_approval", "Pending Approval"),
+            ("in_progress", "In Progress"),
             ("completed", "Completed"),
             ("cancelled", "Cancelled"),
         ],
-        default="draft",
+        default="pending_approval",
     )
-    planned_start_date = models.DateTimeField()
-    planned_end_date = models.DateTimeField()
-    description = models.TextField(null=True, blank=True)
+    planned_start_date = models.DateField()
+    planned_end_date = models.DateField(null=True, blank=True)
+    actual_end_date = models.DateField(null=True, blank=True)
+    remarks = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = "work_order"
@@ -221,18 +255,17 @@ class WorkOrder(BaseModel):
 class BOM(BaseModel):
     """
     Bill of Materials (Định mức vật tư).
+    Mô tả danh sách nguyên vật liệu cần để sản xuất một thành phẩm.
+    Trạng thái được quản lý qua field `is_active` từ BaseModel.
     """
 
     name = models.CharField(max_length=255, unique=True)
-    item = models.ForeignKey(Item, on_delete=models.PROTECT)
-    status = models.CharField(
-        max_length=20,
-        choices=[
-            ("draft", "Draft"),
-            ("active", "Active"),
-            ("inactive", "Inactive"),
-        ],
-        default="draft",
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name="boms")
+    quantity = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=1,
+        help_text="Số lượng thành phẩm tiêu chuẩn cho định mức này",
     )
     description = models.TextField(null=True, blank=True)
 
@@ -247,19 +280,18 @@ class BOM(BaseModel):
 
 class BOMItem(BaseModel):
     """
-    Item detail in BOM.
+    Chi tiết linh kiện/nguyên liệu trong BOM.
     """
 
-    bom = models.ForeignKey(BOM, on_delete=models.CASCADE, related_name="items")
+    parent = models.ForeignKey(BOM, on_delete=models.CASCADE, related_name="items")
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
-    qty = models.DecimalField(max_digits=15, decimal_places=2)
-    uom = models.ForeignKey(UOM, on_delete=models.SET_NULL, null=True)
+    quantity = models.DecimalField(max_digits=15, decimal_places=2)
 
     class Meta:
         db_table = "bom_item"
         verbose_name = "BOM Item"
         verbose_name_plural = "BOM Items"
-        unique_together = ("bom", "item")
+        unique_together = ("parent", "item")
 
     def __str__(self):
-        return f"{self.bom.name} - {self.item.item_code}"
+        return f"{self.parent.name} - {self.item.item_code}"

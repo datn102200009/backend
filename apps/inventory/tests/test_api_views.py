@@ -30,29 +30,14 @@ class TestStockInAPI:
     """Test suite cho Stock In API endpoints."""
 
     @pytest.fixture
-    def client(self):
-        """API client."""
-        return APIClient()
-
-    @pytest.fixture
-    def user_with_permission(self):
-        """User với quyền stock_in."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role, username="warehousekeeper")
-        return user
-
-    @pytest.fixture
     def setup_data(self):
         """Setup data cho test."""
         warehouse = WarehouseFactory()
         item = ItemFactory()
         return {"warehouse": warehouse, "item": item}
 
-    def test_stock_in_create_success(self, client, user_with_permission, setup_data):
+    def test_stock_in_create_success(self, authenticated_api_client, setup_data):
         """Test tạo phiếu nhập kho qua API."""
-        client.force_authenticate(user=user_with_permission)
         data = setup_data
 
         payload = {
@@ -68,17 +53,17 @@ class TestStockInAPI:
             ],
         }
 
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 201
         assert response.data["name"] == "SI-2024-001"
         assert response.data["status"] == "draft"
 
-    def test_stock_in_create_no_auth(self, client, setup_data):
+    def test_stock_in_create_no_auth(self, api_client, setup_data):
         """Test tạo phiếu nhập kho mà không xác thực."""
         data = setup_data
 
@@ -94,18 +79,18 @@ class TestStockInAPI:
             ],
         }
 
-        response = client.post(
+        response = api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 401
 
-    def test_stock_in_create_no_permission(self, client, setup_data):
+    def test_stock_in_create_no_permission(self, api_client, setup_data):
         """Test tạo phiếu nhập kho mà không có quyền."""
         user = UserFactory(role=RoleFactory())
-        client.force_authenticate(user=user)
+        api_client.force_authenticate(user=user)
         data = setup_data
 
         payload = {
@@ -120,17 +105,16 @@ class TestStockInAPI:
             ],
         }
 
-        response = client.post(
+        response = api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 403
 
-    def test_stock_in_create_invalid_data(self, client, user_with_permission):
+    def test_stock_in_create_invalid_data(self, authenticated_api_client):
         """Test tạo phiếu nhập kho với dữ liệu không hợp lệ."""
-        client.force_authenticate(user=user_with_permission)
 
         payload = {
             "name": "SI-2024-001",
@@ -138,27 +122,19 @@ class TestStockInAPI:
             "details": [],  # Không có chi tiết
         }
 
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-in/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 400
 
-    def test_stock_in_approve_success(self, client, user_with_permission):
+    def test_stock_in_approve_success(self, authenticated_api_client):
         """Test phê duyệt phiếu nhập kho qua API."""
-        # Setup quyền approve
-        perm_approve = PermissionFactory(code="inventory.stock_in_approve")
-        RolePermission.objects.create(
-            role=user_with_permission.role,
-            permission=perm_approve,
-        )
-
-        client.force_authenticate(user=user_with_permission)
         entry = StockEntryFactory(purpose="receipt", status="draft")
 
-        response = client.post(
+        response = authenticated_api_client.post(
             f"/api/v1/inventory/stock-in/{entry.id}/approve/",
         )
 
@@ -170,23 +146,8 @@ class TestStockInAPI:
 class TestStockIssueAPI:
     """Test suite cho Stock Issue API endpoints."""
 
-    @pytest.fixture
-    def client(self):
-        """API client."""
-        return APIClient()
-
-    @pytest.fixture
-    def user_with_permission(self):
-        """User với quyền stock_issue."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_issue")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    def test_stock_issue_create_success(self, client, user_with_permission):
+    def test_stock_issue_create_success(self, authenticated_api_client):
         """Test tạo phiếu xuất kho cho sản xuất qua API."""
-        client.force_authenticate(user=user_with_permission)
 
         # Setup
         warehouse = WarehouseFactory()
@@ -194,22 +155,27 @@ class TestStockIssueAPI:
         material = ItemFactory()
 
         bom = BOMFactory(item=main_item)
-        BOMItemFactory(bom=bom, item=material, qty=Decimal("5.00"))
+        BOMItemFactory(parent=bom, item=material, quantity=Decimal("5.00"))
 
-        work_order = WorkOrderFactory(item=main_item, qty=Decimal("10.00"))
+        work_order = WorkOrderFactory(production_item=main_item, quantity=10)
         StockLedgerFactory(item=material, warehouse=warehouse, actual_quantity=Decimal("100.00"))
 
         payload = {
             "name": "SO-2024-001",
             "posting_date": datetime.now().isoformat(),
-            "work_order_id": str(work_order.id),
             "source_warehouse_id": str(warehouse.id),
+            "details": [
+                {
+                    "item_id": str(material.id),
+                    "quantity": "50.00",
+                }
+            ],
         }
 
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-issue/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 201
@@ -220,23 +186,8 @@ class TestStockIssueAPI:
 class TestStockTransferAPI:
     """Test suite cho Stock Transfer API endpoints."""
 
-    @pytest.fixture
-    def client(self):
-        """API client."""
-        return APIClient()
-
-    @pytest.fixture
-    def user_with_permission(self):
-        """User với quyền stock_transfer."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_transfer")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    def test_stock_transfer_create_success(self, client, user_with_permission):
+    def test_stock_transfer_create_success(self, authenticated_api_client):
         """Test tạo phiếu chuyển kho qua API."""
-        client.force_authenticate(user=user_with_permission)
 
         # Setup
         warehouse1 = WarehouseFactory()
@@ -258,10 +209,10 @@ class TestStockTransferAPI:
             ],
         }
 
-        response = client.post(
+        response = authenticated_api_client.post(
             "/api/v1/inventory/stock-transfer/create/",
-            data=json.dumps(payload),
-            content_type="application/json",
+            data=payload,
+            format="json",
         )
 
         assert response.status_code == 201
@@ -272,23 +223,8 @@ class TestStockTransferAPI:
 class TestStockLedgerAPI:
     """Test suite cho Stock Ledger Query API endpoints."""
 
-    @pytest.fixture
-    def client(self):
-        """API client."""
-        return APIClient()
-
-    @pytest.fixture
-    def user_with_permission(self):
-        """User với quyền xem tồn kho."""
-        role = RoleFactory(name="Nhân viên")
-        perm = PermissionFactory(code="inventory.view")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    def test_stock_ledger_balance_success(self, client, user_with_permission):
+    def test_stock_ledger_balance_success(self, authenticated_api_client):
         """Test lấy tồn kho của warehouse qua API."""
-        client.force_authenticate(user=user_with_permission)
 
         # Setup
         warehouse = WarehouseFactory()
@@ -298,47 +234,64 @@ class TestStockLedgerAPI:
         StockLedgerFactory(item=item1, warehouse=warehouse, actual_quantity=Decimal("100.00"))
         StockLedgerFactory(item=item2, warehouse=warehouse, actual_quantity=Decimal("50.00"))
 
-        response = client.get(
+        response = authenticated_api_client.get(
             f"/api/v1/inventory/stock-ledger/balance/?warehouse_id={warehouse.id}",
         )
 
         assert response.status_code == 200
         assert len(response.data) == 2
 
-    def test_stock_ledger_balance_no_auth(self, client):
+    def test_stock_ledger_balance_no_warehouse_id_success(self, authenticated_api_client):
+        """Test lấy tồn kho của tất cả warehouse qua API (warehouse_id optional)."""
+
+        # Setup
+        warehouse1 = WarehouseFactory()
+        warehouse2 = WarehouseFactory()
+        item1 = ItemFactory()
+
+        StockLedgerFactory(item=item1, warehouse=warehouse1, actual_quantity=Decimal("100.00"))
+        StockLedgerFactory(item=item1, warehouse=warehouse2, actual_quantity=Decimal("50.00"))
+
+        response = authenticated_api_client.get(
+            "/api/v1/inventory/stock-ledger/balance/",
+        )
+
+        assert response.status_code == 200
+        assert len(response.data) == 1
+        assert Decimal(response.data[0]["total_quantity"]) == Decimal("150.00")
+
+    def test_stock_ledger_balance_no_auth(self, api_client):
         """Test lấy tồn kho mà không xác thực."""
         warehouse = WarehouseFactory()
 
-        response = client.get(
+        response = api_client.get(
             f"/api/v1/inventory/stock-ledger/balance/?warehouse_id={warehouse.id}",
         )
 
         assert response.status_code == 401
 
-    def test_stock_entry_list_success(self, client, user_with_permission):
+    def test_stock_entry_list_success(self, authenticated_api_client):
         """Test lấy danh sách phiếu stock entry qua API."""
-        client.force_authenticate(user=user_with_permission)
 
         # Setup
         StockEntryFactory(status="draft", purpose="receipt")
         StockEntryFactory(status="draft", purpose="receipt")
 
-        response = client.get(
+        response = authenticated_api_client.get(
             "/api/v1/inventory/stock-entry/list/?status=draft",
         )
 
         assert response.status_code == 200
         assert len(response.data) == 2
 
-    def test_stock_entry_list_with_filter(self, client, user_with_permission):
+    def test_stock_entry_list_with_filter(self, authenticated_api_client):
         """Test lấy danh sách phiếu stock entry với filter mục đích."""
-        client.force_authenticate(user=user_with_permission)
 
         # Setup
         StockEntryFactory(status="draft", purpose="receipt")
         StockEntryFactory(status="draft", purpose="issue")
 
-        response = client.get(
+        response = authenticated_api_client.get(
             "/api/v1/inventory/stock-entry/list/?status=draft&purpose=receipt",
         )
 

@@ -26,24 +26,15 @@ class TestStockInCreate:
     """Test suite cho stock_in_create service."""
 
     @pytest.fixture
-    def setup_user_with_permission(self):
-        """Setup user với quyền stock_in."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    @pytest.fixture
     def setup_data(self):
         """Setup data cần thiết."""
         warehouse = WarehouseFactory(name="Kho Chính")
         item = ItemFactory(item_code="ITEM-001")
         return {"warehouse": warehouse, "item": item}
 
-    def test_stock_in_create_success(self, setup_user_with_permission, setup_data):
+    def test_stock_in_create_success(self, warehouse_keeper_user, setup_data):
         """Test tạo phiếu nhập kho thành công."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         warehouse = setup_data["warehouse"]
         item = setup_data["item"]
 
@@ -91,9 +82,9 @@ class TestStockInCreate:
                 ],
             )
 
-    def test_stock_in_create_no_details(self, setup_user_with_permission):
+    def test_stock_in_create_no_details(self, warehouse_keeper_user):
         """Test tạo phiếu nhập kho nhưng không có chi tiết."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
 
         # Test
         with pytest.raises(ValidationException) as exc_info:
@@ -106,9 +97,9 @@ class TestStockInCreate:
 
         assert "ít nhất một chi tiết" in str(exc_info.value)
 
-    def test_stock_in_create_duplicate_name(self, setup_user_with_permission, setup_data):
+    def test_stock_in_create_duplicate_name(self, warehouse_keeper_user, setup_data):
         """Test tạo phiếu nhập kho với tên trùng lặp."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         warehouse = setup_data["warehouse"]
         item = setup_data["item"]
 
@@ -143,9 +134,9 @@ class TestStockInCreate:
 
         assert "đã tồn tại" in str(exc_info.value)
 
-    def test_stock_in_create_invalid_item(self, setup_user_with_permission, setup_data):
+    def test_stock_in_create_invalid_item(self, warehouse_keeper_user, setup_data):
         """Test tạo phiếu nhập kho với item không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         warehouse = setup_data["warehouse"]
 
         # Test
@@ -165,9 +156,9 @@ class TestStockInCreate:
 
         assert "Item" in str(exc_info.value) and "không tồn tại" in str(exc_info.value)
 
-    def test_stock_in_create_invalid_warehouse(self, setup_user_with_permission, setup_data):
+    def test_stock_in_create_invalid_warehouse(self, warehouse_keeper_user, setup_data):
         """Test tạo phiếu nhập kho với warehouse không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         item = setup_data["item"]
 
         # Test
@@ -193,24 +184,15 @@ class TestStockInApprove:
     """Test suite cho stock_in_approve service."""
 
     @pytest.fixture
-    def setup_user_with_permission(self):
-        """Setup user với quyền stock_in_approve."""
-        role = RoleFactory(name="Thủ kho")
-        perm = PermissionFactory(code="inventory.stock_in_approve")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(role=role)
-        return user
-
-    @pytest.fixture
     def setup_stock_entry(self):
         """Setup phiếu stock entry."""
         entry = StockEntryFactory(purpose="receipt", status="draft")
         StockEntryDetailFactory(parent=entry)
         return entry
 
-    def test_stock_in_approve_success(self, setup_user_with_permission, setup_stock_entry):
+    def test_stock_in_approve_success(self, warehouse_keeper_user, setup_stock_entry):
         """Test phê duyệt phiếu nhập kho thành công."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         stock_entry = setup_stock_entry
 
         # Test
@@ -236,9 +218,9 @@ class TestStockInApprove:
                 stock_entry_id=str(stock_entry.id),
             )
 
-    def test_stock_in_approve_not_found(self, setup_user_with_permission):
+    def test_stock_in_approve_not_found(self, warehouse_keeper_user):
         """Test phê duyệt phiếu nhập kho không tồn tại."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
 
         # Test
         with pytest.raises(NotFoundException) as exc_info:
@@ -249,9 +231,9 @@ class TestStockInApprove:
 
         assert "không tồn tại" in str(exc_info.value)
 
-    def test_stock_in_approve_invalid_status(self, setup_user_with_permission):
+    def test_stock_in_approve_invalid_status(self, warehouse_keeper_user):
         """Test phê duyệt phiếu nhập kho ở trạng thái không hợp lệ."""
-        user = setup_user_with_permission
+        user = warehouse_keeper_user
         # Tạo phiếu ở trạng thái posted
         entry = StockEntryFactory(purpose="receipt", status="posted")
 
