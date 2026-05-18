@@ -2,15 +2,34 @@
 Production settings for datn_backend project.
 """
 
+from django.core.exceptions import ImproperlyConfigured
+
 from .base import *  # noqa
 
 # Production-specific settings
 DEBUG = False
 
+# SECRET_KEY validation
+if SECRET_KEY == "django-insecure-*i15f-t1dfnzh)4#_y%_+raw*+%@0e$xlpv7o10^%$7%^w=&@&":
+    raise ImproperlyConfigured(
+        "Insecure default SECRET_KEY is used in production. Please set SECRET_KEY via environment variable."
+    )
+
 # SECURITY SETTINGS
 SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# HSTS Settings
+SECURE_HSTS_SECONDS = 31536000  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+
+# Security Headers
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_SECURITY_POLICY = {
     "default-src": ("'self'",),
@@ -30,7 +49,7 @@ STORAGES = {
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+        "LOCATION": "redis://redis:6379/1",
     }
 }
 
