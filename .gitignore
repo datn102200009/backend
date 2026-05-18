@@ -1,5 +1,6 @@
 # Environment variables
 .env
+.env.production
 .env.local
 
 # Python
@@ -73,6 +74,6 @@ htmlcov/
 
 # Ignore any other files that should not be committed
 document/
-.github/
+.github/copilot-instructions.md
 
 setup/

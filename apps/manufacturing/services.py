@@ -339,7 +339,7 @@ def work_order_create(
         new_value={
             "name": work_order.name,
             "bom_name": bom.name,
-            "quantity": work_order.quantity,
+            "quantity": str(work_order.quantity),
             "status": work_order.status,
         },
     )
