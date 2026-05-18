@@ -178,6 +178,9 @@ if DEBUG:
 
 CORS_ALLOW_CREDENTIALS = True
 
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
 # Logging Configuration
 LOGGING = {
     "version": 1,
