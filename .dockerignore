@@ -1,0 +1,39 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Caches and Temporary files
+.pytest_cache
+htmlcov
+.coverage
+logs/
+.ruff_cache/
+*.sqlite3
+
+# Environment variables
+.env
+.env.*.local
+
+# Docker files
+Dockerfile
+docker-compose.yml
+
+# Documentation
+document/
+.github/
+
+# Uploads and Static files (handled by volumes or S3 in production)
+media/
+static/
+
+# Agents
+.agents/
+.gemini/

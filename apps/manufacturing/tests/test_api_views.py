@@ -116,7 +116,7 @@ class TestWorkOrderAPIViews:
         }
 
         response = api_client.post(url, data=data, format="json")
-        assert response.status_code == status.HTTP_201_CREATED
+        assert response.status_code == status.HTTP_201_CREATED, response.content
         assert response.data["name"] == "API-WO"
 
     def test_work_order_approve(self, api_client, production_user):
