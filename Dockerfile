@@ -43,11 +43,14 @@ COPY --chown=appuser:appuser . .
 # Đảm bảo các thư mục ghi đè (logs, media, static) tồn tại và cấp quyền cho appuser
 RUN mkdir -p logs media static && chown -R appuser:appuser logs media static /app
 
-# Gom static files (nếu cần thiết cho trang admin của Django)
-RUN python manage.py collectstatic --noinput || true
-
-# Chuyển sang sử dụng user appuser để tăng tính bảo mật
+# Chuyển sang sử dụng user appuser để tăng tính bảo mật trước khi chạy lệnh manage.py
 USER appuser
+
+# Cấu hình môi trường an toàn để build tĩnh
+ENV DJANGO_SETTINGS_MODULE="datn_backend.settings.production"
+
+# Gom static files (nếu cần thiết cho trang admin của Django)
+RUN SECRET_KEY="dummy-secret-key-for-build" python manage.py collectstatic --noinput
 
 # Khai báo port
 EXPOSE 8000

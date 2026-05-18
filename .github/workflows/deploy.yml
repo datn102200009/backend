@@ -33,7 +33,7 @@ jobs:
       - name: Run Pytest
         run: pytest
         env:
-          DJANGO_SETTINGS_MODULE: datn_backend.settings.dev
+          DJANGO_SETTINGS_MODULE: datn_backend.settings.test
 
   build-and-push:
     needs: quality-and-test
@@ -93,6 +93,6 @@ jobs:
 
             docker pull ghcr.io/$GITHUB_REPOSITORY_LOWER:latest
 
-            docker-compose -f docker-compose.prod.yml up -d
+            docker-compose --env-file .env.production -f docker-compose.prod.yml run --rm web python manage.py migrate --noinput
 
-            docker-compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
+            docker-compose --env-file .env.production -f docker-compose.prod.yml up -d

@@ -5,8 +5,6 @@ services:
     image: redis:7-alpine
     container_name: production-cache
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -26,15 +24,15 @@ services:
     restart: unless-stopped
     environment:
       DEBUG: "False"
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here}
+      SECRET_KEY: ${SECRET_KEY?Missing SECRET_KEY}
       DB_ENGINE: ${DB_ENGINE:-django.db.backends.postgresql}
       DB_NAME: ${DB_NAME:-datn_db}
       DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_HOST: ${DB_HOST:-localhost}
+      DB_PASSWORD: ${DB_PASSWORD?Missing DB_PASSWORD}
+      DB_HOST: ${DB_HOST?Missing DB_HOST}
       DB_PORT: ${DB_PORT:-5432}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-datn_backend.settings.dev}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-datn_backend.settings.production}
     ports:
       - "8000:8000"
     depends_on:
