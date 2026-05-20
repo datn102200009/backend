@@ -21,6 +21,7 @@ class RoleFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Role
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Role-{n}")
     description = factory.Faker("text")
@@ -31,6 +32,7 @@ class PermissionFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Permission
+        django_get_or_create = ("code",)
 
     code = factory.Sequence(lambda n: f"permission.code_{n}")
     name = factory.Faker("word")
@@ -41,6 +43,7 @@ class UserFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = User
+        django_get_or_create = ("username",)
 
     username = factory.Sequence(lambda n: f"user{n}")
     email = factory.Sequence(lambda n: f"user{n}@example.com")
@@ -54,6 +57,7 @@ class ItemGroupFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = ItemGroup
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Item Group {n}")
     is_group = True
@@ -64,6 +68,7 @@ class UOMFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = UOM
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"UOM-{n}")
 
@@ -73,6 +78,7 @@ class WarehouseFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Warehouse
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Warehouse-{n}")
     is_group = False
