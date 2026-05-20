@@ -111,3 +111,39 @@ class EnvironmentFeeLog(BaseModel):
 
     def __str__(self):
         return f"Environment Fee - {self.period}"
+
+
+class CashFlowTransaction(BaseModel):
+    """
+    Cash flow transaction for tracking receipts and payments.
+    """
+
+    name = models.CharField(max_length=255, unique=True)
+    payment_type = models.CharField(max_length=50, choices=[("receive", "Receive Money"), ("pay", "Pay Money")])
+    category = models.CharField(max_length=100, blank=True, null=True, verbose_name="Loại Thu/Chi")
+    # References to Orders (for advance payment/deposits)
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
+    )
+    sales_order = models.ForeignKey(
+        "sales.SalesOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
+    )
+    # References to Invoices (for clearing debts)
+    purchase_invoice = models.ForeignKey(
+        "purchasing.PurchaseInvoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
+    )
+    sales_invoice = models.ForeignKey(
+        "sales.SalesInvoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
+    )
+
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    payment_date = models.DateField()
+    remarks = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "cash_flow_transaction"
+        verbose_name = "Cash Flow Transaction"
+        verbose_name_plural = "Cash Flow Transactions"
+
+    def __str__(self):
+        return self.name

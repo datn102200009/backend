@@ -18,6 +18,7 @@ from apps.inventory.api.v1.serializers import (
     ItemCreateUpdateSerializer,
     ItemSerializer,
     StockEntrySerializer,
+    StockEntryUpdateSerializer,
     StockInCreateSerializer,
     StockIssueCreateSerializer,
     StockLedgerSerializer,
@@ -38,6 +39,7 @@ from apps.inventory.selectors import (
     stock_ledger_list_by_warehouse,
 )
 from apps.inventory.services import (
+    stock_entry_update,
     stock_in_approve,
     stock_in_create,
     stock_issue_approve,
@@ -514,6 +516,69 @@ def stock_entry_list_view(request):
         return Response(
             {"error": str(e)},
             status=status.HTTP_403_FORBIDDEN,
+        )
+    except Exception as e:
+        logger.error(f"API Error: {str(e)}", exc_info=True)
+        return Response(
+            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@api_view(["POST"])
+def stock_entry_update_view(request, stock_entry_id):
+    """
+    Cập nhật thông tin chi tiết (kho nguồn/đích) của phiếu kho nháp trước khi duyệt.
+
+    POST /api/v1/inventory/stock-entry/{stock_entry_id}/update/
+    {
+        "details": [
+            {
+                "detail_id": "...",
+                "source_warehouse_id": "...",
+                "target_warehouse_id": "..."
+            }
+        ]
+    }
+    """
+    try:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {"error": "User không được xác thực"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Cần quyền quản lý kho để sửa thông tin này
+        PermissionChecker.check_permission(user, "inventory.stock_in")
+
+        serializer = StockEntryUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        stock_entry = stock_entry_update(
+            user=user, stock_entry_id=stock_entry_id, details=serializer.validated_data["details"]
+        )
+
+        return Response(StockEntrySerializer(stock_entry).data, status=status.HTTP_200_OK)
+
+    except PermissionException as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    except ValidationException as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except NotFoundException as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_404_NOT_FOUND,
         )
     except Exception as e:
         logger.error(f"API Error: {str(e)}", exc_info=True)

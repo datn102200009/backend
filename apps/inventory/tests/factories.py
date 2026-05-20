@@ -10,8 +10,10 @@ from decimal import Decimal
 import factory
 
 from apps.accounts.models import Permission, Role, RolePermission, User
+from apps.crm.models import Customer
 from apps.inventory.models import StockEntry, StockEntryDetail, StockLedger
 from apps.master_data.models import BOM, UOM, BOMItem, Item, ItemGroup, Warehouse, WorkOrder
+from apps.procurement.models import Supplier
 
 
 class RoleFactory(factory.django.DjangoModelFactory):
@@ -90,6 +92,28 @@ class ItemFactory(factory.django.DjangoModelFactory):
     status = "active"
     is_import = False
     recycling_coef_a = Decimal("0.05")
+
+
+class SupplierFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo Supplier."""
+
+    class Meta:
+        model = Supplier
+
+    name = factory.Sequence(lambda n: f"SUP-{n}")
+    supplier_name = factory.Faker("company")
+    supplier_group = "Local"
+
+
+class CustomerFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo Customer."""
+
+    class Meta:
+        model = Customer
+
+    name = factory.Sequence(lambda n: f"CUS-{n}")
+    customer_name = factory.Faker("company")
+    customer_group = "Commercial"
 
 
 class BOMFactory(factory.django.DjangoModelFactory):
