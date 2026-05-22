@@ -1,0 +1,473 @@
+openapi: 3.0.0
+info:
+  title: Sales API
+  version: 1.0.0
+  description: API documentation for the Sales module (Sales Orders and Sales Invoices).
+
+servers:
+  - url: /api/v1
+    description: V1 API
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SalesOrderLineInput:
+      type: object
+      required:
+        - item_id
+        - quantity
+        - unit_price
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+          format: double
+          minimum: 0.01
+        unit_price:
+          type: number
+          format: double
+          minimum: 0
+
+    SalesOrderInput:
+      type: object
+      required:
+        - customer_id
+        - lines
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [draft, pending, paid_unshipped, shipped_unpaid, completed, cancelled]
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/SalesOrderLineInput'
+
+    SalesOrderDeliverInput:
+      type: object
+      required:
+        - source_warehouse_id
+      properties:
+        source_warehouse_id:
+          type: string
+          format: uuid
+
+    SalesOrderLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
+    SalesOrder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        status:
+          type: string
+          enum: [draft, pending, paid_unshipped, shipped_unpaid, completed, cancelled]
+        total_amount:
+          type: number
+          format: double
+        advance_paid_amount:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/SalesOrderLine'
+        invoices:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              status:
+                type: string
+                enum: [unpaid, partial, paid, cancelled]
+              total_amount:
+                type: number
+              paid_amount:
+                type: number
+        stock_entries:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              status:
+                type: string
+                enum: [draft, submitted, posted]
+              purpose:
+                type: string
+                enum: [receipt, issue, transfer, manufacture, adjustment]
+
+    SalesInvoiceLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        vat_tax:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
+    SalesInvoice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order:
+          type: string
+          format: uuid
+        stock_entry:
+          type: string
+          format: uuid
+          nullable: true
+        stock_entry_name:
+          type: string
+          nullable: true
+        customer:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        status:
+          type: string
+          enum: [unpaid, partial, paid, cancelled]
+        total_amount:
+          type: number
+          format: double
+        paid_amount:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/SalesInvoiceLine'
+
+  responses:
+    UnauthorizedError:
+      description: Missing or invalid authentication token.
+    ForbiddenError:
+      description: The user does not have permission to perform this action.
+    ValidationError:
+      description: Invalid input data (e.g. negative numbers, missing required fields, insufficient stock).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+    NotFoundError:
+      description: Requested resource could not be found.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+
+security:
+  - bearerAuth: []
+
+paths:
+  /sales/orders/:
+    get:
+      summary: List Sales Orders
+      description: Returns a list of sales orders.
+      tags:
+        - Sales Orders
+      responses:
+        '200':
+          description: A list of sales orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalesOrder'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Create Sales Order
+      description: Creates a new sales order. Verifies stock availability.
+      tags:
+        - Sales Orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesOrderInput'
+      responses:
+        '201':
+          description: Sales order successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /sales/orders/{pk}/:
+    get:
+      summary: Get Sales Order
+      description: Retrieves a specific sales order by ID.
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sales order details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      summary: Update Sales Order
+      description: Updates an existing sales order (only allowed in DRAFT status).
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesOrderInput'
+      responses:
+        '200':
+          description: Sales order successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      summary: Delete Sales Order
+      description: Deletes a sales order (only allowed in DRAFT status).
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Sales order successfully deleted.
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sales/orders/{pk}/deliver/:
+    post:
+      deprecated: true
+      summary: Deliver Goods from Sales Order (DEPRECATED)
+      description: Quy trình giao hàng trực tiếp qua đơn bán đã bị loại bỏ. Vui lòng duyệt Phiếu xuất kho tương ứng.
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sales/orders/{pk}/approve/:
+    post:
+      summary: Approve Sales Order
+      description: Phê duyệt Đơn bán hàng (chuyển sang PENDING), sinh tự động Hóa đơn bán hàng (Draft/Unpaid) và Phiếu xuất kho nháp (Draft).
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Đơn bán hàng đã được duyệt thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sales/invoices/:
+    get:
+      summary: List Sales Invoices
+      description: Returns a list of sales invoices.
+      tags:
+        - Sales Invoices
+      responses:
+        '200':
+          description: A list of sales invoices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalesInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /sales/invoices/{pk}/:
+    get:
+      summary: Get Sales Invoice
+      description: Retrieves a specific sales invoice by ID.
+      tags:
+        - Sales Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sales invoice details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

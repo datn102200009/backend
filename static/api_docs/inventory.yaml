@@ -1,0 +1,488 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - Inventory
+  version: 1.0.0
+  description: API Documentation for the DATN ERP System Backend - Inventory Module.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    NotFoundError:
+      description: Not Found. Resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not found."
+    BadRequestError:
+      description: Bad Request. Lỗi xác thực dữ liệu.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    StockEntryDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        item_code:
+          type: string
+        item_name:
+          type: string
+        uom_name:
+          type: string
+        quantity:
+          type: number
+        source_warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        source_warehouse_name:
+          type: string
+          nullable: true
+        target_warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        target_warehouse_name:
+          type: string
+          nullable: true
+    StockEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        purpose:
+          type: string
+          enum: [receipt, issue, transfer, manufacture, adjustment]
+        posting_date:
+          type: string
+          format: date-time
+        posting_date_formatted:
+          type: string
+          format: date-time
+        remarks:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [draft, submitted, posted]
+        purchase_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        sales_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockEntryDetail'
+        created_at:
+          type: string
+          format: date-time
+        created_at_formatted:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    StockEntryListResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockEntry'
+    StockBalance:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        item_code:
+          type: string
+        item_name:
+          type: string
+        uom:
+          type: string
+        warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+        warehouse_name:
+          type: string
+          nullable: true
+        total_quantity:
+          type: number
+    StockEntryInputBase:
+      type: object
+      required:
+        - name
+        - posting_date
+      properties:
+        name:
+          type: string
+          example: "STE-001"
+        posting_date:
+          type: string
+          format: date-time
+        remarks:
+          type: string
+          nullable: true
+    StockInInput:
+      allOf:
+        - $ref: '#/components/schemas/StockEntryInputBase'
+        - type: object
+          required:
+            - details
+          properties:
+            details:
+              type: array
+              items:
+                type: object
+                required:
+                  - item_id
+                  - quantity
+                  - target_warehouse_id
+                properties:
+                  item_id:
+                    type: string
+                    format: uuid
+                  quantity:
+                    type: number
+                  target_warehouse_id:
+                    type: string
+                    format: uuid
+    StockIssueInput:
+      allOf:
+        - $ref: '#/components/schemas/StockEntryInputBase'
+        - type: object
+          required:
+            - source_warehouse_id
+            - details
+          properties:
+            source_warehouse_id:
+              type: string
+              format: uuid
+            details:
+              type: array
+              items:
+                type: object
+                required:
+                  - item_id
+                  - quantity
+                properties:
+                  item_id:
+                    type: string
+                    format: uuid
+                  quantity:
+                    type: number
+    StockTransferInput:
+      allOf:
+        - $ref: '#/components/schemas/StockEntryInputBase'
+        - type: object
+          required:
+            - source_warehouse_id
+            - target_warehouse_id
+            - details
+          properties:
+            source_warehouse_id:
+              type: string
+              format: uuid
+            target_warehouse_id:
+              type: string
+              format: uuid
+            details:
+              type: array
+              items:
+                type: object
+                required:
+                  - item_id
+                  - quantity
+                properties:
+                  item_id:
+                    type: string
+                    format: uuid
+                  quantity:
+                    type: number
+    StockEntryUpdateInput:
+      type: object
+      properties:
+        remarks:
+          type: string
+          nullable: true
+        details:
+          type: array
+          items:
+            type: object
+            required:
+              - detail_id
+            properties:
+              detail_id:
+                type: string
+                format: uuid
+              source_warehouse_id:
+                type: string
+                format: uuid
+                nullable: true
+              target_warehouse_id:
+                type: string
+                format: uuid
+                nullable: true
+              quantity:
+                type: number
+security:
+  - bearerAuth: []
+paths:
+  /inventory/stock-in/create/:
+    post:
+      summary: Tạo phiếu nhập kho
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockInInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /inventory/stock-in/{stock_entry_id}/approve/:
+    post:
+      summary: Phê duyệt phiếu nhập kho
+      parameters:
+        - in: path
+          name: stock_entry_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /inventory/stock-issue/create/:
+    post:
+      summary: Tạo phiếu xuất kho (sản xuất)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockIssueInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /inventory/stock-issue/{stock_entry_id}/approve/:
+    post:
+      summary: Phê duyệt phiếu xuất kho
+      parameters:
+        - in: path
+          name: stock_entry_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /inventory/stock-transfer/create/:
+    post:
+      summary: Tạo phiếu chuyển kho
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockTransferInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /inventory/stock-transfer/{stock_entry_id}/approve/:
+    post:
+      summary: Phê duyệt phiếu chuyển kho
+      parameters:
+        - in: path
+          name: stock_entry_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /inventory/stock-ledger/balance/:
+    get:
+      summary: Lấy tồn kho của một warehouse
+      parameters:
+        - in: query
+          name: warehouse_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockBalance'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /inventory/stock-entry/list/:
+    get:
+      summary: Lấy danh sách phiếu stock entry
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            example: "draft"
+        - in: query
+          name: purpose
+          schema:
+            type: string
+            example: "receipt"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntryListResponse'
+
+  /inventory/stock-entry/{stock_entry_id}/update/:
+    post:
+      summary: Cập nhật kho nguồn/đích cho các chi tiết của phiếu kho nháp (draft)
+      parameters:
+        - in: path
+          name: stock_entry_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockEntryUpdateInput'
+      responses:
+        '200':
+          description: Cập nhật thành công. Trả về thông tin phiếu kho sau khi cập nhật.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockEntry'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

@@ -18,9 +18,15 @@ Including another URLconf
 from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import TemplateView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path(
+        "api/docs/",
+        TemplateView.as_view(template_name="swagger_ui.html"),
+        name="api-docs",
+    ),
     path("api/v1/inventory/", include("apps.inventory.api.v1.urls")),
     path("api/v1/accounts/", include("apps.accounts.api.v1.urls")),
     path("api/v1/manufacturing/", include("apps.manufacturing.api.v1.urls")),

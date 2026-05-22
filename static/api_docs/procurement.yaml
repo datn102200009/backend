@@ -1,0 +1,265 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - Procurement
+  version: 1.0.0
+  description: >
+    API Documentation for the DATN ERP System Backend - Procurement Module.
+    Includes Supplier management with Rate Limiting and Role-Based Access Control.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    NotFoundError:
+      description: Not Found. Resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not found."
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    Supplier:
+      type: object
+      required:
+        - id
+        - name
+        - supplier_name
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "SUP-001"
+          description: "Mã định danh duy nhất của nhà cung cấp"
+        supplier_name:
+          type: string
+          example: "Tổng công ty Thép Việt Nam"
+          description: "Tên đầy đủ của nhà cung cấp"
+        supplier_group:
+          type: string
+          nullable: true
+          example: "Local"
+          description: "Nhóm nhà cung cấp (ví dụ: Local, Import, Distributor)"
+        contact_email:
+          type: string
+          format: email
+          nullable: true
+          example: "sales@vnsteel.vn"
+        contact_phone:
+          type: string
+          nullable: true
+          example: "0243123456"
+        address:
+          type: string
+          nullable: true
+          example: "91 Láng Hạ, Đống Đa, Hà Nội"
+        is_active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SupplierInput:
+      type: object
+      required:
+        - name
+        - supplier_name
+      properties:
+        name:
+          type: string
+          example: "SUP-001"
+          description: "Mã định danh duy nhất của nhà cung cấp"
+        supplier_name:
+          type: string
+          example: "Tổng công ty Thép Việt Nam"
+          description: "Tên đầy đủ của nhà cung cấp"
+        supplier_group:
+          type: string
+          nullable: true
+          example: "Local"
+          description: "Nhóm nhà cung cấp"
+        contact_email:
+          type: string
+          format: email
+          nullable: true
+          example: "sales@vnsteel.vn"
+        contact_phone:
+          type: string
+          nullable: true
+          example: "0243123456"
+        address:
+          type: string
+          nullable: true
+          example: "91 Láng Hạ, Đống Đa, Hà Nội"
+security:
+  - bearerAuth: []
+paths:
+  /procurement/suppliers/:
+    get:
+      summary: Lấy danh sách Nhà cung cấp
+      description: |
+        Lấy danh sách tất cả các Nhà cung cấp trong hệ thống.
+        Yêu cầu quyền truy cập: `procurement.view`.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Tạo Nhà cung cấp mới
+      description: |
+        Tạo thông tin nhà cung cấp mới trong hệ thống.
+        Yêu cầu quyền truy cập: `procurement.add`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierInput'
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '400':
+          description: Dữ liệu đầu vào không hợp lệ hoặc trùng mã nhà cung cấp
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /procurement/suppliers/{supplier_id}/:
+    get:
+      summary: Xem chi tiết Nhà cung cấp
+      description: |
+        Lấy thông tin chi tiết của một Nhà cung cấp thông qua UUID.
+        Yêu cầu quyền truy cập: `procurement.view`.
+      parameters:
+        - in: path
+          name: supplier_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID của nhà cung cấp cần xem
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      summary: Cập nhật thông tin Nhà cung cấp
+      description: |
+        Cập nhật toàn bộ thông tin của một Nhà cung cấp thông qua UUID.
+        Yêu cầu quyền truy cập: `procurement.change`.
+      parameters:
+        - in: path
+          name: supplier_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID của nhà cung cấp cần cập nhật
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierInput'
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '400':
+          description: Dữ liệu đầu vào không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      summary: Xóa Nhà cung cấp
+      description: |
+        Xóa một Nhà cung cấp thông qua UUID.
+        Yêu cầu quyền truy cập: `procurement.delete`.
+      parameters:
+        - in: path
+          name: supplier_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID của nhà cung cấp cần xóa
+      responses:
+        '204':
+          description: Xóa thành công (Không có nội dung trả về)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
