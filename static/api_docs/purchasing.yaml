@@ -1,0 +1,476 @@
+openapi: 3.0.0
+info:
+  title: Purchasing API
+  version: 1.0.0
+  description: API documentation for the Purchasing module (Purchase Orders and Purchase Invoices).
+
+servers:
+  - url: /api/v1
+    description: V1 API
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PurchaseOrderLineInput:
+      type: object
+      required:
+        - item_id
+        - quantity
+        - unit_price
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+          format: double
+          minimum: 0.01
+        unit_price:
+          type: number
+          format: double
+          minimum: 0
+
+    PurchaseOrderInput:
+      type: object
+      required:
+        - vendor_id
+        - lines
+      properties:
+        vendor_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [draft, pending, completed, cancelled]
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PurchaseOrderLineInput'
+
+    PurchaseOrderReceiveInput:
+      type: object
+      required:
+        - target_warehouse_id
+      properties:
+        target_warehouse_id:
+          type: string
+          format: uuid
+
+    PurchaseOrderLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
+    PurchaseOrder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        vendor:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        status:
+          type: string
+          enum: [draft, pending, paid_unshipped, shipped_unpaid, completed, cancelled]
+        total_amount:
+          type: number
+          format: double
+        advance_paid_amount:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/PurchaseOrderLine'
+        invoices:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              status:
+                type: string
+                enum: [unpaid, partial, paid, cancelled]
+              total_amount:
+                type: number
+              paid_amount:
+                type: number
+        stock_entries:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              status:
+                type: string
+                enum: [draft, submitted, posted]
+              purpose:
+                type: string
+                enum: [receipt, issue, transfer, manufacture, adjustment]
+
+    PurchaseInvoiceLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        import_tax:
+          type: number
+          format: double
+        vat_tax:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
+    PurchaseInvoice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order:
+          type: string
+          format: uuid
+        stock_entry:
+          type: string
+          format: uuid
+          nullable: true
+        stock_entry_name:
+          type: string
+          nullable: true
+        vendor:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        status:
+          type: string
+          enum: [unpaid, partial, paid, cancelled]
+        total_amount:
+          type: number
+          format: double
+        paid_amount:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/PurchaseInvoiceLine'
+
+  responses:
+    UnauthorizedError:
+      description: Missing or invalid authentication token.
+    ForbiddenError:
+      description: The user does not have permission to perform this action.
+    ValidationError:
+      description: Invalid input data (e.g. negative numbers, missing required fields).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+    NotFoundError:
+      description: Requested resource could not be found.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+
+security:
+  - bearerAuth: []
+
+paths:
+  /purchasing/orders/:
+    get:
+      summary: List Purchase Orders
+      description: Returns a list of purchase orders.
+      tags:
+        - Purchasing Orders
+      responses:
+        '200':
+          description: A list of purchase orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PurchaseOrder'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Create Purchase Order
+      description: Creates a new purchase order.
+      tags:
+        - Purchasing Orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseOrderInput'
+      responses:
+        '201':
+          description: Purchase order successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /purchasing/orders/{pk}/:
+    get:
+      summary: Get Purchase Order
+      description: Retrieves a specific purchase order by ID.
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Purchase order details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      summary: Update Purchase Order
+      description: Updates an existing purchase order (only allowed in DRAFT status).
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseOrderInput'
+      responses:
+        '200':
+          description: Purchase order successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      summary: Delete Purchase Order
+      description: Deletes a purchase order (only allowed in DRAFT status).
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Purchase order successfully deleted.
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/orders/{pk}/receive/:
+    post:
+      deprecated: true
+      summary: Receive Goods from Purchase Order (DEPRECATED)
+      description: Quy trình nhận hàng trực tiếp qua đơn mua đã bị loại bỏ. Vui lòng duyệt Phiếu nhập kho tương ứng.
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/orders/{pk}/approve/:
+    post:
+      summary: Approve Purchase Order
+      description: Phê duyệt Đơn mua hàng (chuyển sang PENDING), sinh tự động Hóa đơn mua hàng (Draft/Unpaid) và Phiếu nhập kho nháp (Draft).
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Đơn mua hàng đã được duyệt thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/invoices/:
+    get:
+      summary: List Purchase Invoices
+      description: Returns a list of purchase invoices.
+      tags:
+        - Purchasing Invoices
+      responses:
+        '200':
+          description: A list of purchase invoices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PurchaseInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /purchasing/invoices/{pk}/:
+    get:
+      summary: Get Purchase Invoice
+      description: Retrieves a specific purchase invoice by ID.
+      tags:
+        - Purchasing Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Purchase invoice details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

@@ -2,7 +2,7 @@
 
 Phân hệ Backend xử lý logic nghiệp vụ, quản lý cơ sở dữ liệu và cung cấp RESTful API cho hệ thống Đồ Án Tốt Nghiệp - Quản trị Doanh nghiệp (ERP System).
 
-## 🛠️ Công nghệ sử dụng
+## Công nghệ sử dụng
 * **Language:** Python 3.10+
 * **Framework:** Django 5.2.x & Django REST Framework (DRF) 3.14.0
 * **Database:** PostgreSQL 15+
@@ -12,7 +12,7 @@ Phân hệ Backend xử lý logic nghiệp vụ, quản lý cơ sở dữ liệu
 * **Linter & Formatter:** black, flake8, isort, pre-commit
 * **Containerization:** Docker & Docker Compose
 
-## 📦 Cấu trúc Thư mục Chính
+## Cấu trúc Thư mục Chính
 ```text
 datn_backend/
 ├── apps/                  # Nơi chứa các app chức năng (Domain modules)
@@ -40,7 +40,7 @@ datn_backend/
 └── pyproject.toml         # Cấu hình định dạng code (black, isort, pytest...)
 ```
 
-## 🚀 Hướng dẫn Cài đặt & Chạy Local
+## Hướng dẫn Cài đặt & Chạy Local
 
 Có hai cách để khởi chạy dự án tại local: Chạy trực tiếp qua virtual environment hoặc chạy thông qua Docker Compose.
 
@@ -79,20 +79,7 @@ make install
 
 **Bước 4: Cấu hình biến môi trường**
 * Tạo file `.env` ở thư mục gốc (cùng cấp với `manage.py`).
-* Sao chép nội dung cấu hình từ file `.env.example` và điền các thông số phù hợp.
-* Ví dụ nội dung `.env` cho chạy trực tiếp:
-```env
-DEBUG=True
-SECRET_KEY='#3)^avn%z*^6$jy7cpar#b_+c--tf^^ge@pwvvg8l9cutx2oj1'
-DJANGO_SETTINGS_MODULE=datn_backend.settings.dev
-DB_ENGINE=django.db.backends.postgresql
-DB_NAME=datn_db
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_HOST=localhost
-DB_PORT=5432
-REDIS_URL=redis://localhost:6379/0
-```
+* Sao chép nội dung cấu hình từ file `.env.example` và điền các thông số phù hợp của bạn vào.
 
 **Bước 5: Khởi tạo Cơ sở dữ liệu (Migration)**
 ```bash
@@ -154,7 +141,7 @@ make docker-down
 
 ---
 
-## 🧪 Kiểm thử & Định dạng Code (Testing & Formatting)
+## Kiểm thử & Định dạng Code (Testing & Formatting)
 
 Để đảm bảo chất lượng code và tính ổn định của hệ thống:
 
@@ -177,17 +164,19 @@ make docker-down
 
 ---
 
-## 📖 Tài liệu API (API Documentation)
+## Tài liệu API (API Documentation)
 
-Hệ thống cung cấp các API endpoint dưới dạng RESTful API với tiền tố `/api/v1/`. Danh sách các module API chính bao gồm:
-* **Accounts & Auth:** `/api/v1/accounts/`
-* **Master Data:** `/api/v1/master-data/`
-* **Inventory (Kho):** `/api/v1/inventory/`
-* **Manufacturing (Sản xuất):** `/api/v1/manufacturing/`
-* **Purchasing (Mua hàng):** `/api/v1/purchasing/`
-* **Sales (Bán hàng):** `/api/v1/sales/`
-* **Finance (Tài chính):** `/api/v1/finance/`
-* **CRM (Khách hàng):** `/api/v1/crm/`
-* **Procurement (Cung ứng):** `/api/v1/procurement/`
+Hệ thống tích hợp tài liệu API trực quan ngay trong codebase thông qua giao diện Swagger UI. Sau khi chạy server backend thành công, bạn có thể truy cập tài liệu tại:
 
-*(Lưu ý: Phân hệ Backend hiện tại chưa được tích hợp sẵn công cụ sinh tài liệu API tự động như Swagger hay Redoc trực tiếp trên URL. Bạn hãy kiểm tra cấu hình URL cụ thể ở file `urls.py` của từng app trong thư mục `apps/`)*
+* **API Documentation UI:** `http://127.0.0.1:8000/api/docs/`
+
+Tại giao diện Swagger UI, bạn có thể dễ dàng chuyển đổi qua lại giữa tài liệu API của các phân hệ (module) khác nhau thông qua thanh chọn menu thả xuống (dropdown selector) ở góc trên cùng bên phải. Các module được hỗ trợ tài liệu hóa bao gồm:
+1. Accounts & Authorization
+2. Master Data
+3. Inventory Management
+4. Manufacturing
+5. Purchasing
+6. Procurement
+7. Sales & Orders
+8. Finance & Accounting
+9. CRM

@@ -1,0 +1,129 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - Accounts
+  version: 1.0.0
+  description: API Documentation for the DATN ERP System Backend - Accounts Module.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    BadRequestError:
+      description: Bad Request. Lỗi validation hoặc thông tin không hợp lệ.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "No active account found with the given credentials"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    UserRole:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        employee_id:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/UserRole'
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+    LoginResponse:
+      type: object
+      properties:
+        access:
+          type: string
+          description: Access token (JWT)
+        refresh:
+          type: string
+          description: Refresh token (JWT)
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          nullable: true
+          description: Tên role của user
+security:
+  - bearerAuth: []
+paths:
+  /accounts/auth/login/:
+    post:
+      summary: Đăng nhập
+      description: API Đăng nhập và lấy Bearer Token (JWT).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  example: password123
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'

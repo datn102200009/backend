@@ -1,0 +1,429 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - Master Data
+  version: 1.0.0
+  description: >
+    API Documentation for the DATN ERP System Backend - Master Data Module.
+    Includes Item (Product) management with strict Data Integrity checks, Rate Limiting, and Role-Based Access Control.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    TooManyRequestsError:
+      description: Too Many Requests. Rate limit exceeded (Throttled).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Request was throttled."
+    NotFoundError:
+      description: Not Found. Resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not found."
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item_code:
+          type: string
+          example: "ITEM001"
+        item_name:
+          type: string
+          example: "Laptop Dell XPS 15"
+        item_group_id:
+          type: string
+          format: uuid
+          nullable: true
+        stock_uom_id:
+          type: string
+          format: uuid
+          nullable: true
+        stock_uom_name:
+          type: string
+          nullable: true
+        hs_code:
+          type: string
+          nullable: true
+          example: "84713020"
+        recycling_coef_a:
+          type: number
+          nullable: true
+          minimum: 0
+          example: 1.2
+        vat_group:
+          type: string
+          nullable: true
+          example: "VAT10"
+        is_import:
+          type: boolean
+          example: false
+        status:
+          type: string
+          enum: [active, inactive, discontinued]
+          example: "active"
+        description:
+          type: string
+          nullable: true
+          example: "High performance laptop"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ItemCreateInput:
+      type: object
+      required:
+        - item_code
+        - item_name
+      properties:
+        item_code:
+          type: string
+          example: "ITEM001"
+        item_name:
+          type: string
+          example: "Laptop Dell XPS 15"
+        item_group_id:
+          type: string
+          format: uuid
+          nullable: true
+        stock_uom_id:
+          type: string
+          format: uuid
+          nullable: true
+        hs_code:
+          type: string
+          nullable: true
+        recycling_coef_a:
+          type: number
+          nullable: true
+          minimum: 0
+          description: "Hệ số tái chế. Phải lớn hơn hoặc bằng 0."
+          example: 1.2
+        vat_group:
+          type: string
+          nullable: true
+        is_import:
+          type: boolean
+          default: false
+        status:
+          type: string
+          enum: [active, inactive, discontinued]
+          default: "active"
+        description:
+          type: string
+          nullable: true
+    ItemUpdateInput:
+      type: object
+      properties:
+        item_name:
+          type: string
+          example: "Laptop Dell XPS 15"
+        item_group_id:
+          type: string
+          format: uuid
+          nullable: true
+        stock_uom_id:
+          type: string
+          format: uuid
+          nullable: true
+        hs_code:
+          type: string
+          nullable: true
+        recycling_coef_a:
+          type: number
+          nullable: true
+          minimum: 0
+          description: "Hệ số tái chế. Phải lớn hơn hoặc bằng 0."
+          example: 1.2
+        vat_group:
+          type: string
+          nullable: true
+        is_import:
+          type: boolean
+          default: false
+        status:
+          type: string
+          enum: [active, inactive, discontinued]
+          default: "active"
+        description:
+          type: string
+          nullable: true
+security:
+  - bearerAuth: []
+paths:
+  /master-data/warehouses/list/:
+    get:
+      summary: Lấy danh sách Kho (Warehouse)
+      description: Lấy danh sách tất cả các Kho
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /master-data/uoms/list/:
+    get:
+      summary: Lấy danh sách Đơn vị tính (UOM)
+      description: Lấy danh sách tất cả các Đơn vị tính
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /master-data/items/list/:
+    get:
+      summary: Xem danh sách vật tư (Item)
+      description: |
+        Lấy danh sách vật tư có hỗ trợ tìm kiếm và lọc theo trạng thái.
+        Tối ưu N+1 Query.
+        Yêu cầu quyền truy cập: `master_data.view_item`.
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: "Tìm kiếm theo mã vật tư hoặc tên vật tư"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive, discontinued]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          description: "Giới hạn số bản ghi trả về, tối đa 100 (Bảo vệ chống DoS)."
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    nullable: true
+                  previous:
+                    type: string
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /master-data/items/create/:
+    post:
+      summary: Thêm mới vật tư (Item)
+      description: |
+        Tạo mới vật tư. Được bảo vệ bởi Rate Limiting.
+        Yêu cầu quyền truy cập: `master_data.add_item`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemCreateInput'
+      responses:
+        '201':
+          description: Created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          description: Bad Request. Lỗi xác thực dữ liệu (ví dụ giá trị âm) hoặc IntegrityError (trùng lặp mã vật tư).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                IntegrityError:
+                  value:
+                    detail: "Dữ liệu bị trùng lặp hoặc vi phạm ràng buộc CSDL. Vui lòng kiểm tra lại."
+                ValidationError:
+                  value:
+                    weight_kg: ["Đảm bảo giá trị này lớn hơn hoặc bằng 0."]
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+
+  /master-data/items/{item_code}/update/:
+    put:
+      summary: Chỉnh sửa thông tin vật tư
+      description: |
+        Cập nhật thông tin vật tư. Được bảo vệ bởi Rate Limiting.
+        Yêu cầu quyền truy cập: `master_data.change_item`.
+      parameters:
+        - in: path
+          name: item_code
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemUpdateInput'
+      responses:
+        '200':
+          description: Updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          description: Bad Request. Lỗi xác thực dữ liệu hoặc IntegrityError.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+
+  /master-data/items/{item_code}/delete/:
+    delete:
+      summary: Xóa vật tư (Item)
+      description: |
+        Xóa một vật tư. Được bảo vệ bởi Rate Limiting.
+        Yêu cầu quyền truy cập: `master_data.delete_item`.
+        Sẽ bị từ chối với mã 400 nếu vật tư đang được sử dụng trong BOM hoặc StockLedger (ProtectedError).
+      parameters:
+        - in: path
+          name: item_code
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted successfully
+        '400':
+          description: Bad Request. Lỗi ràng buộc dữ liệu (Constraint Error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Không thể xóa vật tư này vì dữ liệu đã được sử dụng ở nơi khác. Hãy cân nhắc thay đổi trạng thái thành Inactive."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+
+  /master-data/items/{item_code}/detail/:
+    get:
+      summary: Lấy chi tiết thông tin vật tư
+      description: |
+        Xem chi tiết một vật tư cụ thể.
+        Yêu cầu quyền truy cập: `master_data.view_item`.
+      parameters:
+        - in: path
+          name: item_code
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
