@@ -43,7 +43,7 @@ def admin_user():
     ]
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.create(role=role, permission=perm)
+        RolePermission.objects.get_or_create(role=role, permission=perm)
 
     user = UserFactory(role=role, username="admin")
     return user
@@ -71,7 +71,7 @@ def production_user():
 
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.create(role=role, permission=perm)
+        RolePermission.objects.get_or_create(role=role, permission=perm)
 
     user = UserFactory(role=role, username="production_user")
     return user
@@ -85,7 +85,7 @@ def regular_user():
     role = RoleFactory(name="Nhân viên")
     # Không có quyền manufacturing
     perm = PermissionFactory(code="other.view")
-    RolePermission.objects.create(role=role, permission=perm)
+    RolePermission.objects.get_or_create(role=role, permission=perm)
 
     user = UserFactory(role=role, username="regular_user")
     return user

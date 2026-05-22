@@ -31,6 +31,22 @@ class StockEntry(BaseModel):
         ],
         default="draft",
     )
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_entries",
+        verbose_name="Đơn mua hàng",
+    )
+    sales_order = models.ForeignKey(
+        "sales.SalesOrder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_entries",
+        verbose_name="Đơn bán hàng",
+    )
 
     class Meta:
         db_table = "stock_entry"
