@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from apps.common.xlib.exceptions import NotFoundException, PermissionException, ValidationException
+from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.inventory.api.v1.serializers import (
     BOMSerializer,
@@ -24,6 +24,7 @@ from apps.inventory.api.v1.serializers import (
     StockLedgerSerializer,
     StockTransferCreateSerializer,
 )
+from apps.inventory.models import StockEntry
 from apps.inventory.selectors import (
     bom_by_item,
     bom_list_active,
@@ -60,74 +61,34 @@ def stock_in_create_view(request):
     Tạo phiếu nhập kho.
 
     POST /api/v1/inventory/stock-in/create/
-    {
-        "name": "SI-001",
-        "posting_date": "2024-01-15T10:00:00Z",
-        "remarks": "Nhập từ nhà cung cấp ABC",
-        "details": [
-            {
-                "item_id": "...",
-                "quantity": 100,
-                "target_warehouse_id": "..."
-            }
-        ]
-    }
     """
-    try:
-        # Kiểm tra user
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_in")
-
-        # Validate input
-        serializer = StockInCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Gọi service
-        stock_entry = stock_in_create(
-            user=user,
-            name=serializer.validated_data["name"],
-            posting_date=serializer.validated_data["posting_date"],
-            details=serializer.validated_data["details"],
-            remarks=serializer.validated_data.get("remarks", ""),
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        # Return response
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_201_CREATED,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_in")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    # Validate input
+    serializer = StockInCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    # Gọi service
+    stock_entry = stock_in_create(
+        user=user,
+        name=serializer.validated_data["name"],
+        posting_date=serializer.validated_data["posting_date"],
+        details=serializer.validated_data["details"],
+        remarks=serializer.validated_data.get("remarks", ""),
+    )
+
+    # Return response
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["POST"])
@@ -137,47 +98,24 @@ def stock_in_approve_view(request, stock_entry_id):
 
     POST /api/v1/inventory/stock-in/{stock_entry_id}/approve/
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_in_approve")
-
-        stock_entry = stock_in_approve(
-            user=user,
-            stock_entry_id=stock_entry_id,
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_200_OK,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_in_approve")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    stock_entry = stock_in_approve(
+        user=user,
+        stock_entry_id=stock_entry_id,
+    )
+
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_200_OK,
+    )
 
 
 # ======================== Stock Issue (Xuất Kho) ========================
@@ -189,68 +127,32 @@ def stock_issue_create_view(request):
     Tạo phiếu xuất kho.
 
     POST /api/v1/inventory/stock-issue/create/
-    {
-        "name": "SI-001",
-        "posting_date": "2024-01-15T10:00:00Z",
-        "source_warehouse_id": "...",
-        "remarks": "Xuất kho",
-        "details": [
-            {"item_id": "...", "quantity": 5}
-        ]
-    }
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_issue")
-
-        serializer = StockIssueCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        stock_entry = stock_issue_create(
-            user=user,
-            name=serializer.validated_data["name"],
-            posting_date=serializer.validated_data["posting_date"],
-            source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
-            details=serializer.validated_data["details"],
-            remarks=serializer.validated_data.get("remarks", ""),
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_201_CREATED,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_issue")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    serializer = StockIssueCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    stock_entry = stock_issue_create(
+        user=user,
+        name=serializer.validated_data["name"],
+        posting_date=serializer.validated_data["posting_date"],
+        source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
+        details=serializer.validated_data["details"],
+        remarks=serializer.validated_data.get("remarks", ""),
+    )
+
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["POST"])
@@ -260,47 +162,24 @@ def stock_issue_approve_view(request, stock_entry_id):
 
     POST /api/v1/inventory/stock-issue/{stock_entry_id}/approve/
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_issue_approve")
-
-        stock_entry = stock_issue_approve(
-            user=user,
-            stock_entry_id=stock_entry_id,
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_200_OK,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_issue_approve")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    stock_entry = stock_issue_approve(
+        user=user,
+        stock_entry_id=stock_entry_id,
+    )
+
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_200_OK,
+    )
 
 
 # ======================== Stock Transfer (Chuyển Kho) ========================
@@ -312,73 +191,33 @@ def stock_transfer_create_view(request):
     Tạo phiếu chuyển kho nội bộ.
 
     POST /api/v1/inventory/stock-transfer/create/
-    {
-        "name": "ST-001",
-        "posting_date": "2024-01-15T10:00:00Z",
-        "source_warehouse_id": "...",
-        "target_warehouse_id": "...",
-        "remarks": "Chuyển kho",
-        "details": [
-            {
-                "item_id": "...",
-                "quantity": 50
-            }
-        ]
-    }
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_transfer")
-
-        serializer = StockTransferCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        stock_entry = stock_transfer_create(
-            user=user,
-            name=serializer.validated_data["name"],
-            posting_date=serializer.validated_data["posting_date"],
-            source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
-            target_warehouse_id=str(serializer.validated_data["target_warehouse_id"]),
-            details=serializer.validated_data["details"],
-            remarks=serializer.validated_data.get("remarks", ""),
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_201_CREATED,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_transfer")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    serializer = StockTransferCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    stock_entry = stock_transfer_create(
+        user=user,
+        name=serializer.validated_data["name"],
+        posting_date=serializer.validated_data["posting_date"],
+        source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
+        target_warehouse_id=str(serializer.validated_data["target_warehouse_id"]),
+        details=serializer.validated_data["details"],
+        remarks=serializer.validated_data.get("remarks", ""),
+    )
+
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["POST"])
@@ -388,47 +227,24 @@ def stock_transfer_approve_view(request, stock_entry_id):
 
     POST /api/v1/inventory/stock-transfer/{stock_entry_id}/approve/
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        PermissionChecker.check_permission(user, "inventory.stock_transfer_approve")
-
-        stock_entry = stock_transfer_approve(
-            user=user,
-            stock_entry_id=stock_entry_id,
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
 
-        return Response(
-            StockEntrySerializer(stock_entry).data,
-            status=status.HTTP_200_OK,
-        )
+    PermissionChecker.check_permission(user, "inventory.stock_transfer_approve")
 
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    stock_entry = stock_transfer_approve(
+        user=user,
+        stock_entry_id=stock_entry_id,
+    )
+
+    return Response(
+        StockEntrySerializer(stock_entry).data,
+        status=status.HTTP_200_OK,
+    )
 
 
 # ======================== Stock Ledger Query ========================
@@ -441,46 +257,27 @@ def stock_ledger_balance_view(request):
 
     GET /api/v1/inventory/stock-ledger/balance/?warehouse_id=...
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
 
-        # Kiểm tra quyền xem
-        PermissionChecker.check_permission(user, "inventory.view")
+    PermissionChecker.check_permission(user, "inventory.view")
 
-        warehouse_id = request.query_params.get("warehouse_id")
-        warehouse = None
-        if warehouse_id:
+    warehouse_id = request.query_params.get("warehouse_id")
+    warehouse = None
+    if warehouse_id:
+        try:
             warehouse = Warehouse.objects.filter(id=warehouse_id).first()
-            if not warehouse:
-                return Response(
-                    {"error": f"Warehouse với ID {warehouse_id} không tồn tại"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+        except (ValidationError, ValueError):
+            raise ValidationException("warehouse_id không hợp lệ (phải là UUID)")
+        if not warehouse:
+            raise NotFoundException(f"Warehouse với ID {warehouse_id} không tồn tại")
 
-        data = stock_ledger_balance(warehouse)
-        return Response(list(data), status=status.HTTP_200_OK)
-
-    except PermissionException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    except ValidationError:
-        return Response(
-            {"error": "warehouse_id không hợp lệ (phải là UUID)"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except Exception as e:
-        logger.error(f"Stock ledger error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    data = stock_ledger_balance(warehouse)
+    return Response(list(data), status=status.HTTP_200_OK)
 
 
 # ======================== Stock Entry List ========================
@@ -493,36 +290,22 @@ def stock_entry_list_view(request):
 
     GET /api/v1/inventory/stock-entry/list/?status=draft&purpose=receipt
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        # Kiểm tra quyền xem
-        PermissionChecker.check_permission(user, "inventory.view")
-
-        status_param = request.query_params.get("status", "draft")
-        purpose = request.query_params.get("purpose")
-
-        entries = stock_entry_list_by_status(status_param, purpose)
-        serializer = StockEntrySerializer(entries, many=True)
-
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    except PermissionException as e:
+    user = request.user
+    if not user or not user.is_authenticated:
         return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+
+    PermissionChecker.check_permission(user, "inventory.view")
+
+    status_param = request.query_params.get("status", "draft")
+    purpose = request.query_params.get("purpose")
+
+    entries = stock_entry_list_by_status(status_param, purpose)
+    serializer = StockEntrySerializer(entries, many=True)
+
+    return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
@@ -531,58 +314,37 @@ def stock_entry_update_view(request, stock_entry_id):
     Cập nhật thông tin chi tiết (kho nguồn/đích) của phiếu kho nháp trước khi duyệt.
 
     POST /api/v1/inventory/stock-entry/{stock_entry_id}/update/
-    {
-        "details": [
-            {
-                "detail_id": "...",
-                "source_warehouse_id": "...",
-                "target_warehouse_id": "..."
-            }
-        ]
-    }
     """
-    try:
-        user = request.user
-        if not user or not user.is_authenticated:
-            return Response(
-                {"error": "User không được xác thực"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        # Cần quyền quản lý kho để sửa thông tin này
-        PermissionChecker.check_permission(user, "inventory.stock_in")
-
-        serializer = StockEntryUpdateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        stock_entry = stock_entry_update(
-            user=user, stock_entry_id=stock_entry_id, details=serializer.validated_data["details"]
-        )
-
-        return Response(StockEntrySerializer(stock_entry).data, status=status.HTTP_200_OK)
-
-    except PermissionException as e:
+    user = request.user
+    if not user or not user.is_authenticated:
         return Response(
-            {"error": str(e)},
-            status=status.HTTP_403_FORBIDDEN,
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
         )
-    except ValidationException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    except NotFoundException as e:
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Exception as e:
-        logger.error(f"API Error: {str(e)}", exc_info=True)
-        return Response(
-            {"error": "Lỗi hệ thống nội bộ. Vui lòng thử lại sau."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+
+    # Lấy StockEntry trước để check purpose cho phân quyền động
+    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    if not stock_entry:
+        raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
+
+    # Xác định quyền dựa theo purpose của phiếu kho
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"  # Fallback
+
+    PermissionChecker.check_permission(user, permission)
+
+    serializer = StockEntryUpdateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    updated_entry = stock_entry_update(
+        user=user, stock_entry_id=stock_entry_id, details=serializer.validated_data["details"]
+    )
+
+    return Response(StockEntrySerializer(updated_entry).data, status=status.HTTP_200_OK)

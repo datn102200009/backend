@@ -23,7 +23,7 @@ def cash_flow_create(
     *,
     user: User,
     payment_type: str,
-    amount: float,
+    amount: Decimal,
     payment_date: str,
     category: Optional[str] = None,
     purchase_order_id: Optional[str] = None,
@@ -64,11 +64,11 @@ def cash_flow_create(
         if po.status in [PurchaseOrder.Status.COMPLETED, PurchaseOrder.Status.CANCELLED]:
             raise ValidationException("Không thể nhận thêm cọc/ứng trước cho đơn hàng đã hoàn tất hoặc đã hủy.")
 
-        if po.advance_paid_amount + Decimal(str(amount)) > po.total_amount:
+        if po.advance_paid_amount + amount > po.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn mua hàng.")
 
         transaction_obj.purchase_order = po
-        po.advance_paid_amount += Decimal(str(amount))
+        po.advance_paid_amount += amount
         po.save()
 
         # Cập nhật trạng thái Đơn hàng
@@ -84,11 +84,11 @@ def cash_flow_create(
         if so.status in [SalesOrder.Status.COMPLETED, SalesOrder.Status.CANCELLED]:
             raise ValidationException("Không thể nhận thêm cọc cho đơn hàng đã hoàn tất hoặc đã hủy.")
 
-        if so.advance_paid_amount + Decimal(str(amount)) > so.total_amount:
+        if so.advance_paid_amount + amount > so.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn bán hàng.")
 
         transaction_obj.sales_order = so
-        so.advance_paid_amount += Decimal(str(amount))
+        so.advance_paid_amount += amount
         so.save()
 
         # Cập nhật trạng thái Đơn hàng
@@ -104,11 +104,11 @@ def cash_flow_create(
         if pi.status in [PurchaseInvoice.Status.PAID, PurchaseInvoice.Status.CANCELLED]:
             raise ValidationException("Hóa đơn mua không hợp lệ hoặc đã hoàn tất thanh toán.")
 
-        if pi.paid_amount + Decimal(str(amount)) > pi.total_amount:
+        if pi.paid_amount + amount > pi.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
 
         transaction_obj.purchase_invoice = pi
-        pi.paid_amount += Decimal(str(amount))
+        pi.paid_amount += amount
 
         if pi.paid_amount >= pi.total_amount:
             pi.status = PurchaseInvoice.Status.PAID
@@ -130,11 +130,11 @@ def cash_flow_create(
         if si.status in [SalesInvoice.Status.PAID, SalesInvoice.Status.CANCELLED]:
             raise ValidationException("Hóa đơn bán không hợp lệ hoặc đã hoàn tất thanh toán.")
 
-        if si.paid_amount + Decimal(str(amount)) > si.total_amount:
+        if si.paid_amount + amount > si.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn bán.")
 
         transaction_obj.sales_invoice = si
-        si.paid_amount += Decimal(str(amount))
+        si.paid_amount += amount
 
         if si.paid_amount >= si.total_amount:
             si.status = SalesInvoice.Status.PAID

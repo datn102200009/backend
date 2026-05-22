@@ -525,12 +525,22 @@ def stock_entry_update(
     Cập nhật thông tin chi tiết và ghi chú của một phiếu kho nháp (draft).
     Cho phép thủ kho chỉ định/chọn kho nguồn/đích cho từng dòng sản phẩm.
     """
-    # Tái sử dụng quyền update của phân hệ kho tương ứng
-    PermissionChecker.check_permission(user, "inventory.stock_in")
-
     stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
+
+    # Xác định quyền dựa theo purpose của phiếu kho
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"  # Fallback
+
+    PermissionChecker.check_permission(user, permission)
 
     if stock_entry.status != "draft":
         raise ValidationException("Chỉ được phép cập nhật phiếu kho khi đang ở trạng thái Draft")
