@@ -309,3 +309,16 @@ class BOMSerializer(serializers.ModelSerializer):
             "item_code",
             "item_name",
         ]
+
+
+# ======================== Stock Entry Update Serializers ========================
+
+
+class StockEntryUpdateDetailSerializer(serializers.Serializer):
+    detail_id = serializers.UUIDField()
+    source_warehouse_id = serializers.UUIDField(required=False, allow_null=True)
+    target_warehouse_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class StockEntryUpdateSerializer(serializers.Serializer):
+    details = serializers.ListField(child=StockEntryUpdateDetailSerializer(), allow_empty=False)

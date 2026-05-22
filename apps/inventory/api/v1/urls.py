@@ -53,4 +53,9 @@ urlpatterns = [
         views.stock_entry_list_view,
         name="stock_entry_list",
     ),
+    path(
+        "stock-entry/<str:stock_entry_id>/update/",
+        views.stock_entry_update_view,
+        name="stock_entry_update",
+    ),
 ]

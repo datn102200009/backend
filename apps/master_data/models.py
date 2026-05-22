@@ -61,48 +61,6 @@ class Warehouse(BaseModel):
         return self.name
 
 
-class Supplier(BaseModel):
-    """
-    Supplier information.
-    """
-
-    name = models.CharField(max_length=255, unique=True)
-    supplier_name = models.CharField(max_length=255)
-    supplier_group = models.CharField(max_length=255, null=True, blank=True)
-    contact_email = models.EmailField(null=True, blank=True)
-    contact_phone = models.CharField(max_length=20, null=True, blank=True)
-    address = models.TextField(null=True, blank=True)
-
-    class Meta:
-        db_table = "supplier"
-        verbose_name = "Supplier"
-        verbose_name_plural = "Suppliers"
-
-    def __str__(self):
-        return self.name
-
-
-class Customer(BaseModel):
-    """
-    Customer information.
-    """
-
-    name = models.CharField(max_length=255, unique=True)
-    customer_name = models.CharField(max_length=255)
-    customer_group = models.CharField(max_length=255, null=True, blank=True)
-    contact_email = models.EmailField(null=True, blank=True)
-    contact_phone = models.CharField(max_length=20, null=True, blank=True)
-    address = models.TextField(null=True, blank=True)
-
-    class Meta:
-        db_table = "customer"
-        verbose_name = "Customer"
-        verbose_name_plural = "Customers"
-
-    def __str__(self):
-        return self.name
-
-
 class Employee(BaseModel):
     """
     Employee information.

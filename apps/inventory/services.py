@@ -109,18 +109,6 @@ def stock_in_approve(
 ) -> StockEntry:
     """
     Phê duyệt phiếu nhập kho và ghi sổ cái.
-
-    Args:
-        user: User thực hiện hành động
-        stock_entry_id: ID của phiếu nhập
-
-    Returns:
-        StockEntry object
-
-    Raises:
-        PermissionException: Nếu user không có quyền
-        NotFoundException: Nếu phiếu không tồn tại
-        ValidationException: Nếu phiếu ở trạng thái không hợp lệ
     """
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_in_approve")
@@ -137,6 +125,9 @@ def stock_in_approve(
 
     # Ghi sổ cái cho từng chi tiết
     for detail in stock_entry.details.all():
+        if not detail.target_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho nhập.")
+
         StockLedger.objects.create(
             item=detail.item,
             warehouse=detail.target_warehouse,
@@ -149,6 +140,12 @@ def stock_in_approve(
     # Cập nhật trạng thái
     stock_entry.status = "posted"
     stock_entry.save()
+
+    # Kích hoạt tính toán lại trạng thái Đơn mua hàng liên kết (nếu có)
+    if stock_entry.purchase_order:
+        from apps.purchasing.services import purchase_order_update_status
+
+        purchase_order_update_status(stock_entry.purchase_order)
 
     # Ghi log
     create_system_log(
@@ -270,13 +267,6 @@ def stock_issue_approve(
 ) -> StockEntry:
     """
     Phê duyệt phiếu xuất kho và ghi sổ cái.
-
-    Args:
-        user: User thực hiện hành động
-        stock_entry_id: ID của phiếu xuất
-
-    Returns:
-        StockEntry object
     """
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_issue_approve")
@@ -293,6 +283,17 @@ def stock_issue_approve(
 
     # Ghi sổ cái cho từng chi tiết (âm tính vì là xuất kho)
     for detail in stock_entry.details.all():
+        if not detail.source_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho xuất.")
+
+        # Kiểm tra tồn kho khả dụng tại thời điểm duyệt
+        available_qty = _get_available_stock(detail.item, detail.source_warehouse)
+        if available_qty < detail.quantity:
+            raise ValidationException(
+                f"Không đủ tồn kho cho sản phẩm '{detail.item.item_code}' tại kho '{detail.source_warehouse.name}'. "
+                f"Khả dụng: {available_qty}, Yêu cầu: {detail.quantity}"
+            )
+
         StockLedger.objects.create(
             item=detail.item,
             warehouse=detail.source_warehouse,
@@ -305,6 +306,12 @@ def stock_issue_approve(
     # Cập nhật trạng thái
     stock_entry.status = "posted"
     stock_entry.save()
+
+    # Kích hoạt tính toán lại trạng thái Đơn bán hàng liên kết (nếu có)
+    if stock_entry.sales_order:
+        from apps.sales.services import sales_order_update_status
+
+        sales_order_update_status(stock_entry.sales_order)
 
     # Ghi log
     create_system_log(
@@ -504,3 +511,110 @@ def _get_available_stock(item: Item, warehouse: Warehouse) -> Decimal:
     if total is None:
         return Decimal("0.00")
     return Decimal(str(total))
+
+
+@transaction.atomic
+def stock_entry_update(
+    *,
+    user: User,
+    stock_entry_id: str,
+    details: List[Dict[str, Any]],
+    remarks: Optional[str] = None,
+) -> StockEntry:
+    """
+    Cập nhật thông tin chi tiết và ghi chú của một phiếu kho nháp (draft).
+    Cho phép thủ kho chỉ định/chọn kho nguồn/đích cho từng dòng sản phẩm.
+    """
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
+    if not stock_entry:
+        raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
+
+    # Xác định quyền dựa theo purpose của phiếu kho
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"  # Fallback
+
+    PermissionChecker.check_permission(user, permission)
+
+    if stock_entry.status != "draft":
+        raise ValidationException("Chỉ được phép cập nhật phiếu kho khi đang ở trạng thái Draft")
+
+    if remarks is not None:
+        stock_entry.remarks = remarks
+
+    # Kiểm tra xem details truyền vào có chứa detail_id hay không
+    if details and "detail_id" in details[0]:
+        # Cập nhật các dòng chi tiết hiện tại (không xóa đi tạo lại)
+        for detail in details:
+            dt_obj = stock_entry.details.filter(id=detail["detail_id"]).first()
+            if not dt_obj:
+                raise NotFoundException(
+                    f"Chi tiết phiếu kho với ID {detail['detail_id']} không tồn tại hoặc không thuộc phiếu kho này"
+                )
+
+            if "source_warehouse_id" in detail:
+                source_wh = None
+                if detail["source_warehouse_id"]:
+                    source_wh = Warehouse.objects.filter(id=detail["source_warehouse_id"]).first()
+                    if not source_wh:
+                        raise NotFoundException(f"Warehouse nguồn với ID {detail['source_warehouse_id']} không tồn tại")
+                dt_obj.source_warehouse = source_wh
+
+            if "target_warehouse_id" in detail:
+                target_wh = None
+                if detail["target_warehouse_id"]:
+                    target_wh = Warehouse.objects.filter(id=detail["target_warehouse_id"]).first()
+                    if not target_wh:
+                        raise NotFoundException(f"Warehouse đích với ID {detail['target_warehouse_id']} không tồn tại")
+                dt_obj.target_warehouse = target_wh
+
+            if "quantity" in detail:
+                dt_obj.quantity = detail["quantity"]
+
+            dt_obj.save()
+    else:
+        # Xóa các chi tiết cũ và tạo lại mới
+        stock_entry.details.all().delete()
+
+        for detail in details:
+            item = Item.objects.filter(id=detail["item_id"]).first()
+            if not item:
+                raise NotFoundException(f"Sản phẩm với ID {detail['item_id']} không tồn tại")
+
+            source_wh = None
+            if detail.get("source_warehouse_id"):
+                source_wh = Warehouse.objects.filter(id=detail["source_warehouse_id"]).first()
+                if not source_wh:
+                    raise NotFoundException(f"Warehouse nguồn với ID {detail['source_warehouse_id']} không tồn tại")
+
+            target_wh = None
+            if detail.get("target_warehouse_id"):
+                target_wh = Warehouse.objects.filter(id=detail["target_warehouse_id"]).first()
+                if not target_wh:
+                    raise NotFoundException(f"Warehouse đích với ID {detail['target_warehouse_id']} không tồn tại")
+
+            StockEntryDetail.objects.create(
+                parent=stock_entry,
+                item=item,
+                quantity=detail["quantity"],
+                source_warehouse=source_wh,
+                target_warehouse=target_wh,
+            )
+
+    stock_entry.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="stock_entry",
+        record_id=str(stock_entry.id),
+        new_value={"remarks": remarks},
+    )
+
+    return stock_entry

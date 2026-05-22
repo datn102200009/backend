@@ -61,7 +61,7 @@ def warehouse_keeper_user():
 
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.create(role=role, permission=perm)
+        RolePermission.objects.get_or_create(role=role, permission=perm)
 
     user = UserFactory(role=role, username="warehouse_keeper")
     return user
@@ -74,7 +74,7 @@ def regular_user():
 
     role = RoleFactory(name="Nhân viên")
     perm = PermissionFactory(code="inventory.view")
-    RolePermission.objects.create(role=role, permission=perm)
+    RolePermission.objects.get_or_create(role=role, permission=perm)
 
     user = UserFactory(role=role, username="regular_user")
     return user

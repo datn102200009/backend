@@ -1,0 +1,202 @@
+openapi: 3.0.0
+info:
+  title: Finance API
+  version: 1.0.0
+  description: API documentation for the Finance module (Cash Flows).
+
+servers:
+  - url: /api/v1
+    description: V1 API
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CashFlowInput:
+      type: object
+      required:
+        - payment_type
+        - amount
+        - payment_date
+      properties:
+        payment_type:
+          type: string
+          enum: [receive, pay]
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+        payment_date:
+          type: string
+          format: date
+        category:
+          type: string
+          maxLength: 100
+        purchase_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        sales_order_id:
+          type: string
+          format: uuid
+          nullable: true
+        purchase_invoice_id:
+          type: string
+          format: uuid
+          nullable: true
+        sales_invoice_id:
+          type: string
+          format: uuid
+          nullable: true
+        remarks:
+          type: string
+
+    CashFlowTransaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        payment_type:
+          type: string
+          enum: [receive, pay]
+        category:
+          type: string
+        amount:
+          type: number
+          format: double
+        payment_date:
+          type: string
+          format: date
+        remarks:
+          type: string
+        purchase_order:
+          type: string
+          format: uuid
+          nullable: true
+        sales_order:
+          type: string
+          format: uuid
+          nullable: true
+        purchase_invoice:
+          type: string
+          format: uuid
+          nullable: true
+        sales_invoice:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+  responses:
+    UnauthorizedError:
+      description: Missing or invalid authentication token.
+    ForbiddenError:
+      description: The user does not have permission to perform this action.
+    ValidationError:
+      description: Invalid input data (e.g. overpayment, negative numbers).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+    NotFoundError:
+      description: Requested reference order or invoice could not be found.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+
+security:
+  - bearerAuth: []
+
+paths:
+  /finance/cash-flows/:
+    get:
+      summary: List Cash Flows
+      description: Returns a list of cash flow transactions.
+      tags:
+        - Cash Flows
+      responses:
+        '200':
+          description: A list of cash flows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CashFlowTransaction'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Create Cash Flow Transaction
+      description: Creates a new cash flow transaction. Can optionally link to orders or invoices to process deposits or payments. Validates overpayment logic.
+      tags:
+        - Cash Flows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CashFlowInput'
+      responses:
+        '201':
+          description: Cash flow successfully created and cross-updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowTransaction'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/cash-flows/{pk}/:
+    get:
+      summary: Get Cash Flow Transaction
+      description: Retrieves a specific cash flow transaction by ID.
+      tags:
+        - Cash Flows
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cash flow details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowTransaction'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

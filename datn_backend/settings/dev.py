@@ -9,11 +9,11 @@ DEBUG = True
 
 INSTALLED_APPS += [
     "django_extensions",
-    "debug_toolbar",
+    # "debug_toolbar",
 ]
 
 MIDDLEWARE += [
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
+    # "debug_toolbar.middleware.DebugToolbarMiddleware",
 ]
 
 # Internal IPs for debug toolbar

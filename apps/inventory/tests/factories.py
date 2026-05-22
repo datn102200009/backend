@@ -10,8 +10,10 @@ from decimal import Decimal
 import factory
 
 from apps.accounts.models import Permission, Role, RolePermission, User
+from apps.crm.models import Customer
 from apps.inventory.models import StockEntry, StockEntryDetail, StockLedger
 from apps.master_data.models import BOM, UOM, BOMItem, Item, ItemGroup, Warehouse, WorkOrder
+from apps.procurement.models import Supplier
 
 
 class RoleFactory(factory.django.DjangoModelFactory):
@@ -19,6 +21,7 @@ class RoleFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Role
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Role-{n}")
     description = factory.Faker("text")
@@ -29,6 +32,7 @@ class PermissionFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Permission
+        django_get_or_create = ("code",)
 
     code = factory.Sequence(lambda n: f"permission.code_{n}")
     name = factory.Faker("word")
@@ -39,6 +43,7 @@ class UserFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = User
+        django_get_or_create = ("username",)
 
     username = factory.Sequence(lambda n: f"user{n}")
     email = factory.Sequence(lambda n: f"user{n}@example.com")
@@ -52,6 +57,7 @@ class ItemGroupFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = ItemGroup
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Item Group {n}")
     is_group = True
@@ -62,6 +68,7 @@ class UOMFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = UOM
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"UOM-{n}")
 
@@ -71,6 +78,7 @@ class WarehouseFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = Warehouse
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"Warehouse-{n}")
     is_group = False
@@ -90,6 +98,28 @@ class ItemFactory(factory.django.DjangoModelFactory):
     status = "active"
     is_import = False
     recycling_coef_a = Decimal("0.05")
+
+
+class SupplierFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo Supplier."""
+
+    class Meta:
+        model = Supplier
+
+    name = factory.Sequence(lambda n: f"SUP-{n}")
+    supplier_name = factory.Faker("company")
+    supplier_group = "Local"
+
+
+class CustomerFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo Customer."""
+
+    class Meta:
+        model = Customer
+
+    name = factory.Sequence(lambda n: f"CUS-{n}")
+    customer_name = factory.Faker("company")
+    customer_group = "Commercial"
 
 
 class BOMFactory(factory.django.DjangoModelFactory):
