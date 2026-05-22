@@ -8,7 +8,7 @@ from django.db import transaction
 from apps.accounts.models import User
 from apps.common.services import create_system_log
 from apps.common.xlib.exceptions import ValidationException
-from apps.hrm.models import EmployeeDocument, EmploymentContract
+from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
 from apps.master_data.models import Employee
 
 
@@ -391,3 +391,127 @@ def contract_terminate(
         )
 
     return contract
+
+
+@transaction.atomic
+def employee_update_salary_or_title(
+    *,
+    employee_id: str,
+    change_data: Dict[str, Any],
+    approved_by_user_id: str,
+) -> Employee:
+    """
+    Cập nhật lương cơ bản, chức danh hoặc phòng ban của nhân viên và tự động ghi nhận vào EmploymentHistory.
+    """
+    try:
+        employee = Employee.objects.get(id=employee_id)
+    except Employee.DoesNotExist:
+        raise ValidationException("Nhân viên không tồn tại")
+
+    try:
+        approved_by = User.objects.get(id=approved_by_user_id)
+    except User.DoesNotExist:
+        approved_by = None
+
+    change_type = change_data.get("change_type")
+    if not change_type:
+        raise ValidationException("Loại thay đổi (change_type) là bắt buộc")
+
+    effective_date = change_data.get("effective_date")
+    if not effective_date:
+        raise ValidationException("Ngày có hiệu lực (effective_date) là bắt buộc")
+
+    # Lưu giá trị cũ
+    old_salary_base = employee.salary_base
+    old_title = employee.position_title
+    old_department = employee.department
+
+    # Khởi tạo giá trị mới
+    new_salary_base = change_data.get("new_salary_base")
+    new_title = change_data.get("new_title")
+    new_department = change_data.get("new_department")
+
+    # Thực hiện cập nhật
+    if change_type == "salary_change":
+        if new_salary_base is None:
+            raise ValidationException("Lương cơ bản mới là bắt buộc cho thay đổi lương")
+        employee.salary_base = Decimal(str(new_salary_base))
+    elif change_type == "title_change":
+        if not new_title:
+            raise ValidationException("Chức danh mới là bắt buộc cho thay đổi chức danh")
+        employee.position_title = new_title
+    elif change_type == "department_transfer":
+        if not new_department:
+            raise ValidationException("Phòng ban mới là bắt buộc cho điều chuyển phòng ban")
+        employee.department = new_department
+    elif change_type == "other":
+        if new_salary_base is not None:
+            employee.salary_base = Decimal(str(new_salary_base))
+        if new_title is not None:
+            employee.position_title = new_title
+        if new_department is not None:
+            employee.department = new_department
+    else:
+        raise ValidationException(f"Loại thay đổi không hợp lệ: {change_type}")
+
+    employee.save()
+
+    # Ghi nhận log employee update trước
+    employee_old = {}
+    employee_new = {}
+    if old_salary_base != employee.salary_base:
+        employee_old["salary_base"] = str(old_salary_base) if old_salary_base is not None else None
+        employee_new["salary_base"] = str(employee.salary_base)
+    if old_title != employee.position_title:
+        employee_old["position_title"] = old_title
+        employee_new["position_title"] = employee.position_title
+    if old_department != employee.department:
+        employee_old["department"] = old_department
+        employee_new["department"] = employee.department
+
+    if employee_new:
+        create_system_log(
+            user=approved_by,
+            action="update",
+            table_name="employee",
+            record_id=str(employee.id),
+            old_value=employee_old,
+            new_value=employee_new,
+        )
+
+    # 2. Tạo bản ghi EmploymentHistory
+    history = EmploymentHistory.objects.create(
+        employee=employee,
+        change_type=change_type,
+        old_salary_base=old_salary_base,
+        new_salary_base=employee.salary_base,
+        old_title=old_title,
+        new_title=employee.position_title,
+        old_department=old_department,
+        new_department=employee.department,
+        effective_date=effective_date,
+        approved_by=approved_by,
+        reason=change_data.get("reason"),
+    )
+
+    # 3. Ghi log cho EmploymentHistory
+    history_log_data = {
+        "change_type": history.change_type,
+        "old_salary_base": str(history.old_salary_base) if history.old_salary_base is not None else None,
+        "new_salary_base": str(history.new_salary_base) if history.new_salary_base is not None else None,
+        "old_title": history.old_title,
+        "new_title": history.new_title,
+        "old_department": history.old_department,
+        "new_department": history.new_department,
+        "effective_date": str(history.effective_date),
+        "reason": history.reason,
+    }
+    create_system_log(
+        user=approved_by,
+        action="create",
+        table_name="employment_history",
+        record_id=str(history.id),
+        new_value=history_log_data,
+    )
+
+    return employee

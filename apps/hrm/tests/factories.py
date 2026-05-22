@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import factory
 
-from apps.hrm.models import EmployeeDocument, EmploymentContract
+from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
 from apps.master_data.models import Employee
 
 
@@ -37,3 +37,17 @@ class EmploymentContractFactory(factory.django.DjangoModelFactory):
     start_date = "2026-01-01"
     end_date = "2026-12-31"
     status = "active"
+
+
+class EmploymentHistoryFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo EmploymentHistory phục vụ kiểm thử."""
+
+    class Meta:
+        model = EmploymentHistory
+
+    employee = factory.SubFactory(EmployeeFactory)
+    change_type = "salary_change"
+    old_salary_base = Decimal("10000000.00")
+    new_salary_base = Decimal("12000000.00")
+    effective_date = "2026-06-01"
+    reason = "Tăng lương định kỳ"

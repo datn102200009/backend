@@ -100,3 +100,39 @@ class EmployeeDocument(BaseModel):
 
     def __str__(self):
         return f"{self.title} ({self.get_doc_type_display()}) - {self.employee.full_name}"
+
+
+class EmploymentHistory(BaseModel):
+    """
+    Ghi vết tất cả những thay đổi quan trọng về chức vụ, bộ phận hoặc lương cơ bản của nhân viên.
+    """
+
+    CHANGE_TYPES = [
+        ("salary_change", "Thay đổi lương"),
+        ("title_change", "Thay đổi chức danh"),
+        ("department_transfer", "Điều chuyển phòng ban"),
+        ("other", "Khác"),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="employment_histories")
+    change_type = models.CharField(max_length=50, choices=CHANGE_TYPES)
+    old_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    new_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    old_title = models.CharField(max_length=100, null=True, blank=True)
+    new_title = models.CharField(max_length=100, null=True, blank=True)
+    old_department = models.CharField(max_length=100, null=True, blank=True)
+    new_department = models.CharField(max_length=100, null=True, blank=True)
+    effective_date = models.DateField()
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="approved_histories", null=True, blank=True
+    )
+    reason = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "employment_history"
+        verbose_name = "Employment History"
+        verbose_name_plural = "Employment Histories"
+        ordering = ["-effective_date", "-created_at"]
+
+    def __str__(self):
+        return f"{self.employee.full_name} - {self.get_change_type_display()} ({self.effective_date})"

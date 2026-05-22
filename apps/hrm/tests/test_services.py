@@ -5,9 +5,15 @@ import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.accounts.models import SystemLog, User
-from apps.hrm.models import EmployeeDocument, EmploymentContract
-from apps.hrm.services import contract_create_or_renew, contract_terminate, employee_create_with_user, employee_update
-from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory
+from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
+from apps.hrm.services import (
+    contract_create_or_renew,
+    contract_terminate,
+    employee_create_with_user,
+    employee_update,
+    employee_update_salary_or_title,
+)
+from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory, EmploymentHistoryFactory
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 from apps.master_data.models import Employee
 
@@ -240,3 +246,106 @@ class TestContractServices:
         ).first()
         assert user_log is not None
         assert user_log.new_value["is_active"] is False
+
+
+@pytest.mark.django_db
+class TestEmploymentHistoryServices:
+
+    def test_update_salary_creates_history_and_logs(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP1111", salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_history")
+        change_data = {
+            "change_type": "salary_change",
+            "new_salary_base": Decimal("13000000.00"),
+            "effective_date": date(2026, 6, 1),
+            "reason": "Điều chỉnh lương cơ bản theo hiệu suất",
+        }
+
+        # Act
+        updated_employee = employee_update_salary_or_title(
+            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
+        )
+
+        # Assert
+        updated_employee.refresh_from_db()
+        assert updated_employee.salary_base == Decimal("13000000.00")
+
+        # Verify EmploymentHistory was created
+        history = EmploymentHistory.objects.filter(employee=employee).first()
+        assert history is not None
+        assert history.change_type == "salary_change"
+        assert history.old_salary_base == Decimal("10000000.00")
+        assert history.new_salary_base == Decimal("13000000.00")
+        assert history.effective_date == date(2026, 6, 1)
+        assert history.approved_by == admin
+        assert history.reason == "Điều chỉnh lương cơ bản theo hiệu suất"
+
+        # Verify SystemLog was written
+        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        assert log is not None
+        assert log.action == "create"
+        assert Decimal(str(log.new_value["new_salary_base"])) == Decimal("13000000.00")
+
+    def test_update_title_creates_history_and_logs(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP2222", position_title="Junior Developer")
+        admin = UserFactory(username="admin_history_2")
+        change_data = {
+            "change_type": "title_change",
+            "new_title": "Senior Developer",
+            "effective_date": date(2026, 6, 1),
+            "reason": "Thăng chức sau kỳ đánh giá",
+        }
+
+        # Act
+        updated_employee = employee_update_salary_or_title(
+            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
+        )
+
+        # Assert
+        updated_employee.refresh_from_db()
+        assert updated_employee.position_title == "Senior Developer"
+
+        # Verify EmploymentHistory
+        history = EmploymentHistory.objects.filter(employee=employee).first()
+        assert history is not None
+        assert history.change_type == "title_change"
+        assert history.old_title == "Junior Developer"
+        assert history.new_title == "Senior Developer"
+        assert history.effective_date == date(2026, 6, 1)
+
+        # Verify SystemLog
+        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        assert log is not None
+
+    def test_update_department_creates_history_and_logs(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP3333", department="IT")
+        admin = UserFactory(username="admin_history_3")
+        change_data = {
+            "change_type": "department_transfer",
+            "new_department": "R&D",
+            "effective_date": date(2026, 6, 1),
+            "reason": "Điều chuyển nhân sự dự án mới",
+        }
+
+        # Act
+        updated_employee = employee_update_salary_or_title(
+            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
+        )
+
+        # Assert
+        updated_employee.refresh_from_db()
+        assert updated_employee.department == "R&D"
+
+        # Verify EmploymentHistory
+        history = EmploymentHistory.objects.filter(employee=employee).first()
+        assert history is not None
+        assert history.change_type == "department_transfer"
+        assert history.old_department == "IT"
+        assert history.new_department == "R&D"
+
+        # Verify SystemLog
+        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        assert log is not None
