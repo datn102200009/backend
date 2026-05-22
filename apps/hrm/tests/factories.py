@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import factory
 
+from apps.hrm.models import EmployeeDocument, EmploymentContract
 from apps.master_data.models import Employee
 
 
@@ -22,3 +23,17 @@ class EmployeeFactory(factory.django.DjangoModelFactory):
     phone = "0987654321"
     gender = "male"
     employment_status = "active"
+
+
+class EmploymentContractFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo EmploymentContract phục vụ kiểm thử."""
+
+    class Meta:
+        model = EmploymentContract
+
+    employee = factory.SubFactory(EmployeeFactory)
+    contract_no = factory.Sequence(lambda n: f"HDLD-{n:04d}")
+    contract_type = "definite_term"
+    start_date = "2026-01-01"
+    end_date = "2026-12-31"
+    status = "active"

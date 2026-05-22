@@ -1,11 +1,13 @@
+from datetime import date
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.accounts.models import SystemLog, User
-from apps.hrm.services import employee_create_with_user, employee_update
-from apps.hrm.tests.factories import EmployeeFactory
+from apps.hrm.models import EmployeeDocument, EmploymentContract
+from apps.hrm.services import contract_create_or_renew, contract_terminate, employee_create_with_user, employee_update
+from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 from apps.master_data.models import Employee
 
@@ -114,3 +116,127 @@ class TestEmployeeServices:
         assert log.new_value["full_name"] == "New Name"
         assert log.new_value["email"] == "new@example.com"
         assert log.new_value["address"] == "New Address"
+
+
+@pytest.mark.django_db
+class TestContractServices:
+
+    def test_contract_create_first_contract(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP0001", full_name="John Doe")
+        admin = UserFactory(username="admin_creator")
+        contract_data = {
+            "contract_no": "HDLD-2026-0001",
+            "contract_type": "definite_term",
+            "start_date": date(2026, 1, 1),
+            "end_date": date(2026, 12, 31),
+            "note": "Hợp đồng lao động năm 2026",
+            "file_url": "https://example.com/scan_contract.pdf",
+        }
+
+        # Act
+        contract = contract_create_or_renew(employee_id=employee.id, contract_data=contract_data, creator=admin)
+
+        # Assert
+        assert contract is not None
+        assert contract.contract_no == "HDLD-2026-0001"
+        assert contract.status == "active"
+        assert contract.employee == employee
+
+        # Verify EmployeeDocument was created for the scan
+        doc = EmployeeDocument.objects.filter(employee=employee, doc_type="contract_scan").first()
+        assert doc is not None
+        assert doc.file_url == "https://example.com/scan_contract.pdf"
+        assert doc.uploaded_by == admin
+
+        # Verify SystemLog for contract creation
+        log = SystemLog.objects.filter(table_name="employment_contract", record_id=str(contract.id), user=admin).first()
+        assert log is not None
+        assert log.action == "create"
+
+    def test_contract_renew_expires_old_contract(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP0002", full_name="Jane Doe")
+        admin = UserFactory(username="admin_creator")
+        old_contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-OLD", status="active")
+
+        new_contract_data = {
+            "contract_no": "HDLD-NEW",
+            "contract_type": "indefinite_term",
+            "start_date": date(2027, 1, 1),
+            "note": "Gia hạn hợp đồng vô thời hạn",
+        }
+
+        # Act
+        new_contract = contract_create_or_renew(employee_id=employee.id, contract_data=new_contract_data, creator=admin)
+
+        # Assert
+        # Refresh old contract from DB
+        old_contract.refresh_from_db()
+        assert old_contract.status == "expired"
+        assert new_contract.contract_no == "HDLD-NEW"
+        assert new_contract.status == "active"
+
+        # Verify SystemLogs for both old contract update (to expired) and new contract create
+        old_log = SystemLog.objects.filter(
+            table_name="employment_contract", record_id=str(old_contract.id), action="update", user=admin
+        ).first()
+        assert old_log is not None
+        assert old_log.new_value["status"] == "expired"
+
+        new_log = SystemLog.objects.filter(
+            table_name="employment_contract", record_id=str(new_contract.id), action="create", user=admin
+        ).first()
+        assert new_log is not None
+
+    def test_contract_terminate_disables_user_and_employee(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP0003", full_name="Bob Smith", employment_status="active")
+        # Create an associated user
+        user = UserFactory(username="bobsmith", employee_id="EMP0003", is_active=True)
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-BOB", status="active")
+        admin = UserFactory(username="admin_creator")
+
+        # Act
+        terminated_contract = contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 6, 30),
+            reason="Sa thải do vi phạm kỷ luật",
+            terminator=admin,
+            file_url="https://example.com/quyet_dinh_thoi_viec.pdf",
+        )
+
+        # Assert
+        terminated_contract.refresh_from_db()
+        employee.refresh_from_db()
+        user.refresh_from_db()
+
+        assert terminated_contract.status == "terminated"
+        assert terminated_contract.end_date == date(2026, 6, 30)
+        assert employee.employment_status == "inactive"
+        assert employee.leave_date == date(2026, 6, 30)
+        assert user.is_active is False
+
+        # Verify Document was created
+        doc = EmployeeDocument.objects.filter(employee=employee, doc_type="resignation_letter").first()
+        assert doc is not None
+        assert doc.file_url == "https://example.com/quyet_dinh_thoi_viec.pdf"
+
+        # Verify Logs
+        contract_log = SystemLog.objects.filter(
+            table_name="employment_contract", record_id=str(contract.id), action="update", user=admin
+        ).first()
+        assert contract_log is not None
+        assert contract_log.new_value["status"] == "terminated"
+
+        employee_log = SystemLog.objects.filter(
+            table_name="employee", record_id=str(employee.id), action="update", user=admin
+        ).first()
+        assert employee_log is not None
+        assert employee_log.new_value["employment_status"] == "inactive"
+
+        user_log = SystemLog.objects.filter(
+            table_name="user", record_id=str(user.id), action="update", user=admin
+        ).first()
+        assert user_log is not None
+        assert user_log.new_value["is_active"] is False
