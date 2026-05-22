@@ -2,6 +2,7 @@ from django.db import models
 
 from apps.accounts.models import User
 from apps.common.models import BaseModel
+from apps.finance.models import SalarySlip
 from apps.master_data.models import Employee
 
 
@@ -181,3 +182,68 @@ class EmploymentHistory(BaseModel):
 
     def __str__(self):
         return f"{self.employee.full_name} - {self.get_change_type_display()} ({self.effective_date})"
+
+
+class RewardRecord(BaseModel):
+    """
+    Khen thưởng nhân viên.
+    """
+
+    REWARD_TYPES = [
+        ("performance_bonus", "Thưởng hiệu quả công việc"),
+        ("initiative", "Sáng kiến"),
+        ("holiday_bonus", "Thưởng lễ tết"),
+        ("other", "Khác"),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="rewards")
+    reward_date = models.DateField()
+    reward_type = models.CharField(max_length=50, choices=REWARD_TYPES)
+    amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    description = models.TextField()
+    salary_slip = models.ForeignKey(
+        SalarySlip, on_delete=models.SET_NULL, null=True, blank=True, related_name="rewards"
+    )
+
+    class Meta:
+        db_table = "reward_record"
+        verbose_name = "Reward Record"
+        verbose_name_plural = "Reward Records"
+        ordering = ["-reward_date"]
+
+    def __str__(self):
+        return f"Reward {self.employee.full_name} - {self.get_reward_type_display()} ({self.reward_date})"
+
+
+class DisciplineRecord(BaseModel):
+    """
+    Kỷ luật nhân viên.
+    """
+
+    DISCIPLINE_TYPES = [
+        ("reprimand", "Khiển trách"),
+        ("warning", "Cảnh cáo"),
+        ("salary_deduction", "Khấu trừ lương"),
+        ("termination", "Sa thải"),
+        ("other", "Khác"),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="disciplines")
+    incident_date = models.DateField()
+    discipline_date = models.DateField()
+    discipline_type = models.CharField(max_length=50, choices=DISCIPLINE_TYPES)
+    description = models.TextField()
+    penalty_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    salary_slip = models.ForeignKey(
+        SalarySlip, on_delete=models.SET_NULL, null=True, blank=True, related_name="disciplines"
+    )
+    file_url = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "discipline_record"
+        verbose_name = "Discipline Record"
+        verbose_name_plural = "Discipline Records"
+        ordering = ["-discipline_date"]
+
+    def __str__(self):
+        return f"Discipline {self.employee.full_name} - {self.get_discipline_type_display()} ({self.discipline_date})"

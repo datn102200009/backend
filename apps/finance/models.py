@@ -12,11 +12,21 @@ class SalarySlip(BaseModel):
     name = models.CharField(max_length=255, unique=True)
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="salary_slips")
     salary_period = models.CharField(max_length=10)  # Format: YYYY-MM
-    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    gross_pay = models.DecimalField(max_digits=15, decimal_places=2)
+    base_salary = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    overtime_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    allowance_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    reward_amount_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    discipline_deduction_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, default=0, null=True, blank=True)
+    gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    net_pay = models.DecimalField(max_digits=15, decimal_places=2)
-    payment_method = models.CharField(max_length=50, null=True, blank=True)
+    net_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    payment_method = models.CharField(
+        max_length=50,
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
+        null=True,
+        blank=True,
+    )
     status = models.CharField(
         max_length=20,
         choices=[
@@ -27,6 +37,7 @@ class SalarySlip(BaseModel):
         ],
         default="draft",
     )
+    remarks = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = "salary_slip"

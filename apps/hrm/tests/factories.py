@@ -2,7 +2,16 @@ from decimal import Decimal
 
 import factory
 
-from apps.hrm.models import Attendance, EmployeeDocument, EmploymentContract, EmploymentHistory, LeaveRequest
+from apps.finance.models import SalarySlip
+from apps.hrm.models import (
+    Attendance,
+    DisciplineRecord,
+    EmployeeDocument,
+    EmploymentContract,
+    EmploymentHistory,
+    LeaveRequest,
+    RewardRecord,
+)
 from apps.master_data.models import Employee
 
 
@@ -79,3 +88,52 @@ class LeaveRequestFactory(factory.django.DjangoModelFactory):
     days = Decimal("3.0")
     reason = "Nghỉ mát gia đình"
     status = "pending"
+
+
+class SalarySlipFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo SalarySlip phục vụ kiểm thử."""
+
+    class Meta:
+        model = SalarySlip
+
+    name = factory.Sequence(lambda n: f"SLIP-{n:04d}")
+    employee = factory.SubFactory(EmployeeFactory)
+    salary_period = "2026-05"
+    base_salary = Decimal("0.00")
+    overtime_amount = Decimal("0.00")
+    allowance_amount = Decimal("0.00")
+    reward_amount_total = Decimal("0.00")
+    discipline_deduction_total = Decimal("0.00")
+    union_fee_2pct = Decimal("0.00")
+    gross_pay = Decimal("0.00")
+    deductions = Decimal("0.00")
+    net_pay = Decimal("0.00")
+    payment_method = "bank_transfer"
+    status = "draft"
+
+
+class RewardRecordFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo RewardRecord phục vụ kiểm thử."""
+
+    class Meta:
+        model = RewardRecord
+
+    employee = factory.SubFactory(EmployeeFactory)
+    reward_date = "2026-05-15"
+    reward_type = "performance_bonus"
+    amount = Decimal("1000000.00")
+    description = "Thành tích xuất sắc tháng"
+
+
+class DisciplineRecordFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo DisciplineRecord phục vụ kiểm thử."""
+
+    class Meta:
+        model = DisciplineRecord
+
+    employee = factory.SubFactory(EmployeeFactory)
+    incident_date = "2026-05-10"
+    discipline_date = "2026-05-12"
+    discipline_type = "warning"
+    penalty_amount = Decimal("500000.00")
+    description = "Đi muộn nhiều lần"

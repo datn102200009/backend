@@ -5,23 +5,39 @@ import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.accounts.models import SystemLog, User
-from apps.hrm.models import Attendance, EmployeeDocument, EmploymentContract, EmploymentHistory, LeaveRequest
+from apps.hrm.models import (
+    Attendance,
+    DisciplineRecord,
+    EmployeeDocument,
+    EmploymentContract,
+    EmploymentHistory,
+    LeaveRequest,
+    RewardRecord,
+)
 from apps.hrm.services import (
     attendance_batch_record,
     contract_create_or_renew,
     contract_terminate,
+    discipline_record_create,
     employee_create_with_user,
     employee_update,
     employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
+    payroll_calculate_salary,
+    payroll_confirm_and_pay,
+    payroll_initialize_period,
+    reward_record_create,
 )
 from apps.hrm.tests.factories import (
     AttendanceFactory,
+    DisciplineRecordFactory,
     EmployeeFactory,
     EmploymentContractFactory,
     EmploymentHistoryFactory,
     LeaveRequestFactory,
+    RewardRecordFactory,
+    SalarySlipFactory,
 )
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 from apps.master_data.models import Employee
@@ -477,3 +493,219 @@ class TestAttendanceAndLeaveServices:
             att_log = SystemLog.objects.filter(table_name="attendance", record_id=str(att.id), action="create").first()
             assert att_log is not None
             assert att_log.new_value["status"] == "sick_leave"
+
+
+@pytest.mark.django_db
+class TestPayrollAndRewardDisciplineServices:
+
+    def test_reward_record_create(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP7001")
+        admin = UserFactory(username="admin_reward")
+        data = {
+            "reward_date": date(2026, 5, 15),
+            "reward_type": "performance_bonus",
+            "amount": Decimal("1500000.00"),
+            "description": "Thành tích xuất sắc trong dự án",
+        }
+
+        # Act
+        reward = reward_record_create(employee_id=employee.id, data=data, creator=admin)
+
+        # Assert
+        assert reward is not None
+        assert reward.employee == employee
+        assert reward.amount == Decimal("1500000.00")
+        assert reward.reward_type == "performance_bonus"
+
+        # Verify log
+        log = SystemLog.objects.filter(table_name="reward_record", record_id=str(reward.id), user=admin).first()
+        assert log is not None
+        assert log.action == "create"
+        assert Decimal(str(log.new_value["amount"])) == Decimal("1500000.00")
+
+    def test_discipline_record_create(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP7002")
+        admin = UserFactory(username="admin_discipline")
+        data = {
+            "incident_date": date(2026, 5, 10),
+            "discipline_date": date(2026, 5, 12),
+            "discipline_type": "salary_deduction",
+            "penalty_amount": Decimal("500000.00"),
+            "description": "Vi phạm quy chế bảo mật thông tin",
+            "file_url": "https://example.com/scan_incident.pdf",
+        }
+
+        # Act
+        discipline = discipline_record_create(employee_id=employee.id, data=data, creator=admin)
+
+        # Assert
+        assert discipline is not None
+        assert discipline.employee == employee
+        assert discipline.penalty_amount == Decimal("500000.00")
+        assert discipline.file_url == "https://example.com/scan_incident.pdf"
+
+        # Verify log
+        log = SystemLog.objects.filter(table_name="discipline_record", record_id=str(discipline.id), user=admin).first()
+        assert log is not None
+        assert log.action == "create"
+
+    def test_payroll_initialize_period(self):
+        # Arrange
+        EmployeeFactory(employee_id="EMP7003", employment_status="active")
+        EmployeeFactory(employee_id="EMP7004", employment_status="active")
+        EmployeeFactory(employee_id="EMP7005", employment_status="inactive")
+        admin = UserFactory(username="admin_payroll")
+
+        # Act
+        slips = payroll_initialize_period(salary_period="2026-05", creator=admin)
+
+        # Assert
+        # 2 active employees should get slips, inactive employee shouldn't
+        assert len(slips) == 2
+        employee_ids = [slip.employee.employee_id for slip in slips]
+        assert "EMP7003" in employee_ids
+        assert "EMP7004" in employee_ids
+        assert "EMP7005" not in employee_ids
+
+        # Slips should be in draft status
+        for slip in slips:
+            assert slip.status == "draft"
+            assert slip.salary_period == "2026-05"
+
+            # Check log
+            log = SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=admin).first()
+            assert log is not None
+            assert log.action == "create"
+
+    def test_payroll_calculate_salary_with_all_components(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP7006",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=True,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll")
+
+        # 1. Chấm công trong tháng 5/2026:
+        # Giả sử tháng 5 có 26 ngày công chuẩn.
+        # Nhân viên đi làm 20 ngày "working" (8h/ngày, không OT).
+        # Nghỉ phép 2 ngày "paid_leave" (8h/ngày, work_hours=0).
+        # Nghỉ phép 2 ngày "unpaid_leave" (work_hours=0).
+        # Có 2 ngày làm thêm: 1 ngày làm thêm 4h, 1 ngày làm thêm 6h (Tổng 10h overtime).
+        # Cấu hình cụ thể:
+        for day in range(1, 21):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+
+        for day in range(21, 23):
+            AttendanceFactory(
+                employee=employee, date=date(2026, 5, day), status="paid_leave", work_hours=Decimal("0.00")
+            )
+
+        for day in range(23, 25):
+            AttendanceFactory(
+                employee=employee, date=date(2026, 5, day), status="unpaid_leave", work_hours=Decimal("0.00")
+            )
+
+        # Thêm OT vào 2 ngày đi làm
+        att_ot1 = Attendance.objects.get(employee=employee, date=date(2026, 5, 1))
+        att_ot1.overtime_hours = Decimal("4.00")
+        att_ot1.save()
+
+        att_ot2 = Attendance.objects.get(employee=employee, date=date(2026, 5, 2))
+        att_ot2.overtime_hours = Decimal("6.00")
+        att_ot2.save()
+
+        # 2. Thưởng & Phạt:
+        # Tạo 1 phiếu thưởng 1.500.000 VNĐ
+        reward = RewardRecordFactory(employee=employee, reward_date=date(2026, 5, 15), amount=Decimal("1500000.00"))
+
+        # Tạo 1 phiếu kỷ luật phạt 500.000 VNĐ
+        discipline = DisciplineRecordFactory(
+            employee=employee, discipline_date=date(2026, 5, 12), penalty_amount=Decimal("500000.00")
+        )
+
+        # Khởi tạo salary slip
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        reward.refresh_from_db()
+        discipline.refresh_from_db()
+
+        # Kiểm tra liên kết thưởng/phạt với phiếu lương
+        assert reward.salary_slip == calculated_slip
+        assert discipline.salary_slip == calculated_slip
+
+        assert calculated_slip.base_salary == Decimal("11000000.00")
+        assert calculated_slip.overtime_amount == Decimal("937500.00")
+        assert calculated_slip.reward_amount_total == Decimal("1500000.00")
+        assert calculated_slip.discipline_deduction_total == Decimal("500000.00")
+        assert calculated_slip.union_fee_2pct == Decimal("260000.00")
+        assert calculated_slip.gross_pay == Decimal("11937500.00")
+        assert calculated_slip.deductions == Decimal("760000.00")
+        assert calculated_slip.net_pay == Decimal("12677500.00")
+
+    def test_payroll_cash_payment_warning(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP7007",
+            salary_base=Decimal("12000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll")
+
+        # Đi làm đủ 26 ngày
+        for day in range(1, 27):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", payment_method="cash")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        assert calculated_slip.net_pay == Decimal("12000000.00")
+        # Do trả tiền mặt từ 5 triệu trở lên, phải ghi nhận cảnh báo trong remarks
+        assert calculated_slip.remarks is not None
+        assert "cảnh báo" in calculated_slip.remarks.lower() or "tiền mặt" in calculated_slip.remarks.lower()
+
+    def test_payroll_confirm_and_pay_creates_cash_flow_transaction(self):
+        from apps.finance.models import CashFlowTransaction
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP7008", full_name="Nguyen Van Finance")
+        admin = UserFactory(username="admin_payroll")
+
+        # Tạo sẵn slip đã được tính toán lương
+        slip = SalarySlipFactory(
+            employee=employee,
+            salary_period="2026-05",
+            base_salary=Decimal("8000000.00"),
+            gross_pay=Decimal("8000000.00"),
+            deductions=Decimal("0.00"),
+            net_pay=Decimal("8000000.00"),
+            payment_method="bank_transfer",
+            status="draft",
+        )
+
+        # Act
+        paid_slip = payroll_confirm_and_pay(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        paid_slip.refresh_from_db()
+        assert paid_slip.status == "paid"
+
+        # Verify that CashFlowTransaction was created
+        tx = CashFlowTransaction.objects.filter(payment_type="pay", amount=Decimal("8000000.00")).first()
+        assert tx is not None
+        assert tx.category == "Chi trả lương nhân viên"
+        assert "Nguyen Van Finance" in tx.remarks
+        assert "2026-05" in tx.remarks
