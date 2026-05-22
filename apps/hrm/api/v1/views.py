@@ -208,6 +208,7 @@ def employee_update_salary_title_view(request, pk):
         employee_id=pk,
         change_data=serializer.validated_data,
         approved_by_user_id=str(user.id),
+        approved_by=user,
     )
 
     out_serializer = EmployeeOutputSerializer(updated_employee)
@@ -384,6 +385,7 @@ def leave_request_create_view(request):
     leave_request = leave_request_create(
         employee_id=employee_id,
         data=data,
+        creator=user,
     )
 
     out_serializer = LeaveRequestOutputSerializer(leave_request)
@@ -417,6 +419,7 @@ def leave_request_approve_view(request, pk):
         updated_request = leave_request_approve(
             leave_request_id=pk,
             approved_by_user_id=str(user.id),
+            approved_by=user,
         )
     else:  # reject
         if leave_request.status != "pending":

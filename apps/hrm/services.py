@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.common.services import create_system_log
 from apps.common.xlib.exceptions import ValidationException
+from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.models import SalarySlip
 from apps.hrm.models import (
     Attendance,
@@ -31,6 +32,9 @@ def employee_create_with_user(
     """
     Tạo mới một Employee và tùy chọn tạo tài khoản User liên kết qua employee_id.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_employee")
+
     employee_id = data.get("employee_id")
     if not employee_id:
         raise ValidationException("Mã nhân viên (employee_id) là bắt buộc")
@@ -130,6 +134,9 @@ def employee_update(
     """
     Cập nhật hồ sơ nhân viên và ghi SystemLog thay đổi chi tiết.
     """
+    if updater:
+        PermissionChecker.check_permission(updater, "hrm.change_employee")
+
     fields_to_update = [
         "full_name",
         "department",
@@ -198,6 +205,9 @@ def contract_create_or_renew(
     Returns:
         EmploymentContract: Hợp đồng lao động mới
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_employmentcontract")
+
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
@@ -307,6 +317,9 @@ def contract_terminate(
     Returns:
         EmploymentContract: Hợp đồng đã chấm dứt
     """
+    if terminator:
+        PermissionChecker.check_permission(terminator, "hrm.change_employmentcontract")
+
     try:
         contract = EmploymentContract.objects.get(id=contract_id)
     except EmploymentContract.DoesNotExist:
@@ -409,19 +422,24 @@ def employee_update_salary_or_title(
     employee_id: str,
     change_data: Dict[str, Any],
     approved_by_user_id: str,
+    approved_by: Optional[User] = None,
 ) -> Employee:
     """
     Cập nhật lương cơ bản, chức danh hoặc phòng ban của nhân viên và tự động ghi nhận vào EmploymentHistory.
     """
+    if approved_by:
+        PermissionChecker.check_permission(approved_by, "hrm.change_employee")
+
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
         raise ValidationException("Nhân viên không tồn tại")
 
-    try:
-        approved_by = User.objects.get(id=approved_by_user_id)
-    except User.DoesNotExist:
-        approved_by = None
+    if not approved_by:
+        try:
+            approved_by = User.objects.get(id=approved_by_user_id)
+        except User.DoesNotExist:
+            approved_by = None
 
     change_type = change_data.get("change_type")
     if not change_type:
@@ -537,6 +555,9 @@ def attendance_batch_record(
     """
     Chấm công hàng loạt cho nhân viên vào một ngày cụ thể (tạo mới hoặc cập nhật).
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_attendance")
+
     result = []
     for rec in records:
         employee_id = rec.get("employee_id")
@@ -624,10 +645,14 @@ def leave_request_create(
     *,
     employee_id: str,
     data: Dict[str, Any],
+    creator: Optional[User] = None,
 ) -> LeaveRequest:
     """
     Tạo đơn xin nghỉ phép của nhân viên (mặc định trạng thái pending).
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_leaverequest")
+
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
@@ -655,7 +680,7 @@ def leave_request_create(
     )
 
     create_system_log(
-        user=None,
+        user=creator,
         action="create",
         table_name="leave_request",
         record_id=str(leave_request.id),
@@ -678,10 +703,14 @@ def leave_request_approve(
     *,
     leave_request_id: str,
     approved_by_user_id: str,
+    approved_by: Optional[User] = None,
 ) -> LeaveRequest:
     """
     Phê duyệt đơn xin nghỉ phép và tự động đồng bộ sang chấm công.
     """
+    if approved_by:
+        PermissionChecker.check_permission(approved_by, "hrm.change_leaverequest")
+
     try:
         leave_request = LeaveRequest.objects.get(id=leave_request_id)
     except LeaveRequest.DoesNotExist:
@@ -690,10 +719,11 @@ def leave_request_approve(
     if leave_request.status != "pending":
         raise ValidationException(f"Đơn xin nghỉ phép đã ở trạng thái: {leave_request.status}")
 
-    try:
-        approved_by = User.objects.get(id=approved_by_user_id)
-    except User.DoesNotExist:
-        approved_by = None
+    if not approved_by:
+        try:
+            approved_by = User.objects.get(id=approved_by_user_id)
+        except User.DoesNotExist:
+            approved_by = None
 
     old_status = leave_request.status
     leave_request.status = "approved"
@@ -802,16 +832,23 @@ def reward_record_create(
     """
     Ghi nhận khen thưởng của nhân viên.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_rewardrecord")
+
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
         raise ValidationException("Nhân viên không tồn tại")
 
+    amount = data.get("amount")
+    if amount is not None:
+        amount = Decimal(str(amount))
+
     reward = RewardRecord.objects.create(
         employee=employee,
         reward_date=data.get("reward_date"),
         reward_type=data.get("reward_type"),
-        amount=data.get("amount"),
+        amount=amount,
         description=data.get("description"),
         salary_slip_id=data.get("salary_slip_id"),
     )
@@ -843,10 +880,17 @@ def discipline_record_create(
     """
     Ghi nhận kỷ luật của nhân viên.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_disciplinerecord")
+
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
         raise ValidationException("Nhân viên không tồn tại")
+
+    penalty_amount = data.get("penalty_amount")
+    if penalty_amount is not None:
+        penalty_amount = Decimal(str(penalty_amount))
 
     discipline = DisciplineRecord.objects.create(
         employee=employee,
@@ -854,7 +898,7 @@ def discipline_record_create(
         discipline_date=data.get("discipline_date"),
         discipline_type=data.get("discipline_type"),
         description=data.get("description"),
-        penalty_amount=data.get("penalty_amount"),
+        penalty_amount=penalty_amount,
         salary_slip_id=data.get("salary_slip_id"),
         file_url=data.get("file_url"),
     )
@@ -887,6 +931,9 @@ def payroll_initialize_period(
     """
     Khởi tạo hàng loạt bản ghi SalarySlip ở trạng thái draft cho toàn bộ nhân sự đang active trong kỳ lương.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.add_salaryslip")
+
     active_employees = Employee.objects.filter(employment_status="active")
     slips = []
 
@@ -937,6 +984,9 @@ def payroll_calculate_salary(
     """
     Tính toán chi tiết phiếu lương dựa trên chấm công, phụ cấp, thưởng, phạt trong kỳ.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
     try:
         slip = SalarySlip.objects.get(id=salary_slip_id)
     except SalarySlip.DoesNotExist:
@@ -1073,6 +1123,9 @@ def payroll_confirm_and_pay(
     """
     Xác nhận và chi trả phiếu lương. Tự động sinh ra bút toán chi tiền CashFlowTransaction tại finance.
     """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
     try:
         slip = SalarySlip.objects.get(id=salary_slip_id)
     except SalarySlip.DoesNotExist:

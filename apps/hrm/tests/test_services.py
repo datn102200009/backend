@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.hashers import check_password
@@ -41,6 +42,13 @@ from apps.hrm.tests.factories import (
 )
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 from apps.master_data.models import Employee
+
+
+@pytest.fixture(autouse=True)
+def mock_check_permission():
+    with patch("apps.common.xlib.permissions.PermissionChecker.check_permission") as mock:
+        mock.return_value = True
+        yield mock
 
 
 @pytest.mark.django_db
