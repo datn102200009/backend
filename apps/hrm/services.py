@@ -1,14 +1,15 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from django.contrib.auth.hashers import make_password
 from django.db import transaction
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.common.services import create_system_log
 from apps.common.xlib.exceptions import ValidationException
-from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
+from apps.hrm.models import Attendance, EmployeeDocument, EmploymentContract, EmploymentHistory, LeaveRequest
 from apps.master_data.models import Employee
 
 
@@ -515,3 +516,268 @@ def employee_update_salary_or_title(
     )
 
     return employee
+
+
+@transaction.atomic
+def attendance_batch_record(
+    *,
+    date: date,
+    records: list[Dict[str, Any]],
+    creator: Optional[User] = None,
+) -> list[Attendance]:
+    """
+    Chấm công hàng loạt cho nhân viên vào một ngày cụ thể (tạo mới hoặc cập nhật).
+    """
+    result = []
+    for rec in records:
+        employee_id = rec.get("employee_id")
+        status = rec.get("status")
+        if not employee_id or not status:
+            raise ValidationException("Thông tin nhân viên và trạng thái chấm công là bắt buộc")
+
+        try:
+            employee = Employee.objects.get(id=employee_id)
+        except Employee.DoesNotExist:
+            raise ValidationException(f"Nhân viên ID {employee_id} không tồn tại")
+
+        work_hours = Decimal(str(rec.get("work_hours", 8.00)))
+        overtime_hours = Decimal(str(rec.get("overtime_hours", 0.00)))
+        remarks = rec.get("remarks")
+
+        # Tìm bản ghi chấm công đã tồn tại
+        attendance, created = Attendance.objects.get_or_create(
+            employee=employee,
+            date=date,
+            defaults={
+                "status": status,
+                "work_hours": work_hours,
+                "overtime_hours": overtime_hours,
+                "remarks": remarks,
+            },
+        )
+
+        if not created:
+            # Cập nhật nếu đã tồn tại
+            old_status = attendance.status
+            old_work_hours = attendance.work_hours
+            old_overtime_hours = attendance.overtime_hours
+            old_remarks = attendance.remarks
+
+            attendance.status = status
+            attendance.work_hours = work_hours
+            attendance.overtime_hours = overtime_hours
+            attendance.remarks = remarks
+            attendance.save()
+
+            # Ghi log update
+            create_system_log(
+                user=creator,
+                action="update",
+                table_name="attendance",
+                record_id=str(attendance.id),
+                old_value={
+                    "status": old_status,
+                    "work_hours": str(old_work_hours),
+                    "overtime_hours": str(old_overtime_hours),
+                    "remarks": old_remarks,
+                },
+                new_value={
+                    "status": status,
+                    "work_hours": str(work_hours),
+                    "overtime_hours": str(overtime_hours),
+                    "remarks": remarks,
+                },
+            )
+        else:
+            # Ghi log create
+            create_system_log(
+                user=creator,
+                action="create",
+                table_name="attendance",
+                record_id=str(attendance.id),
+                new_value={
+                    "employee_id": str(employee.id),
+                    "date": str(date),
+                    "status": status,
+                    "work_hours": str(work_hours),
+                    "overtime_hours": str(overtime_hours),
+                    "remarks": remarks,
+                },
+            )
+
+        result.append(attendance)
+
+    return result
+
+
+@transaction.atomic
+def leave_request_create(
+    *,
+    employee_id: str,
+    data: Dict[str, Any],
+) -> LeaveRequest:
+    """
+    Tạo đơn xin nghỉ phép của nhân viên (mặc định trạng thái pending).
+    """
+    try:
+        employee = Employee.objects.get(id=employee_id)
+    except Employee.DoesNotExist:
+        raise ValidationException("Nhân viên không tồn tại")
+
+    start_date = data.get("start_date")
+    end_date = data.get("end_date")
+    days = Decimal(str(data.get("days")))
+    leave_type = data.get("leave_type")
+    reason = data.get("reason")
+
+    if not start_date or not end_date or not leave_type or days <= 0:
+        raise ValidationException(
+            "Các thông tin ngày bắt đầu, ngày kết thúc, loại nghỉ và số ngày nghỉ (>0) là bắt buộc"
+        )
+
+    leave_request = LeaveRequest.objects.create(
+        employee=employee,
+        leave_type=leave_type,
+        start_date=start_date,
+        end_date=end_date,
+        days=days,
+        reason=reason,
+        status="pending",
+    )
+
+    create_system_log(
+        user=None,
+        action="create",
+        table_name="leave_request",
+        record_id=str(leave_request.id),
+        new_value={
+            "employee_id": str(employee.id),
+            "leave_type": leave_type,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "days": str(days),
+            "reason": reason,
+            "status": "pending",
+        },
+    )
+
+    return leave_request
+
+
+@transaction.atomic
+def leave_request_approve(
+    *,
+    leave_request_id: str,
+    approved_by_user_id: str,
+) -> LeaveRequest:
+    """
+    Phê duyệt đơn xin nghỉ phép và tự động đồng bộ sang chấm công.
+    """
+    try:
+        leave_request = LeaveRequest.objects.get(id=leave_request_id)
+    except LeaveRequest.DoesNotExist:
+        raise ValidationException("Đơn xin nghỉ phép không tồn tại")
+
+    if leave_request.status != "pending":
+        raise ValidationException(f"Đơn xin nghỉ phép đã ở trạng thái: {leave_request.status}")
+
+    try:
+        approved_by = User.objects.get(id=approved_by_user_id)
+    except User.DoesNotExist:
+        approved_by = None
+
+    old_status = leave_request.status
+    leave_request.status = "approved"
+    leave_request.approved_by = approved_by
+    leave_request.approved_at = timezone.now()
+    leave_request.save()
+
+    create_system_log(
+        user=approved_by,
+        action="update",
+        table_name="leave_request",
+        record_id=str(leave_request.id),
+        old_value={"status": old_status},
+        new_value={
+            "status": "approved",
+            "approved_by_id": str(approved_by_user_id),
+            "approved_at": str(leave_request.approved_at),
+        },
+    )
+
+    # Tự động tạo/cập nhật bảng Attendance cho các ngày nghỉ
+    status_map = {
+        "annual": "paid_leave",
+        "sick": "sick_leave",
+        "unpaid": "unpaid_leave",
+        "maternity": "paid_leave",
+        "personal": "unpaid_leave",
+        "other": "other",
+    }
+    attendance_status = status_map.get(leave_request.leave_type, "other")
+
+    start = leave_request.start_date
+    end = leave_request.end_date
+    current_date = start
+
+    while current_date <= end:
+        attendance, created = Attendance.objects.get_or_create(
+            employee=leave_request.employee,
+            date=current_date,
+            defaults={
+                "status": attendance_status,
+                "work_hours": Decimal("0.00"),
+                "overtime_hours": Decimal("0.00"),
+                "remarks": f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}",
+            },
+        )
+
+        if not created:
+            old_att_status = attendance.status
+            old_att_work = attendance.work_hours
+            old_att_overtime = attendance.overtime_hours
+            old_att_remarks = attendance.remarks
+
+            attendance.status = attendance_status
+            attendance.work_hours = Decimal("0.00")
+            attendance.overtime_hours = Decimal("0.00")
+            attendance.remarks = f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}"
+            attendance.save()
+
+            create_system_log(
+                user=approved_by,
+                action="update",
+                table_name="attendance",
+                record_id=str(attendance.id),
+                old_value={
+                    "status": old_att_status,
+                    "work_hours": str(old_att_work),
+                    "overtime_hours": str(old_att_overtime),
+                    "remarks": old_att_remarks,
+                },
+                new_value={
+                    "status": attendance_status,
+                    "work_hours": "0.00",
+                    "overtime_hours": "0.00",
+                    "remarks": attendance.remarks,
+                },
+            )
+        else:
+            create_system_log(
+                user=approved_by,
+                action="create",
+                table_name="attendance",
+                record_id=str(attendance.id),
+                new_value={
+                    "employee_id": str(leave_request.employee.id),
+                    "date": str(current_date),
+                    "status": attendance_status,
+                    "work_hours": "0.00",
+                    "overtime_hours": "0.00",
+                    "remarks": attendance.remarks,
+                },
+            )
+
+        current_date += timedelta(days=1)
+
+    return leave_request

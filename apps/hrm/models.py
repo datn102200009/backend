@@ -7,21 +7,23 @@ from apps.master_data.models import Employee
 
 class Attendance(BaseModel):
     """
-    Employee attendance record.
+    Bản ghi chấm công của nhân viên.
     """
+
+    STATUS_CHOICES = [
+        ("working", "Đi làm"),
+        ("paid_leave", "Nghỉ phép có lương"),
+        ("unpaid_leave", "Nghỉ không lương"),
+        ("sick_leave", "Nghỉ ốm"),
+        ("holiday", "Nghỉ lễ"),
+        ("other", "Khác"),
+    ]
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="attendances")
     date = models.DateField()
-    status = models.CharField(
-        max_length=20,
-        choices=[
-            ("present", "Present"),
-            ("absent", "Absent"),
-            ("late", "Late"),
-            ("leave", "Leave"),
-            ("holiday", "Holiday"),
-        ],
-    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    work_hours = models.DecimalField(max_digits=4, decimal_places=2, default=8.00)
+    overtime_hours = models.DecimalField(max_digits=4, decimal_places=2, default=0.00)
     remarks = models.TextField(null=True, blank=True)
 
     class Meta:
@@ -32,7 +34,50 @@ class Attendance(BaseModel):
         indexes = [models.Index(fields=["employee", "date"])]
 
     def __str__(self):
-        return f"{self.employee.employee_id} - {self.date}"
+        return f"{self.employee.employee_id} - {self.date} ({self.get_status_display()})"
+
+
+class LeaveRequest(BaseModel):
+    """
+    Quản lý đơn xin nghỉ phép của nhân viên.
+    """
+
+    LEAVE_TYPES = [
+        ("annual", "Nghỉ phép năm"),
+        ("sick", "Nghỉ ốm"),
+        ("unpaid", "Nghỉ không lương"),
+        ("maternity", "Nghỉ thai sản"),
+        ("personal", "Nghỉ việc riêng"),
+        ("other", "Khác"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Chờ duyệt"),
+        ("approved", "Đã duyệt"),
+        ("rejected", "Từ chối"),
+        ("cancelled", "Đã hủy"),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="leave_requests")
+    leave_type = models.CharField(max_length=20, choices=LEAVE_TYPES)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    days = models.DecimalField(max_digits=4, decimal_places=1)
+    reason = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="approved_leaves", null=True, blank=True
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "leave_request"
+        verbose_name = "Leave Request"
+        verbose_name_plural = "Leave Requests"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.employee.full_name} - {self.get_leave_type_display()} ({self.start_date} -> {self.end_date})"
 
 
 class EmploymentContract(BaseModel):

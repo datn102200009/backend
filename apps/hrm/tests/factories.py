@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import factory
 
-from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
+from apps.hrm.models import Attendance, EmployeeDocument, EmploymentContract, EmploymentHistory, LeaveRequest
 from apps.master_data.models import Employee
 
 
@@ -51,3 +51,31 @@ class EmploymentHistoryFactory(factory.django.DjangoModelFactory):
     new_salary_base = Decimal("12000000.00")
     effective_date = "2026-06-01"
     reason = "Tăng lương định kỳ"
+
+
+class AttendanceFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo Attendance phục vụ kiểm thử."""
+
+    class Meta:
+        model = Attendance
+
+    employee = factory.SubFactory(EmployeeFactory)
+    date = "2026-05-01"
+    status = "working"
+    work_hours = Decimal("8.00")
+    overtime_hours = Decimal("0.00")
+
+
+class LeaveRequestFactory(factory.django.DjangoModelFactory):
+    """Factory để tạo LeaveRequest phục vụ kiểm thử."""
+
+    class Meta:
+        model = LeaveRequest
+
+    employee = factory.SubFactory(EmployeeFactory)
+    leave_type = "annual"
+    start_date = "2026-05-01"
+    end_date = "2026-05-03"
+    days = Decimal("3.0")
+    reason = "Nghỉ mát gia đình"
+    status = "pending"

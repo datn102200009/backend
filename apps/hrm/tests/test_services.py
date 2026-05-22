@@ -5,15 +5,24 @@ import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.accounts.models import SystemLog, User
-from apps.hrm.models import EmployeeDocument, EmploymentContract, EmploymentHistory
+from apps.hrm.models import Attendance, EmployeeDocument, EmploymentContract, EmploymentHistory, LeaveRequest
 from apps.hrm.services import (
+    attendance_batch_record,
     contract_create_or_renew,
     contract_terminate,
     employee_create_with_user,
     employee_update,
     employee_update_salary_or_title,
+    leave_request_approve,
+    leave_request_create,
 )
-from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory, EmploymentHistoryFactory
+from apps.hrm.tests.factories import (
+    AttendanceFactory,
+    EmployeeFactory,
+    EmploymentContractFactory,
+    EmploymentHistoryFactory,
+    LeaveRequestFactory,
+)
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 from apps.master_data.models import Employee
 
@@ -349,3 +358,122 @@ class TestEmploymentHistoryServices:
         # Verify SystemLog
         log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
         assert log is not None
+
+
+@pytest.mark.django_db
+class TestAttendanceAndLeaveServices:
+
+    def test_attendance_batch_record_creates_and_updates(self):
+        # Arrange
+        employee1 = EmployeeFactory(employee_id="EMP5001")
+        employee2 = EmployeeFactory(employee_id="EMP5002")
+        admin = UserFactory(username="admin_attendance")
+        attendance_date = date(2026, 5, 20)
+
+        # Tạo trước một bản ghi cho employee1 để test update
+        AttendanceFactory(employee=employee1, date=attendance_date, status="working", work_hours=Decimal("8.00"))
+
+        records = [
+            {
+                "employee_id": str(employee1.id),
+                "status": "working",
+                "work_hours": Decimal("4.00"),  # cập nhật từ 8 xuống 4
+                "overtime_hours": Decimal("2.00"),
+                "remarks": "Đi làm nửa ngày, OT 2h",
+            },
+            {
+                "employee_id": str(employee2.id),
+                "status": "paid_leave",
+                "work_hours": Decimal("0.00"),  # tạo mới
+                "overtime_hours": Decimal("0.00"),
+                "remarks": "Nghỉ phép năm",
+            },
+        ]
+
+        # Act
+        created_records = attendance_batch_record(date=attendance_date, records=records, creator=admin)
+
+        # Assert
+        assert len(created_records) == 2
+
+        # Verify employee1 update
+        att1 = Attendance.objects.get(employee=employee1, date=attendance_date)
+        assert att1.work_hours == Decimal("4.00")
+        assert att1.overtime_hours == Decimal("2.00")
+        assert att1.remarks == "Đi làm nửa ngày, OT 2h"
+
+        # Verify employee2 create
+        att2 = Attendance.objects.get(employee=employee2, date=attendance_date)
+        assert att2.status == "paid_leave"
+        assert att2.work_hours == Decimal("0.00")
+
+        # Verify logs
+        log1 = SystemLog.objects.filter(
+            table_name="attendance", record_id=str(att1.id), action="update", user=admin
+        ).first()
+        assert log1 is not None
+        assert Decimal(str(log1.new_value["work_hours"])) == Decimal("4.00")
+
+        log2 = SystemLog.objects.filter(
+            table_name="attendance", record_id=str(att2.id), action="create", user=admin
+        ).first()
+        assert log2 is not None
+        assert log2.new_value["status"] == "paid_leave"
+
+    def test_leave_request_workflow(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP6001")
+        admin = UserFactory(username="admin_leave")
+        leave_data = {
+            "leave_type": "sick",
+            "start_date": date(2026, 5, 10),
+            "end_date": date(2026, 5, 12),
+            "days": Decimal("3.0"),
+            "reason": "Nghỉ ốm nằm viện",
+        }
+
+        # Act 1: Create leave request
+        request = leave_request_create(employee_id=employee.id, data=leave_data)
+
+        # Assert 1
+        assert request is not None
+        assert request.status == "pending"
+        assert request.employee == employee
+        assert request.leave_type == "sick"
+
+        # Verify log for create
+        create_log = SystemLog.objects.filter(
+            table_name="leave_request", record_id=str(request.id), action="create"
+        ).first()
+        assert create_log is not None
+        assert create_log.new_value["leave_type"] == "sick"
+
+        # Act 2: Approve leave request
+        approved_request = leave_request_approve(leave_request_id=request.id, approved_by_user_id=admin.id)
+
+        # Assert 2
+        approved_request.refresh_from_db()
+        assert approved_request.status == "approved"
+        assert approved_request.approved_by == admin
+        assert approved_request.approved_at is not None
+
+        # Verify logs for approve
+        approve_log = SystemLog.objects.filter(
+            table_name="leave_request", record_id=str(request.id), action="update", user=admin
+        ).first()
+        assert approve_log is not None
+        assert approve_log.new_value["status"] == "approved"
+
+        # Verify that Attendance records were auto-created for 2026-05-10, 2026-05-11, 2026-05-12
+        dates_to_check = [date(2026, 5, 10), date(2026, 5, 11), date(2026, 5, 12)]
+        for d in dates_to_check:
+            att = Attendance.objects.filter(employee=employee, date=d).first()
+            assert att is not None
+            assert att.status == "sick_leave"  # "sick" leave_type maps to "sick_leave" attendance status
+            assert att.work_hours == Decimal("0.00")
+            assert att.overtime_hours == Decimal("0.00")
+
+            # Check attendance logs
+            att_log = SystemLog.objects.filter(table_name="attendance", record_id=str(att.id), action="create").first()
+            assert att_log is not None
+            assert att_log.new_value["status"] == "sick_leave"
