@@ -270,6 +270,10 @@ def contract_terminate_view(request, pk):
         reason=data.get("reason"),
         terminator=user,
         file_url=data.get("file_url"),
+        is_lawful=data.get("is_lawful", True),
+        unused_leave_days=data.get("unused_leave_days", 0.0),
+        standard_working_days=data.get("standard_working_days", 26),
+        unnotified_days=data.get("unnotified_days", 0),
     )
 
     out_serializer = EmploymentContractOutputSerializer(contract)

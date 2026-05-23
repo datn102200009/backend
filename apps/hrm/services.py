@@ -299,9 +299,15 @@ def contract_terminate(
     reason: str,
     terminator: Optional[User] = None,
     file_url: Optional[str] = None,
+    is_lawful: bool = True,
+    unused_leave_days: Decimal = Decimal("0.00"),
+    standard_working_days: int = 26,
+    unnotified_days: int = 0,
 ) -> EmploymentContract:
     """
     Chấm dứt hợp đồng lao động:
+    - Ràng buộc: Kiểm tra không nợ bất kỳ kỳ lương nào trước đó.
+    - Quyết toán & thanh toán kỳ lương hiện tại (lương thực tế, phép năm, đóng BHXH, phạt nghỉ ngang).
     - Chuyển trạng thái hợp đồng sang 'terminated'
     - Điền leave_date và chuyển status của Employee sang 'inactive'
     - Khóa tài khoản User tương ứng (is_active = False)
@@ -313,6 +319,10 @@ def contract_terminate(
         reason: Lý do chấm dứt
         terminator: User thực hiện chấm dứt
         file_url: Đường dẫn file scan quyết định thôi việc
+        is_lawful: Nghỉ việc hợp pháp (đúng luật)
+        unused_leave_days: Số ngày phép năm chưa nghỉ cần thanh toán
+        standard_working_days: Số ngày công chuẩn của tháng (default 26)
+        unnotified_days: Số ngày nghỉ không báo trước (nếu nghỉ trái luật)
 
     Returns:
         EmploymentContract: Hợp đồng đã chấm dứt
@@ -329,8 +339,173 @@ def contract_terminate(
         raise ValidationException("Hợp đồng này đã được chấm dứt trước đó")
 
     employee = contract.employee
+    salary_base = employee.salary_base or Decimal("0.00")
 
-    # 1. Cập nhật EmploymentContract
+    # 1. Kiểm tra nợ kỳ lương trước đó
+    current_period = termination_date.strftime("%Y-%m")
+    unpaid_slips = SalarySlip.objects.filter(employee=employee, salary_period__lt=current_period).exclude(status="paid")
+
+    if unpaid_slips.exists():
+        periods = [slip.salary_period for slip in unpaid_slips]
+        raise ValidationException(
+            f"Không thể chấm dứt hợp đồng do nhân viên vẫn còn nợ lương kỳ trước chưa thanh toán ({', '.join(periods)}). Vui lòng thanh toán trước."
+        )
+
+    # 2. Quyết toán kỳ lương hiện tại
+    slip_name = f"FINAL-SALARY-{employee.employee_id}-{current_period}"
+    slip, created = SalarySlip.objects.get_or_create(
+        employee=employee,
+        salary_period=current_period,
+        defaults={
+            "name": slip_name,
+            "base_salary": Decimal("0.00"),
+            "overtime_amount": Decimal("0.00"),
+            "allowance_amount": Decimal("0.00"),
+            "reward_amount_total": Decimal("0.00"),
+            "discipline_deduction_total": Decimal("0.00"),
+            "union_fee_2pct": Decimal("0.00"),
+            "gross_pay": Decimal("0.00"),
+            "deductions": Decimal("0.00"),
+            "net_pay": Decimal("0.00"),
+            "status": "draft",
+        },
+    )
+
+    # 2.1. Tính ngày công thực tế làm việc/hưởng lương trong tháng nghỉ từ ngày 1 đến termination_date
+    year = termination_date.year
+    month = termination_date.month
+    attendances = Attendance.objects.filter(
+        employee=employee, date__year=year, date__month=month, date__lte=termination_date
+    )
+
+    working_days = Decimal("0.00")
+    total_ot_hours = Decimal("0.00")
+    for att in attendances:
+        if att.status == "working":
+            working_days += Decimal("1.00")
+        elif att.status in ["paid_leave", "sick_leave", "holiday"]:
+            working_days += Decimal("1.00")
+        total_ot_hours += att.overtime_hours or Decimal("0.00")
+
+    # 2.2. Xác định ngày công chia lương (divisor) - Cố định Cách 1
+    divisor = Decimal(str(standard_working_days))
+    if divisor <= 0:
+        divisor = Decimal("26.00")
+
+    # 2.3. Lương thực tế làm việc
+    base_salary_earned = (salary_base * (working_days / divisor)).quantize(Decimal("0.01"))
+
+    # 2.4. Tiền phép năm chưa nghỉ
+    unused_leave_compensation = (salary_base / divisor * Decimal(str(unused_leave_days))).quantize(Decimal("0.01"))
+
+    # 2.5. Bảo hiểm xã hội tháng nghỉ việc (đóng nếu số ngày làm việc và hưởng lương >= 14 ngày)
+    social_insurance_deduction = Decimal("0.00")
+    if working_days >= 14:
+        social_insurance_deduction = (salary_base * Decimal("0.105")).quantize(Decimal("0.01"))
+
+    # 2.6. Phạt bồi thường nếu nghỉ việc trái pháp luật (nghỉ ngang)
+    resignation_fine = Decimal("0.00")
+    fine_half_month = Decimal("0.00")
+    fine_unnotified = Decimal("0.00")
+    if not is_lawful:
+        fine_half_month = (salary_base * Decimal("0.5")).quantize(Decimal("0.01"))
+        fine_unnotified = (salary_base / divisor * Decimal(str(unnotified_days))).quantize(Decimal("0.01"))
+        resignation_fine = fine_half_month + fine_unnotified
+
+    # 2.7. Tính toán OT, Kinh phí công đoàn, Thưởng & Kỷ luật phạt thông thường
+    hourly_rate = salary_base / divisor / Decimal("8.00")
+    ot_rate = hourly_rate * Decimal("1.5")
+    overtime_amount_earned = (total_ot_hours * ot_rate).quantize(Decimal("0.01"))
+
+    union_fee = Decimal("0.00")
+    if employee.is_union_member:
+        union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
+
+    from django.db.models import Q
+
+    rewards = RewardRecord.objects.filter(employee=employee, reward_date__year=year, reward_date__month=month).filter(
+        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
+    )
+    reward_total = Decimal("0.00")
+    for r in rewards:
+        reward_total += r.amount or Decimal("0.00")
+        if r.salary_slip != slip:
+            r.salary_slip = slip
+            r.save(update_fields=["salary_slip"])
+
+    disciplines = DisciplineRecord.objects.filter(
+        employee=employee, discipline_date__year=year, discipline_date__month=month
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
+    discipline_total = Decimal("0.00")
+    for d in disciplines:
+        discipline_total += d.penalty_amount or Decimal("0.00")
+        if d.salary_slip != slip:
+            d.salary_slip = slip
+            d.save(update_fields=["salary_slip"])
+
+    allowance_amount = Decimal("0.00")
+
+    # 2.8. Tổng quyết toán
+    gross_pay = base_salary_earned + overtime_amount_earned + allowance_amount + unused_leave_compensation
+    deductions = union_fee + discipline_total + social_insurance_deduction + resignation_fine
+    net_pay = gross_pay + reward_total - deductions
+
+    remarks = (
+        f"Quyết toán thôi việc ngày {termination_date} ({'Đúng luật' if is_lawful else 'Nghỉ ngang/Trái luật'}).\n"
+        f"- Ngày công thực tế/hưởng lương: {working_days} ngày.\n"
+        f"- Lương ngày công: {base_salary_earned:,.2f}đ (Tính theo ngày công chuẩn cố định với công chuẩn {divisor}).\n"
+        f"- Phép năm chưa nghỉ ({unused_leave_days} ngày): {unused_leave_compensation:,.2f}đ.\n"
+        f"- Khấu trừ BHXH (10.5%): {social_insurance_deduction:,.2f}đ ({'Có trích đóng' if social_insurance_deduction > 0 else 'Không đóng do làm < 14 ngày'}).\n"
+    )
+    if not is_lawful:
+        remarks += (
+            f"- Bồi thường nghỉ ngang: {resignation_fine:,.2f}đ (Gồm 0.5 tháng lương: {fine_half_month:,.2f}đ "
+            f"và {unnotified_days} ngày không báo trước: {fine_unnotified:,.2f}đ).\n"
+        )
+
+    slip.base_salary = base_salary_earned
+    slip.overtime_amount = overtime_amount_earned
+    slip.allowance_amount = allowance_amount
+    slip.reward_amount_total = reward_total
+    slip.discipline_deduction_total = discipline_total
+    slip.union_fee_2pct = union_fee
+    slip.gross_pay = gross_pay
+    slip.deductions = deductions
+    slip.net_pay = net_pay
+    slip.remarks = remarks.strip()
+    slip.status = "paid"
+    slip.save()
+
+    # 2.9. Tự động sinh ra bút toán chi tiền tại finance
+    from apps.finance.models import CashFlowTransaction
+
+    tx_name = f"PAY-FINAL-SALARY-{employee.employee_id}-{current_period}"
+    tx, tx_created = CashFlowTransaction.objects.get_or_create(
+        name=tx_name,
+        defaults={
+            "payment_type": "pay",
+            "category": "Chi trả lương nhân viên thôi việc",
+            "amount": slip.net_pay,
+            "payment_date": date.today(),
+            "remarks": f"Quyết toán và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+        },
+    )
+    if tx_created and terminator:
+        create_system_log(
+            user=terminator,
+            action="create",
+            table_name="cash_flow_transaction",
+            record_id=str(tx.id),
+            new_value={
+                "name": tx.name,
+                "payment_type": tx.payment_type,
+                "category": tx.category,
+                "amount": str(tx.amount),
+                "payment_date": str(tx.payment_date),
+            },
+        )
+
+    # 3. Cập nhật EmploymentContract
     old_contract_status = contract.status
     old_contract_end = contract.end_date
     contract.status = "terminated"
@@ -353,7 +528,7 @@ def contract_terminate(
         },
     )
 
-    # 2. Cập nhật Employee sang inactive và điền leave_date
+    # 4. Cập nhật Employee sang inactive và điền leave_date
     old_emp_status = employee.employment_status
     old_leave_date = employee.leave_date
     employee.employment_status = "inactive"
@@ -375,7 +550,7 @@ def contract_terminate(
         },
     )
 
-    # 3. Vô hiệu hóa tài khoản User liên kết qua employee_id
+    # 5. Vô hiệu hóa tài khoản User liên kết qua employee_id
     linked_user = User.objects.filter(employee_id=employee.employee_id).first()
     if linked_user:
         old_active = linked_user.is_active
@@ -391,7 +566,7 @@ def contract_terminate(
             new_value={"is_active": False},
         )
 
-    # 4. Lưu tài liệu quyết định thôi việc nếu có file_url
+    # 6. Lưu tài liệu quyết định thôi việc nếu có file_url
     if file_url:
         doc = EmployeeDocument.objects.create(
             employee=employee,
@@ -944,7 +1119,7 @@ def payroll_initialize_period(
             salary_period=salary_period,
             defaults={
                 "name": name,
-                "base_salary": Decimal("0.00"),
+                "base_salary": employee.salary_base or Decimal("0.00"),
                 "overtime_amount": Decimal("0.00"),
                 "allowance_amount": Decimal("0.00"),
                 "reward_amount_total": Decimal("0.00"),

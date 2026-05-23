@@ -767,6 +767,27 @@ paths:
                 file_url:
                   type: string
                   example: "https://storage.example.com/documents/resignation_nv099.pdf"
+                is_lawful:
+                  type: boolean
+                  default: true
+                  description: Nghỉ việc đúng luật (true) hoặc trái luật/nghỉ ngang (false)
+                  example: true
+                unused_leave_days:
+                  type: number
+                  format: float
+                  default: 0.0
+                  description: Số ngày phép năm chưa nghỉ cần thanh toán
+                  example: 0.0
+                standard_working_days:
+                  type: integer
+                  default: 26
+                  description: Số ngày công chuẩn của tháng quyết toán
+                  example: 26
+                unnotified_days:
+                  type: integer
+                  default: 0
+                  description: Số ngày vi phạm thời hạn báo trước (nếu nghỉ trái luật)
+                  example: 0
       responses:
         '200':
           description: Chấm dứt thành công

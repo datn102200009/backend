@@ -389,6 +389,10 @@ class ContractTerminateInputSerializer(serializers.Serializer):
     termination_date = serializers.DateField()
     reason = serializers.CharField()
     file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+    is_lawful = serializers.BooleanField(default=True, required=False)
+    unused_leave_days = serializers.DecimalField(max_digits=4, decimal_places=1, default=0.0, required=False)
+    standard_working_days = serializers.IntegerField(default=26, required=False)
+    unnotified_days = serializers.IntegerField(default=0, required=False)
 
 
 class AttendanceRecordInputSerializer(serializers.Serializer):

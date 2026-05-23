@@ -717,3 +717,138 @@ class TestPayrollAndRewardDisciplineServices:
         assert tx.category == "Chi trả lương nhân viên"
         assert "Nguyen Van Finance" in tx.remarks
         assert "2026-05" in tx.remarks
+
+    def test_payroll_initialize_period_uses_employee_salary_base(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active"
+        )
+        admin = UserFactory(username="admin_test_1")
+
+        # Act
+        slips = payroll_initialize_period(salary_period="2026-05", creator=admin)
+
+        # Assert
+        assert len(slips) == 1
+        assert slips[0].base_salary == Decimal("15000000.00")
+
+    def test_contract_terminate_fails_if_previous_payroll_unpaid(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9002", salary_base=Decimal("12000000.00"), employment_status="active"
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9002", status="active")
+        admin = UserFactory(username="admin_test_2")
+
+        # Tạo slip kỳ trước chưa thanh toán (status != 'paid')
+        SalarySlipFactory(employee=employee, salary_period="2026-04", status="draft")
+
+        # Act & Assert
+        from apps.common.xlib.exceptions import ValidationException
+
+        with pytest.raises(ValidationException) as exc_info:
+            contract_terminate(
+                contract_id=contract.id,
+                termination_date=date(2026, 5, 15),
+                reason="Thôi việc",
+                terminator=admin,
+                is_lawful=True,
+            )
+        assert "vẫn còn nợ lương kỳ trước chưa thanh toán" in str(exc_info.value)
+
+    def test_contract_terminate_lawful_resignation_with_bhxh(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9003", salary_base=Decimal("13000000.00"), employment_status="active", is_union_member=False
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9003", status="active")
+        admin = UserFactory(username="admin_test_3")
+
+        # Chấm công trong tháng 5/2026 từ ngày 1 đến 15 (15 ngày công thực tế)
+        for day in range(1, 16):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 5, 15),
+            reason="Thôi việc đúng luật",
+            terminator=admin,
+            is_lawful=True,
+            unused_leave_days=Decimal("2.5"),
+            standard_working_days=26,
+        )
+
+        # Assert
+        employee.refresh_from_db()
+        assert employee.employment_status == "inactive"
+        assert employee.leave_date == date(2026, 5, 15)
+
+        # Kiểm tra phiếu lương kỳ này được quyết toán và chuyển sang paid
+        from apps.finance.models import CashFlowTransaction, SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-05")
+        assert slip.status == "paid"
+
+        # 15 ngày công trên 26 ngày chuẩn: 13,000,000 * 15 / 26 = 7,500,000
+        assert slip.base_salary == Decimal("7500000.00")
+
+        # Tiền phép năm: 13,000,000 / 26 * 2.5 = 1,250,000
+        # BHXH (làm 15 ngày >= 14 ngày nên phải đóng): 13,000,000 * 10.5% = 1,365,000
+        # Gross = 7,500,000 + 1,250,000 = 8,750,000
+        # Deductions = 1,365,000
+        # Net = Gross - Deductions = 7,385,000
+        assert slip.gross_pay == Decimal("8750000.00")
+        assert slip.deductions == Decimal("1365000.00")
+        assert slip.net_pay == Decimal("7385000.00")
+
+        # Kiểm tra bút toán chi tiền lương
+        tx = CashFlowTransaction.objects.filter(name=f"PAY-FINAL-SALARY-{employee.employee_id}-2026-05").first()
+        assert tx is not None
+        assert tx.amount == Decimal("7385000.00")
+
+    def test_contract_terminate_unlawful_resignation_without_bhxh(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9004", salary_base=Decimal("26000000.00"), employment_status="active", is_union_member=False
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9004", status="active")
+        admin = UserFactory(username="admin_test_4")
+
+        # Chấm công trong tháng 5/2026 từ ngày 1 đến 10 (10 ngày công thực tế)
+        for day in range(1, 11):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 5, 10),
+            reason="Nghỉ ngang không báo trước",
+            terminator=admin,
+            is_lawful=False,
+            unused_leave_days=Decimal("0.0"),
+            standard_working_days=26,
+            unnotified_days=30,
+        )
+
+        # Assert
+        from apps.finance.models import CashFlowTransaction, SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-05")
+        assert slip.status == "paid"
+
+        # 10 ngày công trên 26 ngày chuẩn: 26,000,000 * 10 / 26 = 10,000,000
+        assert slip.base_salary == Decimal("10000000.00")
+
+        # Tiền phép năm: 0
+        # BHXH (làm 10 ngày < 14 ngày nên không phải đóng): 0
+        # Phạt nghỉ ngang:
+        #   - Phạt nửa tháng lương: 26,000,000 * 0.5 = 13,000,000
+        #   - Bồi thường 30 ngày không báo trước: 26,000,000 / 26 * 30 = 30,000,000
+        #   - Tổng phạt = 43,000,000
+        # Gross = 10,000,000
+        # Deductions = 43,000,000
+        # Net = Gross - Deductions = -33,000,000 (NLĐ nợ ngược công ty)
+        assert slip.gross_pay == Decimal("10000000.00")
+        assert slip.deductions == Decimal("43000000.00")
+        assert slip.net_pay == Decimal("-33000000.00")
