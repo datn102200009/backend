@@ -339,44 +339,32 @@ def seed_hrm_data(apps, schema_editor):
             )
             curr += timedelta(days=1)
 
-    # 7. Chấm công hàng ngày từ 01/05/2026 đến 22/05/2026 (trừ thứ 7, CN)
-    start_date = date(2026, 5, 1)
-    end_date = date(2026, 5, 22)
-    delta = timedelta(days=1)
+    # 7. Định cấu hình cho các kỳ lương seed
+    periods_config = [
+        {
+            "salary_period": "2026-03",
+            "start_date": date(2026, 3, 1),
+            "end_date": date(2026, 3, 31),
+            "standard_days": Decimal("22.00"),
+            "draft_employee_ids": [],  # 100% paid
+        },
+        {
+            "salary_period": "2026-04",
+            "start_date": date(2026, 4, 1),
+            "end_date": date(2026, 4, 30),
+            "standard_days": Decimal("22.00"),
+            "draft_employee_ids": ["NV004", "NV005"],  # 2 nhân viên nợ lương
+        },
+        {
+            "salary_period": "2026-05",
+            "start_date": date(2026, 5, 1),
+            "end_date": date(2026, 5, 22),
+            "standard_days": Decimal("22.00"),
+            "draft_employee_ids": ["NV003", "NV004", "NV005", "NV006", "NV007", "NV008", "NV009", "NV010"],
+        },
+    ]
 
-    current_date = start_date
-    while current_date <= end_date:
-        if current_date.weekday() in [5, 6]:
-            current_date += delta
-            continue
-
-        for emp in created_employees:
-            exists = Attendance.objects.filter(employee=emp, date=current_date).exists()
-            if exists:
-                continue
-
-            # Chấm công đi làm
-            overtime = Decimal("0.00")
-            remarks = None
-            if emp.department == "Kỹ thuật" and current_date.weekday() in [1, 3]:
-                # 30% cơ hội OT 2 tiếng cho nhân sự kỹ thuật
-                if (emp.employee_id == "NV003" and current_date.day in [12, 19]) or (
-                    emp.employee_id == "NV004" and current_date.day in [5, 14]
-                ):
-                    overtime = Decimal("2.00")
-                    remarks = "OT hỗ trợ triển khai hệ thống ngoài giờ"
-
-            Attendance.objects.create(
-                employee=emp,
-                date=current_date,
-                status="working",
-                work_hours=Decimal("8.00"),
-                overtime_hours=overtime,
-                remarks=remarks,
-            )
-        current_date += delta
-
-    # 8. Tạo khen thưởng & kỷ luật
+    # 8. Tạo khen thưởng & kỷ luật cho kỳ 2026-05
     # NV003: Thưởng sáng kiến
     RewardRecord.objects.create(
         employee=created_employees[2],
@@ -405,98 +393,151 @@ def seed_hrm_data(apps, schema_editor):
         description="Cảnh cáo đi làm muộn quá 5 lần trong tháng.",
     )
 
-    # 9. Khởi tạo và tự tính toán bảng lương kỳ 2026-05 (22 ngày công tiêu chuẩn)
-    for emp in created_employees:
-        salary_base = emp.salary_base or Decimal("0.00")
+    # 9. Chạy vòng lặp seed dữ liệu chấm công, bảng lương cho các kỳ
+    for config in periods_config:
+        period_year = config["start_date"].year
+        period_month = config["start_date"].month
+        period_str = config["salary_period"]
 
-        # Đếm ngày công thực tế từ Attendance
-        attendances = Attendance.objects.filter(employee=emp, date__year=2026, date__month=5)
-        working_days = Decimal("0.00")
-        paid_leave_days = Decimal("0.00")
-        total_ot_hours = Decimal("0.00")
+        # 9.1. Tạo chấm công hàng ngày (trừ thứ 7, CN)
+        delta = timedelta(days=1)
+        current_date = config["start_date"]
+        while current_date <= config["end_date"]:
+            if current_date.weekday() in [5, 6]:
+                current_date += delta
+                continue
 
-        for att in attendances:
-            if att.status == "working":
-                working_days += Decimal("1.00")
-            elif att.status in ["paid_leave", "sick_leave", "holiday"]:
-                paid_leave_days += Decimal("1.00")
-            total_ot_hours += att.overtime_hours or Decimal("0.00")
+            for emp in created_employees:
+                # Đảm bảo nhân sự đã join_date trước hoặc trong ngày chấm công
+                if emp.join_date > current_date:
+                    continue
 
-        # Tính base_salary_earned
-        base_salary_earned = (salary_base * ((working_days + paid_leave_days) / Decimal("22.00"))).quantize(
-            Decimal("0.01")
-        )
+                exists = Attendance.objects.filter(employee=emp, date=current_date).exists()
+                if exists:
+                    continue
 
-        # Tính overtime_amount_earned
-        hourly_rate = salary_base / Decimal("22.00") / Decimal("8.00")
-        ot_rate = hourly_rate * Decimal("1.5")
-        overtime_amount_earned = (total_ot_hours * ot_rate).quantize(Decimal("0.01"))
+                # OT chỉ áp dụng cho tháng 5
+                overtime = Decimal("0.00")
+                remarks = None
+                if period_str == "2026-05" and emp.department == "Kỹ thuật" and current_date.weekday() in [1, 3]:
+                    if (emp.employee_id == "NV003" and current_date.day in [12, 19]) or (
+                        emp.employee_id == "NV004" and current_date.day in [5, 14]
+                    ):
+                        overtime = Decimal("2.00")
+                        remarks = "OT hỗ trợ triển khai hệ thống ngoài giờ"
 
-        # Phí công đoàn 2%
-        union_fee = Decimal("0.00")
-        if emp.is_union_member:
-            union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
+                Attendance.objects.create(
+                    employee=emp,
+                    date=current_date,
+                    status="working",
+                    work_hours=Decimal("8.00"),
+                    overtime_hours=overtime,
+                    remarks=remarks,
+                )
+            current_date += delta
 
-        # Thưởng
-        rewards = RewardRecord.objects.filter(employee=emp, reward_date__year=2026, reward_date__month=5)
-        reward_total = Decimal("0.00")
-        for r in rewards:
-            reward_total += r.amount or Decimal("0.00")
+        # 9.2. Tính toán lương cho từng nhân sự hoạt động trong kỳ
+        for emp in created_employees:
+            # Chỉ tính lương nếu nhân viên đã join_date trước hoặc trong kỳ lương này
+            # (tức là join_date có tháng/năm <= period_month/year)
+            emp_join_date = emp.join_date
+            if emp_join_date.year > period_year or (
+                emp_join_date.year == period_year and emp_join_date.month > period_month
+            ):
+                continue
 
-        # Phạt
-        disciplines = DisciplineRecord.objects.filter(
-            employee=emp, discipline_date__year=2026, discipline_date__month=5
-        )
-        discipline_total = Decimal("0.00")
-        for d in disciplines:
-            discipline_total += d.penalty_amount or Decimal("0.00")
+            salary_base = emp.salary_base or Decimal("0.00")
 
-        gross_pay = base_salary_earned + overtime_amount_earned
-        deductions = union_fee + discipline_total
-        net_pay = gross_pay + reward_total - deductions
+            # Đếm ngày công thực tế từ Attendance
+            attendances = Attendance.objects.filter(employee=emp, date__year=period_year, date__month=period_month)
+            working_days = Decimal("0.00")
+            paid_leave_days = Decimal("0.00")
+            total_ot_hours = Decimal("0.00")
 
-        status = "draft"
-        payment_method = None
-        if emp.employee_id in ["NV001", "NV002"]:
-            status = "paid"
-            payment_method = "bank_transfer"
+            for att in attendances:
+                if att.status == "working":
+                    working_days += Decimal("1.00")
+                elif att.status in ["paid_leave", "sick_leave", "holiday"]:
+                    paid_leave_days += Decimal("1.00")
+                total_ot_hours += att.overtime_hours or Decimal("0.00")
 
-        slip = SalarySlip.objects.create(
-            name=f"SALARY-{emp.employee_id}-2026-05",
-            employee=emp,
-            salary_period="2026-05",
-            base_salary=base_salary_earned,
-            overtime_amount=overtime_amount_earned,
-            allowance_amount=Decimal("0.00"),
-            reward_amount_total=reward_total,
-            discipline_deduction_total=discipline_total,
-            union_fee_2pct=union_fee,
-            gross_pay=gross_pay,
-            deductions=deductions,
-            net_pay=net_pay,
-            payment_method=payment_method,
-            status=status,
-            remarks="Bảng lương mẫu tự động seed.",
-        )
-
-        # Liên kết Reward/Discipline vào slip lương
-        for r in rewards:
-            r.salary_slip = slip
-            r.save()
-        for d in disciplines:
-            d.salary_slip = slip
-            d.save()
-
-        # 10. Tạo bút toán CashFlowTransaction nếu phiếu lương đã thanh toán
-        if status == "paid":
-            CashFlowTransaction.objects.create(
-                name=f"PAY-SALARY-{emp.employee_id}-2026-05",
-                payment_type="pay",
-                category="Chi trả lương nhân viên",
-                amount=net_pay,
-                payment_date=date(2026, 5, 22),
-                remarks=f"Thanh toán lương tháng 05/2026 cho nhân viên {emp.full_name} ({emp.employee_id}).",
+            # Tính base_salary_earned
+            base_salary_earned = (salary_base * ((working_days + paid_leave_days) / config["standard_days"])).quantize(
+                Decimal("0.01")
             )
+
+            # Tính overtime_amount_earned
+            hourly_rate = salary_base / config["standard_days"] / Decimal("8.00")
+            ot_rate = hourly_rate * Decimal("1.5")
+            overtime_amount_earned = (total_ot_hours * ot_rate).quantize(Decimal("0.01"))
+
+            # Phí công đoàn 2%
+            union_fee = Decimal("0.00")
+            if emp.is_union_member:
+                union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
+
+            # Thưởng
+            rewards = RewardRecord.objects.filter(
+                employee=emp, reward_date__year=period_year, reward_date__month=period_month
+            )
+            reward_total = Decimal("0.00")
+            for r in rewards:
+                reward_total += r.amount or Decimal("0.00")
+
+            # Phạt
+            disciplines = DisciplineRecord.objects.filter(
+                employee=emp, discipline_date__year=period_year, discipline_date__month=period_month
+            )
+            discipline_total = Decimal("0.00")
+            for d in disciplines:
+                discipline_total += d.penalty_amount or Decimal("0.00")
+
+            gross_pay = base_salary_earned + overtime_amount_earned
+            deductions = union_fee + discipline_total
+            net_pay = gross_pay + reward_total - deductions
+
+            status = "draft"
+            payment_method = None
+            if emp.employee_id not in config["draft_employee_ids"]:
+                status = "paid"
+                payment_method = "bank_transfer"
+
+            slip = SalarySlip.objects.create(
+                name=f"SALARY-{emp.employee_id}-{period_str}",
+                employee=emp,
+                salary_period=period_str,
+                base_salary=base_salary_earned,
+                overtime_amount=overtime_amount_earned,
+                allowance_amount=Decimal("0.00"),
+                reward_amount_total=reward_total,
+                discipline_deduction_total=discipline_total,
+                union_fee_2pct=union_fee,
+                gross_pay=gross_pay,
+                deductions=deductions,
+                net_pay=net_pay,
+                payment_method=payment_method,
+                status=status,
+                remarks="Bảng lương mẫu tự động seed.",
+            )
+
+            # Liên kết Reward/Discipline vào slip lương
+            for r in rewards:
+                r.salary_slip = slip
+                r.save()
+            for d in disciplines:
+                d.salary_slip = slip
+                d.save()
+
+            # 10. Tạo bút toán CashFlowTransaction nếu phiếu lương đã thanh toán
+            if status == "paid":
+                CashFlowTransaction.objects.create(
+                    name=f"PAY-SALARY-{emp.employee_id}-{period_str}",
+                    payment_type="pay",
+                    category="Chi trả lương nhân viên",
+                    amount=net_pay,
+                    payment_date=config["end_date"],
+                    remarks=f"Thanh toán lương tháng {period_month:02d}/{period_year} cho nhân viên {emp.full_name} ({emp.employee_id}).",
+                )
 
 
 def reverse_seed(apps, schema_editor):
