@@ -720,9 +720,7 @@ class TestPayrollAndRewardDisciplineServices:
 
     def test_payroll_initialize_period_uses_employee_salary_base(self):
         # Arrange
-        employee = EmployeeFactory(
-            employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active"
-        )
+        EmployeeFactory(employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active")
         admin = UserFactory(username="admin_test_1")
 
         # Act
@@ -914,3 +912,94 @@ class TestPayrollAndRewardDisciplineServices:
         assert slip.gross_pay == Decimal("10000000.00")
         assert slip.deductions == Decimal("43000000.00")
         assert slip.net_pay == Decimal("-33000000.00")
+
+        # Assert CashFlowTransaction
+        tx = CashFlowTransaction.objects.filter(name=f"COLLECT-FINAL-SALARY-{employee.employee_id}-2026-05").first()
+        assert tx is not None
+        assert tx.payment_type == "receive"
+        assert tx.category == "Thu hồi bồi thường nhân viên thôi việc"
+        assert tx.amount == Decimal("33000000.00")
+
+
+@pytest.mark.django_db
+class TestHrmPermissionAndBypass:
+
+    def test_leave_request_approve_fails_if_approver_does_not_exist(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP9988")
+        leave_request = LeaveRequestFactory(employee=employee, status="pending")
+
+        # Act & Assert
+        from apps.common.xlib.exceptions import ValidationException
+
+        with pytest.raises(ValidationException) as exc_info:
+            leave_request_approve(
+                leave_request_id=leave_request.id,
+                approved_by_user_id="00000000-0000-0000-0000-000000000000",  # Random non-existent UUID
+            )
+        assert "Người phê duyệt không tồn tại" in str(exc_info.value)
+
+    def test_leave_request_approve_fails_if_no_permission(self, mock_check_permission):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP9987")
+        leave_request = LeaveRequestFactory(employee=employee, status="pending")
+        approver = UserFactory(username="no_permission_approver")
+
+        # Mock check_permission raise PermissionException
+        from apps.common.xlib.exceptions import PermissionException
+
+        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.change_leaverequest")
+
+        # Act & Assert
+        with pytest.raises(PermissionException) as exc_info:
+            leave_request_approve(
+                leave_request_id=leave_request.id,
+                approved_by_user_id=str(approver.id),
+            )
+        assert "không có quyền: hrm.change_leaverequest" in str(exc_info.value)
+
+    def test_employee_update_salary_or_title_fails_if_approver_does_not_exist(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP9986")
+        change_data = {
+            "change_type": "salary_change",
+            "new_salary_base": Decimal("13000000.00"),
+            "effective_date": date(2026, 6, 1),
+            "reason": "Tăng lương",
+        }
+
+        # Act & Assert
+        from apps.common.xlib.exceptions import ValidationException
+
+        with pytest.raises(ValidationException) as exc_info:
+            employee_update_salary_or_title(
+                employee_id=employee.id,
+                change_data=change_data,
+                approved_by_user_id="00000000-0000-0000-0000-000000000000",
+            )
+        assert "Người phê duyệt không tồn tại" in str(exc_info.value)
+
+    def test_employee_update_salary_or_title_fails_if_no_permission(self, mock_check_permission):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP9985")
+        approver = UserFactory(username="no_permission_approver_2")
+        change_data = {
+            "change_type": "salary_change",
+            "new_salary_base": Decimal("13000000.00"),
+            "effective_date": date(2026, 6, 1),
+            "reason": "Tăng lương",
+        }
+
+        # Mock check_permission raise PermissionException
+        from apps.common.xlib.exceptions import PermissionException
+
+        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.change_employee")
+
+        # Act & Assert
+        with pytest.raises(PermissionException) as exc_info:
+            employee_update_salary_or_title(
+                employee_id=employee.id,
+                change_data=change_data,
+                approved_by_user_id=str(approver.id),
+            )
+        assert "không có quyền: hrm.change_employee" in str(exc_info.value)

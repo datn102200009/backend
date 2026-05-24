@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API Documentation for the DATN ERP System Backend - Human Resource Management (HRM) Module.
 servers:
-  - url: http://localhost:8000/api/v1
+  - url: /api/v1
     description: Local development server
 components:
   securitySchemes:
@@ -309,9 +309,9 @@ components:
         created_at:
           type: string
           format: date-time
-          updated_at:
-            type: string
-            format: date-time
+        updated_at:
+          type: string
+          format: date-time
     SalarySlip:
       type: object
       properties:

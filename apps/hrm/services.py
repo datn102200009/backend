@@ -509,21 +509,39 @@ def contract_terminate(
 
     slip.save()
 
-    # 2.9. Tự động sinh ra bút toán chi tiền tại finance
+    # 2.9. Tự động sinh ra bút toán chi/thu tiền tại finance dựa trên net_pay
     from apps.finance.models import CashFlowTransaction
 
-    tx_name = f"PAY-FINAL-SALARY-{employee.employee_id}-{current_period}"
-    tx, tx_created = CashFlowTransaction.objects.get_or_create(
-        name=tx_name,
-        defaults={
-            "payment_type": "pay",
-            "category": "Chi trả lương nhân viên thôi việc",
-            "amount": slip.net_pay,
-            "payment_date": date.today(),
-            "remarks": f"Quyết toán và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
-        },
-    )
-    if tx_created and terminator:
+    net_pay = slip.net_pay
+    tx = None
+    tx_created = False
+
+    if net_pay > Decimal("0.00"):
+        tx_name = f"PAY-FINAL-SALARY-{employee.employee_id}-{current_period}"
+        tx, tx_created = CashFlowTransaction.objects.get_or_create(
+            name=tx_name,
+            defaults={
+                "payment_type": "pay",
+                "category": "Chi trả lương nhân viên thôi việc",
+                "amount": net_pay,
+                "payment_date": date.today(),
+                "remarks": f"Quyết toán và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+            },
+        )
+    elif net_pay < Decimal("0.00"):
+        tx_name = f"COLLECT-FINAL-SALARY-{employee.employee_id}-{current_period}"
+        tx, tx_created = CashFlowTransaction.objects.get_or_create(
+            name=tx_name,
+            defaults={
+                "payment_type": "receive",
+                "category": "Thu hồi bồi thường nhân viên thôi việc",
+                "amount": abs(net_pay),
+                "payment_date": date.today(),
+                "remarks": f"Quyết toán và thu hồi tiền bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+            },
+        )
+
+    if tx and tx_created and terminator:
         create_system_log(
             user=terminator,
             action="create",
@@ -635,9 +653,6 @@ def employee_update_salary_or_title(
     """
     Cập nhật lương cơ bản, chức danh hoặc phòng ban của nhân viên và tự động ghi nhận vào EmploymentHistory.
     """
-    if approved_by:
-        PermissionChecker.check_permission(approved_by, "hrm.change_employee")
-
     try:
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
@@ -647,7 +662,9 @@ def employee_update_salary_or_title(
         try:
             approved_by = User.objects.get(id=approved_by_user_id)
         except User.DoesNotExist:
-            approved_by = None
+            raise ValidationException("Người phê duyệt không tồn tại")
+
+    PermissionChecker.check_permission(approved_by, "hrm.change_employee")
 
     change_type = change_data.get("change_type")
     if not change_type:
@@ -916,9 +933,6 @@ def leave_request_approve(
     """
     Phê duyệt đơn xin nghỉ phép và tự động đồng bộ sang chấm công.
     """
-    if approved_by:
-        PermissionChecker.check_permission(approved_by, "hrm.change_leaverequest")
-
     try:
         leave_request = LeaveRequest.objects.get(id=leave_request_id)
     except LeaveRequest.DoesNotExist:
@@ -931,7 +945,9 @@ def leave_request_approve(
         try:
             approved_by = User.objects.get(id=approved_by_user_id)
         except User.DoesNotExist:
-            approved_by = None
+            raise ValidationException("Người phê duyệt không tồn tại")
+
+    PermissionChecker.check_permission(approved_by, "hrm.change_leaverequest")
 
     old_status = leave_request.status
     leave_request.status = "approved"

@@ -1,4 +1,4 @@
-.PHONY: help install dev prod migrate makemigrations test lint format clean freeze
+.PHONY: help install dev prod migrate makemigrations test lint lint-yaml format clean freeze
 
 help:
 	@echo "Available commands:"
@@ -39,6 +39,10 @@ test:
 lint:
 	flake8 datn_backend apps manage.py
 	isort --check-only datn_backend apps manage.py
+	yamllint static/api_docs/ .pre-commit-config.yaml docker-compose.yml docker-compose.prod.yml .github/workflows/
+
+lint-yaml:
+	yamllint static/api_docs/ .pre-commit-config.yaml docker-compose.yml docker-compose.prod.yml .github/workflows/
 
 format:
 	black datn_backend apps manage.py
