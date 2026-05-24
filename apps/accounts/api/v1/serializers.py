@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.accounts.models import Role
+
 
 class AuthLoginInputSerializer(serializers.Serializer):
     """Serializer để validate dữ liệu đầu vào của API Login."""
@@ -17,3 +19,11 @@ class AuthTokenOutputSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.CharField()
     role = serializers.CharField(allow_null=True)
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    """Serializer định dạng thông tin vai trò."""
+
+    class Meta:
+        model = Role
+        fields = ["id", "name", "description"]
