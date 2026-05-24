@@ -1,6 +1,9 @@
-"""
-Selectors for accounts app.
+from apps.accounts.models import Role
 
-All read operations and complex queries should be defined here.
-Always optimize with select_related() and prefetch_related() to avoid N+1 queries.
-"""
+
+def role_list():
+    """
+    Trả về danh sách tất cả các vai trò (roles) trong hệ thống,
+    sắp xếp theo tên vai trò.
+    """
+    return Role.objects.all().order_by("name")
