@@ -243,6 +243,7 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
 
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    breakdown = serializers.SerializerMethodField()
 
     class Meta:
         model = SalarySlip
@@ -265,9 +266,27 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
             "payment_method",
             "status",
             "remarks",
+            "breakdown",
             "created_at",
             "updated_at",
         ]
+
+    def get_breakdown(self, obj):
+        if obj.breakdown:
+            return obj.breakdown
+        # Fallback for old slips
+        return {
+            "incomes": [
+                {"name": "Lương theo ngày công", "amount": float(obj.base_salary or 0)},
+                {"name": "Lương tăng ca (OT)", "amount": float(obj.overtime_amount or 0)},
+                {"name": "Phụ cấp cố định", "amount": float(obj.allowance_amount or 0)},
+                {"name": "Khen thưởng/Thưởng thêm", "amount": float(obj.reward_amount_total or 0)},
+            ],
+            "deductions": [
+                {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(obj.discipline_deduction_total or 0)},
+                {"name": "Phí công đoàn (2%)", "amount": float(obj.union_fee_2pct or 0)},
+            ],
+        }
 
 
 # =============================================================================

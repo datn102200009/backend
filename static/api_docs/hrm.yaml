@@ -358,6 +358,28 @@ components:
         remarks:
           type: string
           nullable: true
+        breakdown:
+          type: object
+          nullable: true
+          properties:
+            incomes:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
+            deductions:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
         created_at:
           type: string
           format: date-time

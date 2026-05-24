@@ -474,6 +474,39 @@ def contract_terminate(
     slip.net_pay = net_pay
     slip.remarks = remarks.strip()
     slip.status = "paid"
+
+    total_days_str = f"{float(working_days):g}"
+    ot_hours_str = f"{float(total_ot_hours):g}"
+    unused_leave_str = f"{float(unused_leave_days):g}"
+
+    slip.breakdown = {
+        "incomes": [
+            {
+                "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
+                "amount": float(base_salary_earned),
+            },
+            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+            {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
+            {
+                "name": f"Bồi thường phép năm chưa nghỉ ({unused_leave_str} ngày)",
+                "amount": float(unused_leave_compensation),
+            },
+            {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
+        ],
+        "deductions": [
+            {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
+            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
+            {"name": "Khấu trừ BHXH (10.5% lương)", "amount": float(social_insurance_deduction)},
+        ],
+    }
+    if not is_lawful and resignation_fine > 0:
+        slip.breakdown["deductions"].append(
+            {
+                "name": f"Bồi thường nghỉ ngang (0.5 tháng + {unnotified_days} ngày không báo trước)",
+                "amount": float(resignation_fine),
+            }
+        )
+
     slip.save()
 
     # 2.9. Tự động sinh ra bút toán chi tiền tại finance
@@ -1264,6 +1297,27 @@ def payroll_calculate_salary(
     slip.deductions = deductions
     slip.net_pay = net_pay
     slip.remarks = remarks
+
+    total_days = float(working_days + paid_leave_days)
+    total_days_str = f"{total_days:g}"
+    ot_hours = float(total_ot_hours)
+    ot_hours_str = f"{ot_hours:g}"
+
+    slip.breakdown = {
+        "incomes": [
+            {
+                "name": f"Lương theo ngày công ({total_days_str}/{standard_days} ngày)",
+                "amount": float(base_salary_earned),
+            },
+            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+            {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
+            {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
+        ],
+        "deductions": [
+            {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
+            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
+        ],
+    }
     slip.save()
 
     create_system_log(

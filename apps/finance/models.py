@@ -38,6 +38,7 @@ class SalarySlip(BaseModel):
         default="draft",
     )
     remarks = models.TextField(null=True, blank=True)
+    breakdown = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "salary_slip"
