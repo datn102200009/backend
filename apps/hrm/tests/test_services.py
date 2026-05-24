@@ -732,6 +732,68 @@ class TestPayrollAndRewardDisciplineServices:
         assert len(slips) == 1
         assert slips[0].base_salary == Decimal("15000000.00")
 
+    def test_payroll_bulk_confirm_and_pay(self):
+        from apps.finance.models import CashFlowTransaction, SalarySlip
+
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP9501", full_name="Emp 1")
+        emp2 = EmployeeFactory(employee_id="EMP9502", full_name="Emp 2")
+        admin = UserFactory(username="admin_payroll")
+
+        # Khởi tạo 2 phiếu lương của kỳ 2026-05 dạng draft
+        slip1 = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-05",
+            base_salary=Decimal("5000000.00"),
+            net_pay=Decimal("5000000.00"),
+            status="draft",
+        )
+        slip2 = SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-05",
+            base_salary=Decimal("6000000.00"),
+            net_pay=Decimal("6000000.00"),
+            status="draft",
+        )
+
+        # Phiếu lương của kỳ khác (không bị ảnh hưởng)
+        slip_other = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-04",
+            net_pay=Decimal("4500000.00"),
+            status="draft",
+        )
+
+        # Act
+        from apps.hrm.services import payroll_bulk_confirm_and_pay
+
+        updated_slips = payroll_bulk_confirm_and_pay(
+            salary_period="2026-05", payment_method="bank_transfer", creator=admin
+        )
+
+        # Assert
+        assert len(updated_slips) == 2
+
+        # Refresh from DB
+        slip1.refresh_from_db()
+        slip2.refresh_from_db()
+        slip_other.refresh_from_db()
+
+        assert slip1.status == "paid"
+        assert slip1.payment_method == "bank_transfer"
+        assert slip2.status == "paid"
+        assert slip2.payment_method == "bank_transfer"
+        assert slip_other.status == "draft"  # Remains draft
+
+        # Verify CashFlowTransactions
+        tx1 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9501-2026-05").first()
+        tx2 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9502-2026-05").first()
+
+        assert tx1 is not None
+        assert tx1.amount == Decimal("5000000.00")
+        assert tx2 is not None
+        assert tx2.amount == Decimal("6000000.00")
+
     def test_contract_terminate_fails_if_previous_payroll_unpaid(self):
         # Arrange
         employee = EmployeeFactory(

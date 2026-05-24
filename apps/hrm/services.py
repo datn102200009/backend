@@ -1407,3 +1407,44 @@ def payroll_confirm_and_pay(
         )
 
     return slip
+
+
+@transaction.atomic
+def payroll_bulk_confirm_and_pay(
+    *,
+    salary_period: str,
+    payment_method: str,
+    creator: Optional[User] = None,
+) -> list[SalarySlip]:
+    """
+    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    slips = SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid")
+    updated_slips = []
+
+    for slip in slips:
+        # Cập nhật payment_method nếu khác
+        old_method = slip.payment_method
+        if old_method != payment_method:
+            slip.payment_method = payment_method
+            slip.save(update_fields=["payment_method"])
+            create_system_log(
+                user=creator,
+                action="update",
+                table_name="salary_slip",
+                record_id=str(slip.id),
+                old_value={"payment_method": old_method},
+                new_value={"payment_method": payment_method},
+            )
+
+        # Chạy confirm & pay từng phiếu
+        updated_slip = payroll_confirm_and_pay(
+            salary_slip_id=str(slip.id),
+            creator=creator,
+        )
+        updated_slips.append(updated_slip)
+
+    return updated_slips

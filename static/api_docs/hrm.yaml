@@ -392,6 +392,13 @@ components:
         id:
           type: string
           format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
         reward_date:
           type: string
           format: date
@@ -416,6 +423,13 @@ components:
         id:
           type: string
           format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
         incident_date:
           type: string
           format: date
@@ -1192,6 +1206,30 @@ paths:
           $ref: '#/components/responses/NotFoundError'
 
   /hrm/rewards/:
+    get:
+      summary: Lấy danh sách khen thưởng
+      description: Lấy danh sách toàn bộ khen thưởng của nhân sự, hỗ trợ lọc theo employee_id.
+      parameters:
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc theo ID nhân viên
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RewardRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
     post:
       summary: Ghi nhận khen thưởng nhân viên
       description: Ghi nhận kỷ lục khen thưởng cho nhân sự, có thể tùy chọn liên kết với phiếu lương cụ thể.
@@ -1246,6 +1284,30 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
 
   /hrm/disciplines/:
+    get:
+      summary: Lấy danh sách kỷ luật
+      description: Lấy danh sách toàn bộ kỷ luật của nhân sự, hỗ trợ lọc theo employee_id.
+      parameters:
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc theo ID nhân viên
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DisciplineRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
     post:
       summary: Ghi nhận kỷ luật nhân viên
       description: Ghi nhận kỷ luật nhân viên kèm thông tin khấu trừ lương (nếu có).
@@ -1299,6 +1361,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DisciplineRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/bulk-confirm-pay/:
+    post:
+      summary: Xác nhận và thanh toán lương nhanh
+      description: Xác nhận chi trả toàn bộ phiếu lương chưa thanh toán của một kỳ lương. Đổi trạng thái sang 'paid' và tự động sinh ra các bút toán chi tiền CashFlowTransaction tương ứng tại phân hệ Finance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - salary_period
+                - payment_method
+              properties:
+                salary_period:
+                  type: string
+                  description: Kỳ lương cần thanh toán (YYYY-MM)
+                  example: "2026-05"
+                payment_method:
+                  type: string
+                  enum: [cash, bank_transfer]
+                  description: Hình thức chi trả lương
+                  example: "bank_transfer"
+      responses:
+        '200':
+          description: Xác nhận và thanh toán lương nhanh thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':

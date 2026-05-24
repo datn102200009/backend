@@ -98,10 +98,16 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
     Serializer for RewardRecord output.
     """
 
+    employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+
     class Meta:
         model = RewardRecord
         fields = [
             "id",
+            "employee_id",
+            "employee_code",
+            "employee_name",
             "reward_date",
             "reward_type",
             "amount",
@@ -116,10 +122,16 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
     Serializer for DisciplineRecord output.
     """
 
+    employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+
     class Meta:
         model = DisciplineRecord
         fields = [
             "id",
+            "employee_id",
+            "employee_code",
+            "employee_name",
             "incident_date",
             "discipline_date",
             "discipline_type",
@@ -536,3 +548,19 @@ class DisciplineRecordCreateInputSerializer(serializers.Serializer):
     penalty_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
     salary_slip_id = serializers.UUIDField(required=False, allow_null=True)
     file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+
+
+class SalarySlipBulkConfirmInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating bulk salary slip confirmation input.
+    """
+
+    salary_period = serializers.CharField(max_length=10)
+    payment_method = serializers.ChoiceField(choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")])
+
+    def validate_salary_period(self, value):
+        import re
+
+        if not re.match(r"^\d{4}-\d{2}$", value):
+            raise serializers.ValidationError("Kỳ lương phải ở định dạng YYYY-MM.")
+        return value
