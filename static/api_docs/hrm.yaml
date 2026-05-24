@@ -1,0 +1,1408 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - HRM
+  version: 1.0.0
+  description: API Documentation for the DATN ERP System Backend - Human Resource Management (HRM) Module.
+servers:
+  - url: /api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    NotFoundError:
+      description: Not Found. Resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Không tìm thấy dữ liệu yêu cầu."
+    BadRequestError:
+      description: Bad Request. Lỗi validation hoặc thông tin đầu vào không hợp lệ.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Dữ liệu yêu cầu không hợp lệ."
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    Employee:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          description: Mã nhân viên duy nhất (ví dụ NV001)
+        full_name:
+          type: string
+        department:
+          type: string
+          nullable: true
+        position_title:
+          type: string
+          nullable: true
+        salary_base:
+          type: string
+          description: Lương cơ bản dạng Decimal
+          nullable: true
+        is_union_member:
+          type: boolean
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        gender:
+          type: string
+          enum: [male, female, other]
+          nullable: true
+        date_of_birth:
+          type: string
+          format: date
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        emergency_contact:
+          type: string
+          nullable: true
+        join_date:
+          type: string
+          format: date
+          nullable: true
+        leave_date:
+          type: string
+          format: date
+          nullable: true
+        employment_status:
+          type: string
+          enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EmployeeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Employee'
+        - type: object
+          properties:
+            contracts:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmploymentContract'
+            employment_histories:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmploymentHistory'
+            documents:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmployeeDocument'
+            rewards:
+              type: array
+              items:
+                $ref: '#/components/schemas/RewardRecord'
+            disciplines:
+              type: array
+              items:
+                $ref: '#/components/schemas/DisciplineRecord'
+    EmploymentContract:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        contract_no:
+          type: string
+        contract_type:
+          type: string
+          enum: [probation, definite_term, indefinite_term, other]
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          enum: [active, expired, terminated]
+        note:
+          type: string
+          nullable: true
+        file_url:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EmployeeDocument:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        doc_type:
+          type: string
+        title:
+          type: string
+        file_url:
+          type: string
+        uploaded_by_id:
+          type: string
+          format: uuid
+        uploaded_by_username:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EmploymentHistory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        change_type:
+          type: string
+          enum: [salary_change, title_change, department_transfer, other]
+        old_salary_base:
+          type: string
+          nullable: true
+        new_salary_base:
+          type: string
+          nullable: true
+        old_title:
+          type: string
+          nullable: true
+        new_title:
+          type: string
+          nullable: true
+        old_department:
+          type: string
+          nullable: true
+        new_department:
+          type: string
+          nullable: true
+        effective_date:
+          type: string
+          format: date
+        approved_by_id:
+          type: string
+          format: uuid
+        approved_by_username:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    Attendance:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+        work_hours:
+          type: string
+        overtime_hours:
+          type: string
+        remarks:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    LeaveRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        leave_type:
+          type: string
+          enum: [annual, sick, unpaid, maternity, personal, other]
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        days:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        approved_by_id:
+          type: string
+          format: uuid
+          nullable: true
+        approved_by_username:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SalarySlip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        salary_period:
+          type: string
+          description: Định dạng YYYY-MM
+        base_salary:
+          type: string
+        overtime_amount:
+          type: string
+        allowance_amount:
+          type: string
+        reward_amount_total:
+          type: string
+        discipline_deduction_total:
+          type: string
+        union_fee_2pct:
+          type: string
+        gross_pay:
+          type: string
+        deductions:
+          type: string
+        net_pay:
+          type: string
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          nullable: true
+        status:
+          type: string
+          enum: [draft, paid]
+        remarks:
+          type: string
+          nullable: true
+        breakdown:
+          type: object
+          nullable: true
+          properties:
+            incomes:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
+            deductions:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RewardRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        reward_date:
+          type: string
+          format: date
+        reward_type:
+          type: string
+          enum: [performance_bonus, initiative, holiday_bonus, other]
+        amount:
+          type: string
+          nullable: true
+        description:
+          type: string
+        salary_slip_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    DisciplineRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        incident_date:
+          type: string
+          format: date
+        discipline_date:
+          type: string
+          format: date
+        discipline_type:
+          type: string
+          enum: [reprimand, warning, salary_deduction, termination, other]
+        description:
+          type: string
+        penalty_amount:
+          type: string
+          nullable: true
+        salary_slip_id:
+          type: string
+          format: uuid
+          nullable: true
+        file_url:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+security:
+  - bearerAuth: []
+paths:
+  /hrm/employees/:
+    get:
+      summary: Lấy danh sách nhân viên
+      description: Xem danh sách hồ sơ nhân sự, hỗ trợ tìm kiếm theo mã/tên, lọc trạng thái, và phân trang.
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Tìm kiếm theo mã nhân viên hoặc tên đầy đủ.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, inactive]
+          description: Lọc theo trạng thái làm việc.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+          description: Số lượng bản ghi giới hạn trên mỗi trang.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Vị trí bắt đầu lấy bản ghi.
+      responses:
+        '200':
+          description: Lấy danh sách thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Employee'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/employees/create/:
+    post:
+      summary: Tạo mới nhân viên
+      description: Tạo mới hồ sơ nhân sự. Hỗ trợ tùy chọn tạo liên kết tài khoản User hệ thống (is_active = True).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - full_name
+              properties:
+                employee_id:
+                  type: string
+                  example: "NV099"
+                full_name:
+                  type: string
+                  example: "Nguyễn Văn Thử"
+                department:
+                  type: string
+                  example: "Phát triển Phần mềm"
+                position_title:
+                  type: string
+                  example: "Lập trình viên Senior"
+                salary_base:
+                  type: number
+                  format: float
+                  example: 25000000.00
+                is_union_member:
+                  type: boolean
+                  example: true
+                email:
+                  type: string
+                  format: email
+                  example: "tester@example.com"
+                phone:
+                  type: string
+                  example: "0901234567"
+                gender:
+                  type: string
+                  enum: [male, female, other]
+                  example: "male"
+                date_of_birth:
+                  type: string
+                  format: date
+                  example: "1994-06-15"
+                address:
+                  type: string
+                  example: "Quận 1, TP. Hồ Chí Minh"
+                join_date:
+                  type: string
+                  format: date
+                  example: "2026-06-01"
+                create_user:
+                  type: boolean
+                  description: Đặt là True nếu muốn tạo tài khoản đăng nhập đi kèm.
+                  example: true
+                username:
+                  type: string
+                  example: "tester099"
+                password:
+                  type: string
+                  example: "TestPass123!"
+                role_id:
+                  type: string
+                  format: uuid
+                  example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/employees/{id}/:
+    get:
+      summary: Chi tiết thông tin nhân viên
+      description: Lấy chi tiết hồ sơ nhân viên cùng toàn bộ thông tin lịch sử hợp đồng, lịch sử đổi chức danh/lương, khen thưởng, kỷ luật và tài liệu đính kèm.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeDetail'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/employees/{id}/update/:
+    patch:
+      summary: Cập nhật thông tin nhân viên
+      description: Cập nhật một số trường cơ bản trong hồ sơ nhân viên.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                phone:
+                  type: string
+                address:
+                  type: string
+                employment_status:
+                  type: string
+                  enum: [active, inactive]
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/employees/{id}/update-salary-title/:
+    post:
+      summary: Thay đổi lương, chức vụ hoặc phòng ban
+      description: Thực hiện điều chỉnh thông số lương cơ bản, chức vụ hoặc phòng ban của nhân viên. Hệ thống tự động ghi nhận một dòng lịch sử trong EmploymentHistory.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - change_type
+                - effective_date
+              properties:
+                change_type:
+                  type: string
+                  enum: [salary_change, title_change, department_transfer, other]
+                  example: "salary_change"
+                new_salary_base:
+                  type: number
+                  format: float
+                  example: 28000000.00
+                new_title:
+                  type: string
+                  example: "Tech Lead"
+                new_department:
+                  type: string
+                  example: "Phòng R&D"
+                effective_date:
+                  type: string
+                  format: date
+                  example: "2026-06-01"
+                reason:
+                  type: string
+                  example: "Tăng lương định kỳ theo năng lực"
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/contracts/:
+    post:
+      summary: Tạo mới hoặc gia hạn hợp đồng lao động
+      description: Tạo mới hợp đồng lao động cho nhân viên. Nếu nhân viên đang có hợp đồng active cũ, hệ thống tự động đổi trạng thái hợp đồng cũ sang 'expired' để kích hoạt hợp đồng mới.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - contract_no
+                - contract_type
+                - start_date
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
+                contract_no:
+                  type: string
+                  example: "HĐLD-2026-099"
+                contract_type:
+                  type: string
+                  enum: [probation, definite_term, indefinite_term, other]
+                  example: "definite_term"
+                start_date:
+                  type: string
+                  format: date
+                  example: "2026-06-01"
+                end_date:
+                  type: string
+                  format: date
+                  example: "2027-05-31"
+                note:
+                  type: string
+                  example: "Ký hợp đồng 1 năm"
+                file_url:
+                  type: string
+                  example: "https://storage.example.com/contracts/nv099_hdld.pdf"
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmploymentContract'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/contracts/{id}/terminate/:
+    post:
+      summary: Chấm dứt hợp đồng lao động
+      description: Chấm dứt hợp đồng lao động trước hạn hoặc đúng hạn. Trạng thái hợp đồng đổi sang 'terminated', trạng thái Employee đổi sang 'inactive', điền leave_date, đồng thời tự động khóa tài khoản User liên kết.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - termination_date
+                - reason
+              properties:
+                termination_date:
+                  type: string
+                  format: date
+                  example: "2026-05-31"
+                reason:
+                  type: string
+                  example: "Thôi việc theo nguyện vọng cá nhân"
+                file_url:
+                  type: string
+                  example: "https://storage.example.com/documents/resignation_nv099.pdf"
+                is_lawful:
+                  type: boolean
+                  default: true
+                  description: Nghỉ việc đúng luật (true) hoặc trái luật/nghỉ ngang (false)
+                  example: true
+                unused_leave_days:
+                  type: number
+                  format: float
+                  default: 0.0
+                  description: Số ngày phép năm chưa nghỉ cần thanh toán
+                  example: 0.0
+                standard_working_days:
+                  type: integer
+                  default: 26
+                  description: Số ngày công chuẩn của tháng quyết toán
+                  example: 26
+                unnotified_days:
+                  type: integer
+                  default: 0
+                  description: Số ngày vi phạm thời hạn báo trước (nếu nghỉ trái luật)
+                  example: 0
+      responses:
+        '200':
+          description: Chấm dứt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmploymentContract'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/attendances/:
+    get:
+      summary: Xem danh sách chấm công
+      description: Tra cứu dữ liệu chấm công của nhân viên.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Lọc chấm công theo ngày cụ thể (YYYY-MM-DD).
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc chấm công theo ID của nhân viên.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attendance'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/attendances/batch/:
+    post:
+      summary: Chấm công hàng loạt
+      description: Ghi nhận hoặc cập nhật thông tin chấm công cho nhiều nhân viên cùng một lúc vào một ngày cụ thể.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - date
+                - records
+              properties:
+                date:
+                  type: string
+                  format: date
+                  example: "2026-05-23"
+                records:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - employee_id
+                      - status
+                    properties:
+                      employee_id:
+                        type: string
+                        format: uuid
+                        example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
+                      status:
+                        type: string
+                        enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+                        example: "working"
+                      work_hours:
+                        type: number
+                        example: 8.00
+                      overtime_hours:
+                        type: number
+                        example: 2.00
+                      remarks:
+                        type: string
+                        example: "Tăng ca dự án"
+      responses:
+        '201':
+          description: Ghi nhận thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/leave-requests/:
+    get:
+      summary: Lấy danh sách đơn nghỉ phép
+      description: Tra cứu lịch sử xin nghỉ phép của nhân sự. Lọc theo trạng thái và ID nhân viên.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LeaveRequest'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/leave-requests/create/:
+    post:
+      summary: Tạo đơn xin nghỉ phép
+      description: Nhân viên gửi đơn xin nghỉ phép lên hệ thống ở trạng thái 'pending'.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - leave_type
+                - start_date
+                - end_date
+                - days
+                - reason
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
+                leave_type:
+                  type: string
+                  enum: [annual, sick, unpaid, maternity, personal, other]
+                  example: "annual"
+                start_date:
+                  type: string
+                  format: date
+                  example: "2026-06-10"
+                end_date:
+                  type: string
+                  format: date
+                  example: "2026-06-11"
+                days:
+                  type: number
+                  example: 2.0
+                reason:
+                  type: string
+                  example: "Giải quyết công việc gia đình"
+      responses:
+        '201':
+          description: Tạo đơn thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/leave-requests/{id}/approve/:
+    post:
+      summary: Phê duyệt hoặc từ chối đơn nghỉ phép
+      description: Người quản lý duyệt hoặc từ chối đơn phép. Nếu duyệt (approve), hệ thống sẽ tự động đồng bộ sang bảng Attendance (ngày công) cho các ngày nghỉ tương ứng.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum: [approve, reject]
+                  example: "approve"
+      responses:
+        '200':
+          description: Xử lý thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/salary-slips/:
+    get:
+      summary: Lấy danh sách phiếu lương
+      description: Xem danh sách các phiếu lương nhân sự.
+      parameters:
+        - name: salary_period
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Lọc kỳ lương dạng YYYY-MM
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, paid]
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/initialize/:
+    post:
+      summary: Khởi tạo phiếu lương hàng loạt
+      description: Khởi tạo phiếu lương ở trạng thái 'draft' cho toàn bộ các nhân viên đang có trạng thái 'active' trong kỳ lương chỉ định.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - salary_period
+              properties:
+                salary_period:
+                  type: string
+                  description: Kỳ lương cần khởi tạo (YYYY-MM)
+                  example: "2026-05"
+      responses:
+        '201':
+          description: Khởi tạo thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/{id}/calculate/:
+    post:
+      summary: Tính toán chi tiết phiếu lương
+      description: Tính toán chi tiết các khoản thực nhận của nhân sự dựa trên ngày công đi làm, ngày phép, giờ OT, phụ cấp, thưởng, phạt kỷ luật và bảo hiểm công đoàn.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                standard_days:
+                  type: integer
+                  description: Số ngày công tiêu chuẩn trong tháng (mặc định 26)
+                  example: 26
+      responses:
+        '200':
+          description: Tính toán thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/salary-slips/{id}/confirm/:
+    post:
+      summary: Xác nhận và chi trả lương
+      description: Xác nhận chi trả phiếu lương. Đổi trạng thái sang 'paid' và tự động sinh ra một bút toán chi tiền CashFlowTransaction tương ứng tại phân hệ Finance.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_method
+              properties:
+                payment_method:
+                  type: string
+                  enum: [cash, bank_transfer]
+                  example: "bank_transfer"
+      responses:
+        '200':
+          description: Xác nhận và thanh toán lương thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/rewards/:
+    get:
+      summary: Lấy danh sách khen thưởng
+      description: Lấy danh sách toàn bộ khen thưởng của nhân sự, hỗ trợ lọc theo employee_id.
+      parameters:
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc theo ID nhân viên
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RewardRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      summary: Ghi nhận khen thưởng nhân viên
+      description: Ghi nhận kỷ lục khen thưởng cho nhân sự, có thể tùy chọn liên kết với phiếu lương cụ thể.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - reward_date
+                - reward_type
+                - amount
+                - description
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
+                reward_date:
+                  type: string
+                  format: date
+                  example: "2026-05-23"
+                reward_type:
+                  type: string
+                  enum: [performance_bonus, initiative, holiday_bonus, other]
+                  example: "performance_bonus"
+                amount:
+                  type: number
+                  format: float
+                  example: 1000000.00
+                description:
+                  type: string
+                  example: "Thành tích xuất sắc trong dự án quý I"
+                salary_slip_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '201':
+          description: Ghi nhận thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/disciplines/:
+    get:
+      summary: Lấy danh sách kỷ luật
+      description: Lấy danh sách toàn bộ kỷ luật của nhân sự, hỗ trợ lọc theo employee_id.
+      parameters:
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc theo ID nhân viên
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DisciplineRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      summary: Ghi nhận kỷ luật nhân viên
+      description: Ghi nhận kỷ luật nhân viên kèm thông tin khấu trừ lương (nếu có).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - incident_date
+                - discipline_date
+                - discipline_type
+                - description
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
+                incident_date:
+                  type: string
+                  format: date
+                  example: "2026-05-22"
+                discipline_date:
+                  type: string
+                  format: date
+                  example: "2026-05-23"
+                discipline_type:
+                  type: string
+                  enum: [reprimand, warning, salary_deduction, termination, other]
+                  example: "warning"
+                description:
+                  type: string
+                  example: "Đi muộn quá 3 lần trong tháng"
+                penalty_amount:
+                  type: number
+                  format: float
+                  example: 200000.00
+                salary_slip_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                file_url:
+                  type: string
+                  example: "https://storage.example.com/documents/discipline_nv099.pdf"
+      responses:
+        '201':
+          description: Ghi nhận thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisciplineRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/bulk-confirm-pay/:
+    post:
+      summary: Xác nhận và thanh toán lương nhanh
+      description: Xác nhận chi trả toàn bộ phiếu lương chưa thanh toán của một kỳ lương. Đổi trạng thái sang 'paid' và tự động sinh ra các bút toán chi tiền CashFlowTransaction tương ứng tại phân hệ Finance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - salary_period
+                - payment_method
+              properties:
+                salary_period:
+                  type: string
+                  description: Kỳ lương cần thanh toán (YYYY-MM)
+                  example: "2026-05"
+                payment_method:
+                  type: string
+                  enum: [cash, bank_transfer]
+                  description: Hình thức chi trả lương
+                  example: "bank_transfer"
+      responses:
+        '200':
+          description: Xác nhận và thanh toán lương nhanh thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'

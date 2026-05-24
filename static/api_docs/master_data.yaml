@@ -6,7 +6,7 @@ info:
     API Documentation for the DATN ERP System Backend - Master Data Module.
     Includes Item (Product) management with strict Data Integrity checks, Rate Limiting, and Role-Based Access Control.
 servers:
-  - url: http://localhost:8000/api/v1
+  - url: /api/v1
     description: Local development server
 components:
   securitySchemes:
