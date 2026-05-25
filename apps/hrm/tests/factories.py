@@ -82,7 +82,7 @@ class LeaveRequestFactory(factory.django.DjangoModelFactory):
         model = LeaveRequest
 
     employee = factory.SubFactory(EmployeeFactory)
-    leave_type = "annual"
+    leave_type = "paid"
     start_date = "2026-05-01"
     end_date = "2026-05-03"
     days = Decimal("3.0")

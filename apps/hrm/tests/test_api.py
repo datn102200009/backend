@@ -236,7 +236,7 @@ class TestHrmAPI:
         url = "/api/v1/hrm/leave-requests/create/"
         data = {
             "employee_id": str(employee.id),
-            "leave_type": "annual",
+            "leave_type": "paid",
             "start_date": "2026-06-01",
             "end_date": "2026-06-02",
             "days": 2.0,
@@ -251,7 +251,7 @@ class TestHrmAPI:
 
     def test_approve_leave_request(self, mock_check, auth_client):
         leave_request = LeaveRequestFactory(
-            status="pending", leave_type="annual", start_date="2026-05-01", end_date="2026-05-01", days=1.0
+            status="pending", leave_type="paid", start_date="2026-05-01", end_date="2026-05-01", days=1.0
         )
         url = f"/api/v1/hrm/leave-requests/{leave_request.id}/approve/"
         data = {"action": "approve"}

@@ -975,14 +975,10 @@ def leave_request_approve(
 
     # Tự động tạo/cập nhật bảng Attendance cho các ngày nghỉ
     status_map = {
-        "annual": "paid_leave",
-        "sick": "sick_leave",
+        "paid": "paid_leave",
         "unpaid": "unpaid_leave",
-        "maternity": "paid_leave",
-        "personal": "unpaid_leave",
-        "other": "other",
     }
-    attendance_status = status_map.get(leave_request.leave_type, "other")
+    attendance_status = status_map.get(leave_request.leave_type, "unpaid_leave")
 
     start = leave_request.start_date
     end = leave_request.end_date

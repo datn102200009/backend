@@ -281,7 +281,7 @@ components:
           type: string
         leave_type:
           type: string
-          enum: [annual, sick, unpaid, maternity, personal, other]
+          enum: [paid, unpaid]
         start_date:
           type: string
           format: date
@@ -292,6 +292,7 @@ components:
           type: string
         reason:
           type: string
+          nullable: true
         status:
           type: string
           enum: [pending, approved, rejected]
@@ -979,7 +980,6 @@ paths:
                 - start_date
                 - end_date
                 - days
-                - reason
               properties:
                 employee_id:
                   type: string
@@ -987,8 +987,8 @@ paths:
                   example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
                 leave_type:
                   type: string
-                  enum: [annual, sick, unpaid, maternity, personal, other]
-                  example: "annual"
+                  enum: [paid, unpaid]
+                  example: "paid"
                 start_date:
                   type: string
                   format: date
@@ -1002,6 +1002,7 @@ paths:
                   example: 2.0
                 reason:
                   type: string
+                  nullable: true
                   example: "Giải quyết công việc gia đình"
       responses:
         '201':

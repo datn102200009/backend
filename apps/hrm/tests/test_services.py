@@ -449,11 +449,11 @@ class TestAttendanceAndLeaveServices:
         employee = EmployeeFactory(employee_id="EMP6001")
         admin = UserFactory(username="admin_leave")
         leave_data = {
-            "leave_type": "sick",
+            "leave_type": "paid",
             "start_date": date(2026, 5, 10),
             "end_date": date(2026, 5, 12),
             "days": Decimal("3.0"),
-            "reason": "Nghỉ ốm nằm viện",
+            "reason": "Nghỉ phép năm đi du lịch",
         }
 
         # Act 1: Create leave request
@@ -463,14 +463,14 @@ class TestAttendanceAndLeaveServices:
         assert request is not None
         assert request.status == "pending"
         assert request.employee == employee
-        assert request.leave_type == "sick"
+        assert request.leave_type == "paid"
 
         # Verify log for create
         create_log = SystemLog.objects.filter(
             table_name="leave_request", record_id=str(request.id), action="create"
         ).first()
         assert create_log is not None
-        assert create_log.new_value["leave_type"] == "sick"
+        assert create_log.new_value["leave_type"] == "paid"
 
         # Act 2: Approve leave request
         approved_request = leave_request_approve(leave_request_id=request.id, approved_by_user_id=admin.id)
@@ -493,14 +493,33 @@ class TestAttendanceAndLeaveServices:
         for d in dates_to_check:
             att = Attendance.objects.filter(employee=employee, date=d).first()
             assert att is not None
-            assert att.status == "sick_leave"  # "sick" leave_type maps to "sick_leave" attendance status
+            assert att.status == "paid_leave"  # "paid" leave_type maps to "paid_leave" attendance status
             assert att.work_hours == Decimal("0.00")
             assert att.overtime_hours == Decimal("0.00")
 
             # Check attendance logs
             att_log = SystemLog.objects.filter(table_name="attendance", record_id=str(att.id), action="create").first()
             assert att_log is not None
-            assert att_log.new_value["status"] == "sick_leave"
+            assert att_log.new_value["status"] == "paid_leave"
+
+    def test_leave_request_create_without_reason(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP6002")
+        leave_data = {
+            "leave_type": "unpaid",
+            "start_date": date(2026, 5, 15),
+            "end_date": date(2026, 5, 15),
+            "days": Decimal("1.0"),
+            "reason": "",  # Empty reason
+        }
+
+        # Act
+        request = leave_request_create(employee_id=employee.id, data=leave_data)
+
+        # Assert
+        assert request is not None
+        assert request.status == "pending"
+        assert request.reason == "" or request.reason is None
 
 
 @pytest.mark.django_db
