@@ -1216,6 +1216,9 @@ def payroll_calculate_salary(
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
+    # Cố định số ngày công tiêu chuẩn là 26 ngày x 8 giờ
+    standard_days = 26
+
     try:
         slip = SalarySlip.objects.get(id=salary_slip_id)
     except SalarySlip.DoesNotExist:
