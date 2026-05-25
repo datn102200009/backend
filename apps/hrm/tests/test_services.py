@@ -1094,3 +1094,40 @@ class TestHrmPermissionAndBypass:
                 approved_by_user_id=str(approver.id),
             )
         assert "không có quyền: hrm.change_employee" in str(exc_info.value)
+
+    def test_payroll_calculate_salary_with_public_holiday(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8800",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll")
+
+        # Create a public holiday in 2026-05
+        PublicHoliday.objects.create(name="Tết Đoan Ngọ", date=date(2026, 5, 5))
+
+        # Initialize slip
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act 1: Calculate salary without any attendance records
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+
+        # Assert 1: Employee should receive 1.0 paid leave day dynamically from the public holiday
+        calculated_slip.refresh_from_db()
+        # 1 day of base salary = 13,000,000 / 26 * 1 = 500,000
+        assert calculated_slip.base_salary == Decimal("500000.00")
+        assert calculated_slip.net_pay == Decimal("500000.00")
+
+        # Act 2: Add working attendance on the public holiday
+        AttendanceFactory(employee=employee, date=date(2026, 5, 5), status="working", work_hours=Decimal("8.00"))
+
+        # Calculate again
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+        calculated_slip.refresh_from_db()
+
+        # Assert 2: They have a working record, so they get 1 day of base salary (no double credit for holiday)
+        assert calculated_slip.base_salary == Decimal("500000.00")

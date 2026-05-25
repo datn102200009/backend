@@ -435,3 +435,44 @@ class TestHrmAPI:
         assert response.data[0]["payment_method"] == "bank_transfer"
 
         assert SalarySlip.objects.filter(salary_period="2026-05", status="paid").count() == 2
+
+    def test_list_and_create_public_holiday(self, mock_check, auth_client):
+        from apps.hrm.models import PublicHoliday
+
+        PublicHoliday.objects.all().delete()
+
+        # Test List empty
+        url = "/api/v1/hrm/public-holidays/"
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 0
+
+        # Test Create holiday
+        data = {"name": "Giỗ tổ Hùng Vương", "date": "2026-04-26", "description": "Ngày Giỗ tổ"}
+        response = auth_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["name"] == "Giỗ tổ Hùng Vương"
+        assert PublicHoliday.objects.filter(date="2026-04-26").exists()
+
+        # Test List has 1
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 1
+
+    def test_update_and_delete_public_holiday(self, mock_check, auth_client):
+        from apps.hrm.models import PublicHoliday
+
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", date="2026-01-01")
+
+        # Test update
+        url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
+        data = {"name": "Tết Tây 2026", "date": "2026-01-01"}
+        response = auth_client.patch(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        holiday.refresh_from_db()
+        assert holiday.name == "Tết Tây 2026"
+
+        # Test delete
+        response = auth_client.delete(url)
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert not PublicHoliday.objects.filter(id=holiday.id).exists()

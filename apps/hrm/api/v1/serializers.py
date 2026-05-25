@@ -16,6 +16,7 @@ from apps.hrm.models import (
     EmploymentContract,
     EmploymentHistory,
     LeaveRequest,
+    PublicHoliday,
     RewardRecord,
 )
 from apps.master_data.models import Employee
@@ -299,6 +300,23 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
                 {"name": "Phí công đoàn (2%)", "amount": float(obj.union_fee_2pct or 0)},
             ],
         }
+
+
+class PublicHolidaySerializer(serializers.ModelSerializer):
+    """
+    Serializer cho model PublicHoliday.
+    """
+
+    class Meta:
+        model = PublicHoliday
+        fields = [
+            "id",
+            "name",
+            "date",
+            "description",
+            "created_at",
+            "updated_at",
+        ]
 
 
 # =============================================================================

@@ -243,3 +243,22 @@ class DisciplineRecord(BaseModel):
 
     def __str__(self):
         return f"Discipline {self.employee.full_name} - {self.get_discipline_type_display()} ({self.discipline_date})"
+
+
+class PublicHoliday(BaseModel):
+    """
+    Quản lý danh sách ngày nghỉ Lễ/Tết được cấu hình linh hoạt.
+    """
+
+    name = models.CharField(max_length=255)
+    date = models.DateField(unique=True)
+    description = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "public_holiday"
+        verbose_name = "Public Holiday"
+        verbose_name_plural = "Public Holidays"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"{self.name} ({self.date})"

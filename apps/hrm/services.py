@@ -18,6 +18,7 @@ from apps.hrm.models import (
     EmploymentContract,
     EmploymentHistory,
     LeaveRequest,
+    PublicHoliday,
     RewardRecord,
 )
 from apps.master_data.models import Employee
@@ -1231,13 +1232,21 @@ def payroll_calculate_salary(
     paid_leave_days = Decimal("0.00")
     total_ot_hours = Decimal("0.00")
 
+    recorded_dates = set()
     for att in attendances:
+        recorded_dates.add(att.date)
         if att.status == "working":
             working_days += Decimal("1.00")
         elif att.status in ["paid_leave", "sick_leave", "holiday"]:
             paid_leave_days += Decimal("1.00")
 
         total_ot_hours += att.overtime_hours or Decimal("0.00")
+
+    # Tự động tính 100% lương cho ngày nghỉ lễ nếu chưa có chấm công
+    public_holidays = PublicHoliday.objects.filter(date__year=year, date__month=month)
+    for holiday in public_holidays:
+        if holiday.date not in recorded_dates:
+            paid_leave_days += Decimal("1.00")
 
     if standard_days > 0:
         base_salary_earned = salary_base * ((working_days + paid_leave_days) / Decimal(str(standard_days)))

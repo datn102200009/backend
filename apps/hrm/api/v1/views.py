@@ -33,6 +33,7 @@ from apps.hrm.api.v1.serializers import (
     LeaveRequestApproveInputSerializer,
     LeaveRequestCreateInputSerializer,
     LeaveRequestOutputSerializer,
+    PublicHolidaySerializer,
     RewardRecordCreateInputSerializer,
     RewardRecordOutputSerializer,
     SalarySlipBulkConfirmInputSerializer,
@@ -40,7 +41,7 @@ from apps.hrm.api.v1.serializers import (
     SalarySlipInitializeInputSerializer,
     SalarySlipOutputSerializer,
 )
-from apps.hrm.models import Attendance, DisciplineRecord, EmploymentContract, LeaveRequest, RewardRecord
+from apps.hrm.models import Attendance, DisciplineRecord, EmploymentContract, LeaveRequest, PublicHoliday, RewardRecord
 from apps.hrm.selectors import employee_get_detail_with_relations
 from apps.hrm.services import (
     attendance_batch_record,
@@ -693,3 +694,114 @@ def salary_slip_bulk_confirm_view(request):
 
     out_serializer = SalarySlipOutputSerializer(updated_slips, many=True)
     return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@throttle_classes([UserRateThrottle])
+def public_holiday_list_create_view(request):
+    """
+    Xem danh sách hoặc khai báo ngày nghỉ lễ.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if request.method == "GET":
+        PermissionChecker.check_permission(user, "hrm.view_publicholiday")
+        qs = PublicHoliday.objects.all().order_by("-date")
+        serializer = PublicHolidaySerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method == "POST":
+        PermissionChecker.check_permission(user, "hrm.add_publicholiday")
+        serializer = PublicHolidaySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            holiday = serializer.save()
+            # Ghi log create
+            create_system_log(
+                user=user,
+                action="create",
+                table_name="public_holiday",
+                record_id=str(holiday.id),
+                new_value={
+                    "name": holiday.name,
+                    "date": str(holiday.date),
+                    "description": holiday.description,
+                },
+            )
+        except IntegrityError:
+            raise ValidationException("Ngày nghỉ lễ này đã tồn tại trong hệ thống.")
+
+        out_serializer = PublicHolidaySerializer(holiday)
+        return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@throttle_classes([UserRateThrottle])
+def public_holiday_detail_update_delete_view(request, pk):
+    """
+    Xem chi tiết, cập nhật hoặc xóa ngày nghỉ lễ.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        holiday = PublicHoliday.objects.get(id=pk)
+    except PublicHoliday.DoesNotExist:
+        raise NotFoundException("Không tìm thấy ngày nghỉ lễ")
+
+    if request.method == "GET":
+        PermissionChecker.check_permission(user, "hrm.view_publicholiday")
+        serializer = PublicHolidaySerializer(holiday)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method in ["PUT", "PATCH"]:
+        PermissionChecker.check_permission(user, "hrm.change_publicholiday")
+        old_value = {
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        }
+
+        serializer = PublicHolidaySerializer(holiday, data=request.data, partial=(request.method == "PATCH"))
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated_holiday = serializer.save()
+            create_system_log(
+                user=user,
+                action="update",
+                table_name="public_holiday",
+                record_id=str(updated_holiday.id),
+                old_value=old_value,
+                new_value={
+                    "name": updated_holiday.name,
+                    "date": str(updated_holiday.date),
+                    "description": updated_holiday.description,
+                },
+            )
+        except IntegrityError:
+            raise ValidationException("Ngày nghỉ lễ này đã tồn tại trong hệ thống.")
+
+        out_serializer = PublicHolidaySerializer(updated_holiday)
+        return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method == "DELETE":
+        PermissionChecker.check_permission(user, "hrm.delete_publicholiday")
+        old_value = {
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        }
+        holiday_id = holiday.id
+        holiday.delete()
+
+        create_system_log(
+            user=user,
+            action="delete",
+            table_name="public_holiday",
+            record_id=str(holiday_id),
+            old_value=old_value,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
