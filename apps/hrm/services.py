@@ -1204,7 +1204,6 @@ def payroll_initialize_period(
 def payroll_calculate_salary(
     *,
     salary_slip_id: str,
-    standard_days: int = 26,
     creator: Optional[User] = None,
 ) -> SalarySlip:
     """

@@ -658,7 +658,7 @@ class TestPayrollAndRewardDisciplineServices:
         slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
 
         # Act
-        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
 
         # Assert
         calculated_slip.refresh_from_db()
@@ -695,7 +695,7 @@ class TestPayrollAndRewardDisciplineServices:
         slip = SalarySlipFactory(employee=employee, salary_period="2026-05", payment_method="cash")
 
         # Act
-        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
 
         # Assert
         calculated_slip.refresh_from_db()
@@ -861,7 +861,7 @@ class TestPayrollAndRewardDisciplineServices:
         for day in range(1, 27):
             AttendanceFactory(employee=employee, date=date(2026, 6, day), status="working", work_hours=Decimal("8.00"))
 
-        calculated_slip = payroll_calculate_salary(salary_slip_id=slip_june.id, standard_days=26, creator=admin)
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip_june.id, creator=admin)
 
         # Assert
         calculated_slip.refresh_from_db()
@@ -1114,7 +1114,7 @@ class TestHrmPermissionAndBypass:
         slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
 
         # Act 1: Calculate salary without any attendance records
-        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
 
         # Assert 1: Employee should receive 1.0 paid leave day dynamically from the public holiday
         calculated_slip.refresh_from_db()
@@ -1126,7 +1126,7 @@ class TestHrmPermissionAndBypass:
         AttendanceFactory(employee=employee, date=date(2026, 5, 5), status="working", work_hours=Decimal("8.00"))
 
         # Calculate again
-        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, standard_days=26, creator=admin)
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
         calculated_slip.refresh_from_db()
 
         # Assert 2: They have a working record, so they get 1 day of base salary (no double credit for holiday)

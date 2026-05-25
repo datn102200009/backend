@@ -533,12 +533,8 @@ def salary_slip_calculate_view(request, pk):
     except SalarySlip.DoesNotExist:
         raise NotFoundException("Không tìm thấy phiếu lương")
 
-    # Cố định số ngày công tiêu chuẩn là 26 ngày
-    standard_days = 26
-
     updated_slip = payroll_calculate_salary(
         salary_slip_id=pk,
-        standard_days=standard_days,
         creator=user,
     )
 
