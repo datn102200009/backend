@@ -421,9 +421,14 @@ def contract_terminate(
     if employee.is_union_member:
         union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
 
+    import calendar
+
     from django.db.models import Q
 
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__year=year, reward_date__month=month).filter(
+    last_day = calendar.monthrange(year, month)[1]
+    period_end_date = date(year, month, last_day)
+
+    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
         Q(salary_slip__isnull=True) | Q(salary_slip=slip)
     )
     reward_total = Decimal("0.00")
@@ -433,9 +438,9 @@ def contract_terminate(
             r.salary_slip = slip
             r.save(update_fields=["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(
-        employee=employee, discipline_date__year=year, discipline_date__month=month
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
+    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
+        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
+    )
     discipline_total = Decimal("0.00")
     for d in disciplines:
         discipline_total += d.penalty_amount or Decimal("0.00")
@@ -1253,10 +1258,15 @@ def payroll_calculate_salary(
     if employee.is_union_member:
         union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
 
+    import calendar
+
     from django.db.models import Q
 
-    # 2. Thưởng & Phạt trong kỳ
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__year=year, reward_date__month=month).filter(
+    last_day = calendar.monthrange(year, month)[1]
+    period_end_date = date(year, month, last_day)
+
+    # 2. Thưởng & Phạt trong kỳ (bao gồm lũy kế chưa thanh toán từ các kỳ trước)
+    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
         Q(salary_slip__isnull=True) | Q(salary_slip=slip)
     )
 
@@ -1267,9 +1277,9 @@ def payroll_calculate_salary(
             r.salary_slip = slip
             r.save(update_fields=["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(
-        employee=employee, discipline_date__year=year, discipline_date__month=month
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
+    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
+        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
+    )
 
     discipline_total = Decimal("0.00")
     for d in disciplines:

@@ -792,6 +792,78 @@ class TestPayrollAndRewardDisciplineServices:
         assert tx2 is not None
         assert tx2.amount == Decimal("6000000.00")
 
+    def test_payroll_calculate_salary_with_late_reward_and_discipline(self):
+        from apps.finance.models import SalarySlip
+        from apps.hrm.models import DisciplineRecord, RewardRecord
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9999",
+            salary_base=Decimal("10000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll")
+
+        # 1. Tạo và xác nhận thanh toán phiếu lương Kỳ 05/2026 cho nhân viên (để giả lập kỳ này đã paid)
+        slip_may = SalarySlipFactory(
+            employee=employee,
+            salary_period="2026-05",
+            base_salary=Decimal("10000000.00"),
+            net_pay=Decimal("10000000.00"),
+            status="paid",
+        )
+
+        # 2. Tạo Khen thưởng và Kỷ luật có ngày quyết định trong tháng 5 (Kỳ 05) sau khi đã chi lương tháng 5
+        # Do tạo sau khi đã chi lương, salary_slip của các bản ghi này sẽ là None
+        reward_late = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 5, 20),
+            amount=Decimal("1500000.00"),
+            salary_slip=None,
+        )
+        discipline_late = DisciplineRecordFactory(
+            employee=employee,
+            discipline_date=date(2026, 5, 22),
+            penalty_amount=Decimal("500000.00"),
+            salary_slip=None,
+        )
+
+        # 3. Khởi tạo phiếu lương Kỳ 06/2026
+        slip_june = SalarySlipFactory(
+            employee=employee,
+            salary_period="2026-06",
+            base_salary=Decimal("10000000.00"),
+            status="draft",
+        )
+
+        # Act
+        # Chạy tính toán lương cho Kỳ tháng 6 (26 ngày công chuẩn, đi làm đủ ngày)
+        for day in range(1, 27):
+            AttendanceFactory(employee=employee, date=date(2026, 6, day), status="working", work_hours=Decimal("8.00"))
+
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip_june.id, standard_days=26, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        reward_late.refresh_from_db()
+        discipline_late.refresh_from_db()
+
+        # Kiểm tra xem các bản ghi thưởng/phạt muộn của tháng 5 đã được gán vào phiếu lương tháng 6 chưa
+        assert reward_late.salary_slip == calculated_slip
+        assert discipline_late.salary_slip == calculated_slip
+
+        # Kiểm tra các giá trị trên phiếu lương tháng 6:
+        # Lương thực tế: 10,000,000 * 26 / 26 = 10,000,000
+        # Thưởng: 1,500,000
+        # Khấu trừ/Kỷ luật: 500,000
+        # Thực nhận = 10,000,000 (lương) + 1,500,000 (thưởng) - 500,000 (phạt) = 11,000,000
+        assert calculated_slip.reward_amount_total == Decimal("1500000.00")
+        assert calculated_slip.discipline_deduction_total == Decimal("500000.00")
+        assert calculated_slip.gross_pay == Decimal("10000000.00")
+        assert calculated_slip.deductions == Decimal("500000.00")
+        assert calculated_slip.net_pay == Decimal("11000000.00")
+
     def test_contract_terminate_fails_if_previous_payroll_unpaid(self):
         # Arrange
         employee = EmployeeFactory(
