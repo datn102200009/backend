@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
@@ -1482,3 +1482,126 @@ def payroll_bulk_confirm_and_pay(
         updated_slips.append(updated_slip)
 
     return updated_slips
+
+
+@transaction.atomic
+def public_holiday_create(
+    *,
+    name: str,
+    date_val: date,
+    description: str = "",
+    creator: Optional[User] = None,
+) -> PublicHoliday:
+    """
+    Khai báo ngày nghỉ lễ mới. Chặn ngày trong quá khứ.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_publicholiday")
+
+    if isinstance(date_val, str):
+        date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
+
+    if date_val < timezone.now().date():
+        raise ValidationException("Không được chọn ngày nghỉ lễ trong quá khứ.")
+
+    holiday = PublicHoliday.objects.create(
+        name=name,
+        date=date_val,
+        description=description,
+    )
+
+    create_system_log(
+        user=creator,
+        action="create",
+        table_name="public_holiday",
+        record_id=str(holiday.id),
+        new_value={
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        },
+    )
+
+    return holiday
+
+
+@transaction.atomic
+def public_holiday_update(
+    *,
+    holiday: PublicHoliday,
+    data: Dict[str, Any],
+    updater: Optional[User] = None,
+) -> PublicHoliday:
+    """
+    Cập nhật thông tin ngày nghỉ lễ. Chặn ngày trong quá khứ nếu ngày nghỉ bị thay đổi.
+    """
+    if updater:
+        PermissionChecker.check_permission(updater, "hrm.change_publicholiday")
+
+    old_value = {
+        "name": holiday.name,
+        "date": str(holiday.date),
+        "description": holiday.description,
+    }
+
+    new_date = data.get("date")
+    if new_date:
+        if isinstance(new_date, str):
+            new_date = datetime.strptime(new_date, "%Y-%m-%d").date()
+
+        # Nếu ngày thay đổi, kiểm tra xem ngày mới có ở quá khứ không
+        if new_date != holiday.date and new_date < timezone.now().date():
+            raise ValidationException("Không được chọn ngày nghỉ lễ trong quá khứ.")
+        holiday.date = new_date
+
+    if "name" in data:
+        holiday.name = data["name"]
+    if "description" in data:
+        holiday.description = data["description"]
+
+    holiday.save()
+
+    create_system_log(
+        user=updater,
+        action="update",
+        table_name="public_holiday",
+        record_id=str(holiday.id),
+        old_value=old_value,
+        new_value={
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        },
+    )
+
+    return holiday
+
+
+@transaction.atomic
+def public_holiday_delete(
+    *,
+    holiday: PublicHoliday,
+    deleter: Optional[User] = None,
+) -> None:
+    """
+    Xóa ngày nghỉ lễ.
+    """
+    if deleter:
+        PermissionChecker.check_permission(deleter, "hrm.delete_publicholiday")
+
+    old_value = {
+        "name": holiday.name,
+        "date": str(holiday.date),
+        "description": holiday.description,
+    }
+    record_id = str(holiday.id)
+    holiday.delete()
+
+    create_system_log(
+        user=deleter,
+        action="delete",
+        table_name="public_holiday",
+        record_id=record_id,
+        old_value=old_value,
+        new_value={},
+    )

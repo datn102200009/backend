@@ -1432,6 +1432,13 @@ paths:
     get:
       summary: Lấy danh sách ngày nghỉ lễ
       description: Lấy danh sách toàn bộ các ngày nghỉ lễ cấu hình trong hệ thống, sắp xếp mới nhất lên đầu.
+      parameters:
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Lọc ngày nghỉ lễ theo năm cụ thể.
       responses:
         '200':
           description: Thành công

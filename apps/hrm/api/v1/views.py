@@ -57,6 +57,9 @@ from apps.hrm.services import (
     payroll_calculate_salary,
     payroll_confirm_and_pay,
     payroll_initialize_period,
+    public_holiday_create,
+    public_holiday_delete,
+    public_holiday_update,
     reward_record_create,
 )
 from apps.master_data.models import Employee
@@ -709,6 +712,12 @@ def public_holiday_list_create_view(request):
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_publicholiday")
         qs = PublicHoliday.objects.all().order_by("-date")
+        year = request.query_params.get("year")
+        if year:
+            try:
+                qs = qs.filter(date__year=int(year))
+            except ValueError:
+                pass
         serializer = PublicHolidaySerializer(qs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -717,18 +726,11 @@ def public_holiday_list_create_view(request):
         serializer = PublicHolidaySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            holiday = serializer.save()
-            # Ghi log create
-            create_system_log(
-                user=user,
-                action="create",
-                table_name="public_holiday",
-                record_id=str(holiday.id),
-                new_value={
-                    "name": holiday.name,
-                    "date": str(holiday.date),
-                    "description": holiday.description,
-                },
+            holiday = public_holiday_create(
+                name=serializer.validated_data["name"],
+                date_val=serializer.validated_data["date"],
+                description=serializer.validated_data.get("description", ""),
+                creator=user,
             )
         except IntegrityError:
             raise ValidationException("Ngày nghỉ lễ này đã tồn tại trong hệ thống.")
@@ -759,27 +761,13 @@ def public_holiday_detail_update_delete_view(request, pk):
 
     elif request.method in ["PUT", "PATCH"]:
         PermissionChecker.check_permission(user, "hrm.change_publicholiday")
-        old_value = {
-            "name": holiday.name,
-            "date": str(holiday.date),
-            "description": holiday.description,
-        }
-
         serializer = PublicHolidaySerializer(holiday, data=request.data, partial=(request.method == "PATCH"))
         serializer.is_valid(raise_exception=True)
         try:
-            updated_holiday = serializer.save()
-            create_system_log(
-                user=user,
-                action="update",
-                table_name="public_holiday",
-                record_id=str(updated_holiday.id),
-                old_value=old_value,
-                new_value={
-                    "name": updated_holiday.name,
-                    "date": str(updated_holiday.date),
-                    "description": updated_holiday.description,
-                },
+            updated_holiday = public_holiday_update(
+                holiday=holiday,
+                data=serializer.validated_data,
+                updater=user,
             )
         except IntegrityError:
             raise ValidationException("Ngày nghỉ lễ này đã tồn tại trong hệ thống.")
@@ -789,19 +777,8 @@ def public_holiday_detail_update_delete_view(request, pk):
 
     elif request.method == "DELETE":
         PermissionChecker.check_permission(user, "hrm.delete_publicholiday")
-        old_value = {
-            "name": holiday.name,
-            "date": str(holiday.date),
-            "description": holiday.description,
-        }
-        holiday_id = holiday.id
-        holiday.delete()
-
-        create_system_log(
-            user=user,
-            action="delete",
-            table_name="public_holiday",
-            record_id=str(holiday_id),
-            old_value=old_value,
+        public_holiday_delete(
+            holiday=holiday,
+            deleter=user,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
