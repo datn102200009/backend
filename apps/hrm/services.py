@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
@@ -18,6 +18,7 @@ from apps.hrm.models import (
     EmploymentContract,
     EmploymentHistory,
     LeaveRequest,
+    PublicHoliday,
     RewardRecord,
 )
 from apps.master_data.models import Employee
@@ -421,9 +422,14 @@ def contract_terminate(
     if employee.is_union_member:
         union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
 
+    import calendar
+
     from django.db.models import Q
 
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__year=year, reward_date__month=month).filter(
+    last_day = calendar.monthrange(year, month)[1]
+    period_end_date = date(year, month, last_day)
+
+    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
         Q(salary_slip__isnull=True) | Q(salary_slip=slip)
     )
     reward_total = Decimal("0.00")
@@ -433,9 +439,9 @@ def contract_terminate(
             r.salary_slip = slip
             r.save(update_fields=["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(
-        employee=employee, discipline_date__year=year, discipline_date__month=month
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
+    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
+        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
+    )
     discipline_total = Decimal("0.00")
     for d in disciplines:
         discipline_total += d.penalty_amount or Decimal("0.00")
@@ -970,14 +976,10 @@ def leave_request_approve(
 
     # Tự động tạo/cập nhật bảng Attendance cho các ngày nghỉ
     status_map = {
-        "annual": "paid_leave",
-        "sick": "sick_leave",
+        "paid": "paid_leave",
         "unpaid": "unpaid_leave",
-        "maternity": "paid_leave",
-        "personal": "unpaid_leave",
-        "other": "other",
     }
-    attendance_status = status_map.get(leave_request.leave_type, "other")
+    attendance_status = status_map.get(leave_request.leave_type, "unpaid_leave")
 
     start = leave_request.start_date
     end = leave_request.end_date
@@ -1202,7 +1204,6 @@ def payroll_initialize_period(
 def payroll_calculate_salary(
     *,
     salary_slip_id: str,
-    standard_days: int = 26,
     creator: Optional[User] = None,
 ) -> SalarySlip:
     """
@@ -1210,6 +1211,9 @@ def payroll_calculate_salary(
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    # Cố định số ngày công tiêu chuẩn là 26 ngày x 8 giờ
+    standard_days = 26
 
     try:
         slip = SalarySlip.objects.get(id=salary_slip_id)
@@ -1227,13 +1231,21 @@ def payroll_calculate_salary(
     paid_leave_days = Decimal("0.00")
     total_ot_hours = Decimal("0.00")
 
+    recorded_dates = set()
     for att in attendances:
+        recorded_dates.add(att.date)
         if att.status == "working":
             working_days += Decimal("1.00")
         elif att.status in ["paid_leave", "sick_leave", "holiday"]:
             paid_leave_days += Decimal("1.00")
 
         total_ot_hours += att.overtime_hours or Decimal("0.00")
+
+    # Tự động tính 100% lương cho ngày nghỉ lễ nếu chưa có chấm công
+    public_holidays = PublicHoliday.objects.filter(date__year=year, date__month=month)
+    for holiday in public_holidays:
+        if holiday.date not in recorded_dates:
+            paid_leave_days += Decimal("1.00")
 
     if standard_days > 0:
         base_salary_earned = salary_base * ((working_days + paid_leave_days) / Decimal(str(standard_days)))
@@ -1253,10 +1265,15 @@ def payroll_calculate_salary(
     if employee.is_union_member:
         union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
 
+    import calendar
+
     from django.db.models import Q
 
-    # 2. Thưởng & Phạt trong kỳ
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__year=year, reward_date__month=month).filter(
+    last_day = calendar.monthrange(year, month)[1]
+    period_end_date = date(year, month, last_day)
+
+    # 2. Thưởng & Phạt trong kỳ (bao gồm lũy kế chưa thanh toán từ các kỳ trước)
+    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
         Q(salary_slip__isnull=True) | Q(salary_slip=slip)
     )
 
@@ -1267,9 +1284,9 @@ def payroll_calculate_salary(
             r.salary_slip = slip
             r.save(update_fields=["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(
-        employee=employee, discipline_date__year=year, discipline_date__month=month
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
+    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
+        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
+    )
 
     discipline_total = Decimal("0.00")
     for d in disciplines:
@@ -1464,3 +1481,126 @@ def payroll_bulk_confirm_and_pay(
         updated_slips.append(updated_slip)
 
     return updated_slips
+
+
+@transaction.atomic
+def public_holiday_create(
+    *,
+    name: str,
+    date_val: date,
+    description: str = "",
+    creator: Optional[User] = None,
+) -> PublicHoliday:
+    """
+    Khai báo ngày nghỉ lễ mới. Chặn ngày trong quá khứ.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "hrm.add_publicholiday")
+
+    if isinstance(date_val, str):
+        date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
+
+    if date_val < timezone.now().date():
+        raise ValidationException("Không được chọn ngày nghỉ lễ trong quá khứ.")
+
+    holiday = PublicHoliday.objects.create(
+        name=name,
+        date=date_val,
+        description=description,
+    )
+
+    create_system_log(
+        user=creator,
+        action="create",
+        table_name="public_holiday",
+        record_id=str(holiday.id),
+        new_value={
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        },
+    )
+
+    return holiday
+
+
+@transaction.atomic
+def public_holiday_update(
+    *,
+    holiday: PublicHoliday,
+    data: Dict[str, Any],
+    updater: Optional[User] = None,
+) -> PublicHoliday:
+    """
+    Cập nhật thông tin ngày nghỉ lễ. Chặn ngày trong quá khứ nếu ngày nghỉ bị thay đổi.
+    """
+    if updater:
+        PermissionChecker.check_permission(updater, "hrm.change_publicholiday")
+
+    old_value = {
+        "name": holiday.name,
+        "date": str(holiday.date),
+        "description": holiday.description,
+    }
+
+    new_date = data.get("date")
+    if new_date:
+        if isinstance(new_date, str):
+            new_date = datetime.strptime(new_date, "%Y-%m-%d").date()
+
+        # Nếu ngày thay đổi, kiểm tra xem ngày mới có ở quá khứ không
+        if new_date != holiday.date and new_date < timezone.now().date():
+            raise ValidationException("Không được chọn ngày nghỉ lễ trong quá khứ.")
+        holiday.date = new_date
+
+    if "name" in data:
+        holiday.name = data["name"]
+    if "description" in data:
+        holiday.description = data["description"]
+
+    holiday.save()
+
+    create_system_log(
+        user=updater,
+        action="update",
+        table_name="public_holiday",
+        record_id=str(holiday.id),
+        old_value=old_value,
+        new_value={
+            "name": holiday.name,
+            "date": str(holiday.date),
+            "description": holiday.description,
+        },
+    )
+
+    return holiday
+
+
+@transaction.atomic
+def public_holiday_delete(
+    *,
+    holiday: PublicHoliday,
+    deleter: Optional[User] = None,
+) -> None:
+    """
+    Xóa ngày nghỉ lễ.
+    """
+    if deleter:
+        PermissionChecker.check_permission(deleter, "hrm.delete_publicholiday")
+
+    old_value = {
+        "name": holiday.name,
+        "date": str(holiday.date),
+        "description": holiday.description,
+    }
+    record_id = str(holiday.id)
+    holiday.delete()
+
+    create_system_log(
+        user=deleter,
+        action="delete",
+        table_name="public_holiday",
+        record_id=record_id,
+        old_value=old_value,
+        new_value={},
+    )

@@ -44,12 +44,8 @@ class LeaveRequest(BaseModel):
     """
 
     LEAVE_TYPES = [
-        ("annual", "Nghỉ phép năm"),
-        ("sick", "Nghỉ ốm"),
+        ("paid", "Nghỉ có lương"),
         ("unpaid", "Nghỉ không lương"),
-        ("maternity", "Nghỉ thai sản"),
-        ("personal", "Nghỉ việc riêng"),
-        ("other", "Khác"),
     ]
 
     STATUS_CHOICES = [
@@ -64,7 +60,7 @@ class LeaveRequest(BaseModel):
     start_date = models.DateField()
     end_date = models.DateField()
     days = models.DecimalField(max_digits=4, decimal_places=1)
-    reason = models.TextField()
+    reason = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     approved_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, related_name="approved_leaves", null=True, blank=True
@@ -247,3 +243,22 @@ class DisciplineRecord(BaseModel):
 
     def __str__(self):
         return f"Discipline {self.employee.full_name} - {self.get_discipline_type_display()} ({self.discipline_date})"
+
+
+class PublicHoliday(BaseModel):
+    """
+    Quản lý danh sách ngày nghỉ Lễ/Tết được cấu hình linh hoạt.
+    """
+
+    name = models.CharField(max_length=255)
+    date = models.DateField(unique=True)
+    description = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "public_holiday"
+        verbose_name = "Public Holiday"
+        verbose_name_plural = "Public Holidays"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"{self.name} ({self.date})"

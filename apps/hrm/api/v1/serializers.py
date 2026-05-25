@@ -16,6 +16,7 @@ from apps.hrm.models import (
     EmploymentContract,
     EmploymentHistory,
     LeaveRequest,
+    PublicHoliday,
     RewardRecord,
 )
 from apps.master_data.models import Employee
@@ -301,6 +302,23 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
         }
 
 
+class PublicHolidaySerializer(serializers.ModelSerializer):
+    """
+    Serializer cho model PublicHoliday.
+    """
+
+    class Meta:
+        model = PublicHoliday
+        fields = [
+            "id",
+            "name",
+            "date",
+            "description",
+            "created_at",
+            "updated_at",
+        ]
+
+
 # =============================================================================
 # INPUT SERIALIZERS
 # =============================================================================
@@ -464,18 +482,14 @@ class LeaveRequestCreateInputSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     leave_type = serializers.ChoiceField(
         choices=[
-            ("annual", "Nghỉ phép năm"),
-            ("sick", "Nghỉ ốm"),
+            ("paid", "Nghỉ có lương"),
             ("unpaid", "Nghỉ không lương"),
-            ("maternity", "Nghỉ thai sản"),
-            ("personal", "Nghỉ việc riêng"),
-            ("other", "Khác"),
         ]
     )
     start_date = serializers.DateField()
     end_date = serializers.DateField()
     days = serializers.DecimalField(max_digits=4, decimal_places=1)
-    reason = serializers.CharField()
+    reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class LeaveRequestApproveInputSerializer(serializers.Serializer):

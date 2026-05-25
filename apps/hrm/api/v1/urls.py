@@ -38,4 +38,11 @@ urlpatterns = [
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
     path("disciplines/", views.discipline_list_create_view, name="discipline_list_create"),
+    # Public Holidays
+    path("public-holidays/", views.public_holiday_list_create_view, name="public_holiday_list_create"),
+    path(
+        "public-holidays/<uuid:pk>/",
+        views.public_holiday_detail_update_delete_view,
+        name="public_holiday_detail_update_delete",
+    ),
 ]

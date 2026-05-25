@@ -281,7 +281,7 @@ components:
           type: string
         leave_type:
           type: string
-          enum: [annual, sick, unpaid, maternity, personal, other]
+          enum: [paid, unpaid]
         start_date:
           type: string
           format: date
@@ -292,6 +292,7 @@ components:
           type: string
         reason:
           type: string
+          nullable: true
         status:
           type: string
           enum: [pending, approved, rejected]
@@ -452,6 +453,26 @@ components:
           type: string
           nullable: true
         created_at:
+          type: string
+          format: date-time
+    PublicHoliday:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        date:
+          type: string
+          format: date
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 security:
@@ -979,7 +1000,6 @@ paths:
                 - start_date
                 - end_date
                 - days
-                - reason
               properties:
                 employee_id:
                   type: string
@@ -987,8 +1007,8 @@ paths:
                   example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
                 leave_type:
                   type: string
-                  enum: [annual, sick, unpaid, maternity, personal, other]
-                  example: "annual"
+                  enum: [paid, unpaid]
+                  example: "paid"
                 start_date:
                   type: string
                   format: date
@@ -1002,6 +1022,7 @@ paths:
                   example: 2.0
                 reason:
                   type: string
+                  nullable: true
                   example: "Giải quyết công việc gia đình"
       responses:
         '201':
@@ -1138,17 +1159,6 @@ paths:
           schema:
             type: string
             format: uuid
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                standard_days:
-                  type: integer
-                  description: Số ngày công tiêu chuẩn trong tháng (mặc định 26)
-                  example: 26
       responses:
         '200':
           description: Tính toán thành công
@@ -1406,3 +1416,171 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/public-holidays/:
+    get:
+      summary: Lấy danh sách ngày nghỉ lễ
+      description: Lấy danh sách toàn bộ các ngày nghỉ lễ cấu hình trong hệ thống, sắp xếp mới nhất lên đầu.
+      parameters:
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Lọc ngày nghỉ lễ theo năm cụ thể.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublicHoliday'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      summary: Khai báo ngày nghỉ lễ mới
+      description: Tạo một ngày nghỉ lễ mới trong hệ thống.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - date
+              properties:
+                name:
+                  type: string
+                  example: "Tết Nguyên Đán"
+                date:
+                  type: string
+                  format: date
+                  example: "2026-02-17"
+                description:
+                  type: string
+                  example: "Nghỉ Tết Nguyên Đán 2026"
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicHoliday'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/public-holidays/{id}/:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: ID của ngày nghỉ lễ
+    get:
+      summary: Lấy thông tin chi tiết ngày nghỉ lễ
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicHoliday'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      summary: Cập nhật toàn bộ ngày nghỉ lễ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - date
+              properties:
+                name:
+                  type: string
+                  example: "Tết Nguyên Đán (Sửa)"
+                date:
+                  type: string
+                  format: date
+                  example: "2026-02-17"
+                description:
+                  type: string
+                  example: "Nghỉ Tết Nguyên Đán 2026 điều chỉnh"
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicHoliday'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    patch:
+      summary: Cập nhật một phần ngày nghỉ lễ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: "Tết Nguyên Đán (Sửa)"
+                date:
+                  type: string
+                  format: date
+                  example: "2026-02-17"
+                description:
+                  type: string
+                  example: "Nghỉ Tết Nguyên Đán 2026 điều chỉnh"
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicHoliday'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      summary: Xóa ngày nghỉ lễ
+      responses:
+        '204':
+          description: Xóa thành công
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

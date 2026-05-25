@@ -236,7 +236,7 @@ class TestHrmAPI:
         url = "/api/v1/hrm/leave-requests/create/"
         data = {
             "employee_id": str(employee.id),
-            "leave_type": "annual",
+            "leave_type": "paid",
             "start_date": "2026-06-01",
             "end_date": "2026-06-02",
             "days": 2.0,
@@ -251,7 +251,7 @@ class TestHrmAPI:
 
     def test_approve_leave_request(self, mock_check, auth_client):
         leave_request = LeaveRequestFactory(
-            status="pending", leave_type="annual", start_date="2026-05-01", end_date="2026-05-01", days=1.0
+            status="pending", leave_type="paid", start_date="2026-05-01", end_date="2026-05-01", days=1.0
         )
         url = f"/api/v1/hrm/leave-requests/{leave_request.id}/approve/"
         data = {"action": "approve"}
@@ -315,9 +315,7 @@ class TestHrmAPI:
             AttendanceFactory(employee=employee, date=f"2026-05-{day:02d}", status="working", work_hours=8.00)
 
         url = f"/api/v1/hrm/salary-slips/{slip.id}/calculate/"
-        data = {"standard_days": 26}
-
-        response = auth_client.post(url, data, format="json")
+        response = auth_client.post(url)
 
         assert response.status_code == status.HTTP_200_OK
         assert float(response.data["base_salary"]) > 0
@@ -435,3 +433,122 @@ class TestHrmAPI:
         assert response.data[0]["payment_method"] == "bank_transfer"
 
         assert SalarySlip.objects.filter(salary_period="2026-05", status="paid").count() == 2
+
+    def test_list_and_create_public_holiday(self, mock_check, auth_client):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        PublicHoliday.objects.all().delete()
+
+        # Test List empty
+        url = "/api/v1/hrm/public-holidays/"
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 0
+
+        # Test Create holiday (tương lai)
+        tomorrow = (timezone.now() + timedelta(days=1)).date()
+        data = {"name": "Giỗ tổ Hùng Vương", "date": str(tomorrow), "description": "Ngày Giỗ tổ"}
+        response = auth_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["name"] == "Giỗ tổ Hùng Vương"
+        assert PublicHoliday.objects.filter(date=tomorrow).exists()
+
+        # Test List has 1
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 1
+
+    def test_update_and_delete_public_holiday(self, mock_check, auth_client):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        future_date = (timezone.now() + timedelta(days=2)).date()
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", date=future_date)
+
+        # Test update
+        url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
+        data = {"name": "Tết Tây 2026", "date": str(future_date)}
+        response = auth_client.patch(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        holiday.refresh_from_db()
+        assert holiday.name == "Tết Tây 2026"
+
+        # Test delete
+        response = auth_client.delete(url)
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert not PublicHoliday.objects.filter(id=holiday.id).exists()
+
+    def test_create_public_holiday_in_past_fails(self, mock_check, auth_client):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        url = "/api/v1/hrm/public-holidays/"
+        yesterday = (timezone.now() - timedelta(days=1)).date()
+        data = {"name": "Giỗ tổ Hùng Vương", "date": str(yesterday), "description": "Ngày Giỗ tổ"}
+        response = auth_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Không được chọn ngày nghỉ lễ trong quá khứ." in response.data["error"]
+
+    def test_update_public_holiday_to_past_fails(self, mock_check, auth_client):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        future_date = (timezone.now() + timedelta(days=2)).date()
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", date=future_date)
+
+        url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
+        yesterday = (timezone.now() - timedelta(days=1)).date()
+        data = {"date": str(yesterday)}
+        response = auth_client.patch(url, data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Không được chọn ngày nghỉ lễ trong quá khứ." in response.data["error"]
+
+    def test_list_public_holidays_filter_by_year(self, mock_check, auth_client):
+        from datetime import date, datetime, timedelta
+        from unittest.mock import patch
+
+        from django.utils import timezone
+
+        this_year = timezone.now().year
+        # Giả lập thời gian timezone.now() là ngày 15/06 của năm hiện tại để tránh flaky test cuối năm
+        fixed_now = timezone.make_aware(datetime(this_year, 6, 15))
+
+        with patch("django.utils.timezone.now", return_value=fixed_now):
+            from apps.hrm.models import PublicHoliday
+
+            PublicHoliday.objects.all().delete()
+
+            # Tạo 2 ngày lễ ở các năm khác nhau (sử dụng ngày tương lai để pass validate)
+            next_year = this_year + 1
+
+            date1 = (timezone.now() + timedelta(days=5)).date()
+            # Đảm bảo date2 ở năm sau
+            date2 = date(next_year, 1, 1)
+
+            PublicHoliday.objects.create(name="Lễ năm nay", date=date1)
+            PublicHoliday.objects.create(name="Lễ năm sau", date=date2)
+
+            url = "/api/v1/hrm/public-holidays/"
+
+            # Test filter year hiện tại
+            response = auth_client.get(url, {"year": this_year})
+            assert response.status_code == 200
+            assert len(response.data) == 1
+            assert response.data[0]["name"] == "Lễ năm nay"
+
+            # Test filter year sau
+            response = auth_client.get(url, {"year": next_year})
+            assert response.status_code == 200
+            assert len(response.data) == 1
+            assert response.data[0]["name"] == "Lễ năm sau"
