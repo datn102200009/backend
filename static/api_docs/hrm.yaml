@@ -252,7 +252,7 @@ components:
           format: date
         status:
           type: string
-          enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+          enum: [working, paid_leave, unpaid_leave, holiday]
         work_hours:
           type: string
         overtime_hours:
@@ -929,7 +929,7 @@ paths:
                         example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
                       status:
                         type: string
-                        enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+                        enum: [working, paid_leave, unpaid_leave, holiday]
                         example: "working"
                       work_hours:
                         type: number

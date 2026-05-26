@@ -1215,7 +1215,7 @@ class TestHrmPermissionAndBypass:
         AttendanceFactory(
             employee=employee,
             date=date(2026, 5, 3),
-            status="other",
+            status="working",
             work_hours=Decimal("0.00"),
             overtime_hours=Decimal("4.00"),
         )
@@ -1288,7 +1288,7 @@ class TestHrmPermissionAndBypass:
         AttendanceFactory(
             employee=employee,
             date=date(2026, 5, 3),
-            status="other",
+            status="working",
             work_hours=Decimal("0.00"),
             overtime_hours=Decimal("4.00"),
         )
@@ -1336,3 +1336,70 @@ class TestHrmPermissionAndBypass:
         assert weekend_ot_entry["amount"] == 400000.0
         assert holiday_ot_entry is not None
         assert holiday_ot_entry["amount"] == 1200000.0
+
+    def test_payroll_calculate_salary_with_simplified_statuses(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8809",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_simple")
+
+        # Chấm công trong tháng 5/2026: 24 ngày working, 2 ngày paid_leave
+        for day in range(1, 25):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+        for day in range(25, 27):
+            AttendanceFactory(
+                employee=employee, date=date(2026, 5, day), status="paid_leave", work_hours=Decimal("0.00")
+            )
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        # 24 working + 2 paid_leave = 26 standard days. Base salary earned = 13,000,000 * 26 / 26 = 13,000,000
+        assert calculated_slip.base_salary == Decimal("13000000.00")
+        assert calculated_slip.net_pay == Decimal("13000000.00")
+
+    def test_leave_request_approve_sync_attendance(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP8810", employment_status="active")
+        approver = UserFactory(username="approver_sync_test")
+
+        # Pending leave request for 1 day: 2026-05-18, type 'paid'
+        leave_request = LeaveRequestFactory(
+            employee=employee,
+            leave_type="paid",
+            start_date=date(2026, 5, 18),
+            end_date=date(2026, 5, 18),
+            days=Decimal("1.0"),
+            status="pending",
+        )
+
+        # Act 1: Approve leave request
+        approved_request = leave_request_approve(
+            leave_request_id=leave_request.id,
+            approved_by_user_id=str(approver.id),
+        )
+
+        # Assert 1: Leave request approved, attendance synchronized to paid_leave
+        assert approved_request.status == "approved"
+        attendance = Attendance.objects.filter(employee=employee, date=date(2026, 5, 18)).first()
+        assert attendance is not None
+        assert attendance.status == "paid_leave"
+        assert attendance.work_hours == Decimal("0.00")
+
+        # Act 2: Employee goes to work on 2026-05-18 despite leave approval, update attendance to 'working'
+        attendance.status = "working"
+        attendance.work_hours = Decimal("8.00")
+        attendance.save()
+
+        # Assert 2: Attendance record is updated correctly
+        attendance.refresh_from_db()
+        assert attendance.status == "working"
+        assert attendance.work_hours == Decimal("8.00")

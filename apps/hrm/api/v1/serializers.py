@@ -456,9 +456,7 @@ class AttendanceRecordInputSerializer(serializers.Serializer):
             ("working", "Đi làm"),
             ("paid_leave", "Nghỉ phép có lương"),
             ("unpaid_leave", "Nghỉ không lương"),
-            ("sick_leave", "Nghỉ ốm"),
             ("holiday", "Nghỉ lễ"),
-            ("other", "Khác"),
         ]
     )
     work_hours = serializers.DecimalField(max_digits=4, decimal_places=2, default=8.00)

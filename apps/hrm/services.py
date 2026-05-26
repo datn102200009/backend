@@ -403,9 +403,9 @@ def contract_terminate(
     ot_holiday_hours = Decimal("0.00")
     total_ot_hours = Decimal("0.00")
     for att in attendances:
-        if att.status == "working":
+        if att.status == "working" and (att.work_hours or 0) > 0:
             working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "sick_leave", "holiday"]:
+        elif att.status in ["paid_leave", "holiday"]:
             working_days += Decimal("1.00")
 
         ot_h = att.overtime_hours or Decimal("0.00")
@@ -1333,9 +1333,9 @@ def payroll_calculate_salary(
     recorded_dates = set()
     for att in attendances:
         recorded_dates.add(att.date)
-        if att.status == "working":
+        if att.status == "working" and (att.work_hours or 0) > 0:
             working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "sick_leave", "holiday"]:
+        elif att.status in ["paid_leave", "holiday"]:
             paid_leave_days += Decimal("1.00")
 
         ot_h = att.overtime_hours or Decimal("0.00")

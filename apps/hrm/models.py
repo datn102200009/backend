@@ -15,9 +15,7 @@ class Attendance(BaseModel):
         ("working", "Đi làm"),
         ("paid_leave", "Nghỉ phép có lương"),
         ("unpaid_leave", "Nghỉ không lương"),
-        ("sick_leave", "Nghỉ ốm"),
         ("holiday", "Nghỉ lễ"),
-        ("other", "Khác"),
     ]
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="attendances")
