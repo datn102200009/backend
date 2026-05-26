@@ -252,7 +252,7 @@ components:
           format: date
         status:
           type: string
-          enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+          enum: [working, paid_leave, unpaid_leave, holiday]
         work_hours:
           type: string
         overtime_hours:
@@ -361,8 +361,12 @@ components:
           nullable: true
         breakdown:
           type: object
+          description: Chi tiết bảng lương bao gồm lương theo ngày công và phân loại các loại lương tăng ca ngoài giờ (OT ngày thường 1.5x, OT Chủ Nhật 2.0x, OT ngày Lễ 3.0x, OT ngày nghỉ bù theo cấu hình HRM_COMPENSATORY_OVERTIME_RATE).
           nullable: true
           properties:
+            standard_working_days:
+              type: integer
+              description: Số ngày công tiêu chuẩn hằng tháng theo chế độ làm việc của doanh nghiệp (ví dụ 26 ngày).
             incomes:
               type: array
               items:
@@ -928,7 +932,7 @@ paths:
                         example: "c73a6473-8b74-4b53-a5c9-95ad3e1bcf4d"
                       status:
                         type: string
-                        enum: [working, paid_leave, unpaid_leave, sick_leave, holiday, other]
+                        enum: [working, paid_leave, unpaid_leave, holiday]
                         example: "working"
                       work_hours:
                         type: number
@@ -1164,46 +1168,6 @@ paths:
       responses:
         '200':
           description: Tính toán thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SalarySlip'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
-
-  /hrm/salary-slips/{id}/confirm/:
-    post:
-      summary: Xác nhận và chi trả lương
-      description: Xác nhận chi trả phiếu lương. Đổi trạng thái sang 'paid' và tự động sinh ra một bút toán chi tiền CashFlowTransaction tương ứng tại phân hệ Finance.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - payment_method
-              properties:
-                payment_method:
-                  type: string
-                  enum: [cash, bank_transfer]
-                  example: "bank_transfer"
-      responses:
-        '200':
-          description: Xác nhận và thanh toán lương thành công
           content:
             application/json:
               schema:

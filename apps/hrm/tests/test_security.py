@@ -16,7 +16,6 @@ from apps.hrm.services import (
     leave_request_approve,
     leave_request_create,
     payroll_calculate_salary,
-    payroll_confirm_and_pay,
     payroll_initialize_period,
     reward_record_create,
 )

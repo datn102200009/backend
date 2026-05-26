@@ -34,7 +34,6 @@ urlpatterns = [
     path("salary-slips/initialize/", views.salary_slip_initialize_view, name="salary_slip_initialize"),
     path("salary-slips/bulk-confirm-pay/", views.salary_slip_bulk_confirm_view, name="salary_slip_bulk_confirm"),
     path("salary-slips/<uuid:pk>/calculate/", views.salary_slip_calculate_view, name="salary_slip_calculate"),
-    path("salary-slips/<uuid:pk>/confirm/", views.salary_slip_confirm_view, name="salary_slip_confirm"),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
     path("disciplines/", views.discipline_list_create_view, name="discipline_list_create"),

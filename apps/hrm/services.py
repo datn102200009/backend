@@ -379,14 +379,49 @@ def contract_terminate(
         employee=employee, date__year=year, date__month=month, date__lte=termination_date
     )
 
+    from django.conf import settings
+
+    weekly_rest_days = getattr(settings, "HRM_WEEKLY_REST_DAYS", [6])
+    compensatory_ot_rate = Decimal(str(getattr(settings, "HRM_COMPENSATORY_OVERTIME_RATE", 2.0)))
+
+    # Fetch public holidays and compensatory holidays for the period up to termination_date
+    official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(
+        year, month, end_limit_date=termination_date
+    )
+    all_holiday_dates = official_holiday_dates | compensatory_holiday_dates
+
     working_days = Decimal("0.00")
-    total_ot_hours = Decimal("0.00")
+    paid_leave_days = Decimal("0.00")
+    ot_normal_hours = Decimal("0.00")
+    ot_weekend_hours = Decimal("0.00")
+    ot_holiday_hours = Decimal("0.00")
+    ot_compensatory_hours = Decimal("0.00")
+
+    recorded_dates = set()
     for att in attendances:
-        if att.status == "working":
+        recorded_dates.add(att.date)
+        if att.status == "working" and (att.work_hours or 0) > 0:
             working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "sick_leave", "holiday"]:
-            working_days += Decimal("1.00")
-        total_ot_hours += att.overtime_hours or Decimal("0.00")
+        elif att.status in ["paid_leave", "holiday"]:
+            paid_leave_days += Decimal("1.00")
+
+        ot_h = att.overtime_hours or Decimal("0.00")
+        if ot_h > 0:
+            if att.date in official_holiday_dates:
+                ot_holiday_hours += ot_h
+            elif att.date in compensatory_holiday_dates:
+                ot_compensatory_hours += ot_h
+            elif att.date.weekday() in weekly_rest_days:
+                ot_weekend_hours += ot_h
+            else:
+                ot_normal_hours += ot_h
+
+    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
+    credited_holiday_dates = set()
+    for h_date in all_holiday_dates:
+        if h_date not in recorded_dates and h_date not in credited_holiday_dates:
+            credited_holiday_dates.add(h_date)
+            paid_leave_days += Decimal("1.00")
 
     # 2.2. Xác định ngày công chia lương (divisor) - Cố định Cách 1
     divisor = Decimal(str(standard_working_days))
@@ -394,14 +429,14 @@ def contract_terminate(
         divisor = Decimal("26.00")
 
     # 2.3. Lương thực tế làm việc
-    base_salary_earned = (salary_base * (working_days / divisor)).quantize(Decimal("0.01"))
+    base_salary_earned = (salary_base * ((working_days + paid_leave_days) / divisor)).quantize(Decimal("0.01"))
 
     # 2.4. Tiền phép năm chưa nghỉ
     unused_leave_compensation = (salary_base / divisor * Decimal(str(unused_leave_days))).quantize(Decimal("0.01"))
 
     # 2.5. Bảo hiểm xã hội tháng nghỉ việc (đóng nếu số ngày làm việc và hưởng lương >= 14 ngày)
     social_insurance_deduction = Decimal("0.00")
-    if working_days >= 14:
+    if (working_days + paid_leave_days) >= 14:
         social_insurance_deduction = (salary_base * Decimal("0.105")).quantize(Decimal("0.01"))
 
     # 2.6. Phạt bồi thường nếu nghỉ việc trái pháp luật (nghỉ ngang)
@@ -415,8 +450,18 @@ def contract_terminate(
 
     # 2.7. Tính toán OT, Kinh phí công đoàn, Thưởng & Kỷ luật phạt thông thường
     hourly_rate = salary_base / divisor / Decimal("8.00")
-    ot_rate = hourly_rate * Decimal("1.5")
-    overtime_amount_earned = (total_ot_hours * ot_rate).quantize(Decimal("0.01"))
+    ot_normal_rate = hourly_rate * Decimal("1.5")
+    ot_weekend_rate = hourly_rate * Decimal("2.0")
+    ot_holiday_rate = hourly_rate * Decimal("3.0")
+    ot_compensatory_rate = hourly_rate * compensatory_ot_rate
+
+    ot_normal_amount = ot_normal_hours * ot_normal_rate
+    ot_weekend_amount = ot_weekend_hours * ot_weekend_rate
+    ot_holiday_amount = ot_holiday_hours * ot_holiday_rate
+    ot_compensatory_amount = ot_compensatory_hours * ot_compensatory_rate
+
+    overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount + ot_compensatory_amount
+    overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
     union_fee = Decimal("0.00")
     if employee.is_union_member:
@@ -458,7 +503,7 @@ def contract_terminate(
 
     remarks = (
         f"Quyết toán thôi việc ngày {termination_date} ({'Đúng luật' if is_lawful else 'Nghỉ ngang/Trái luật'}).\n"
-        f"- Ngày công thực tế/hưởng lương: {working_days} ngày.\n"
+        f"- Ngày công thực tế/hưởng lương: {working_days + paid_leave_days} ngày.\n"
         f"- Lương ngày công: {base_salary_earned:,.2f}đ (Tính theo ngày công chuẩn cố định với công chuẩn {divisor}).\n"
         f"- Phép năm chưa nghỉ ({unused_leave_days} ngày): {unused_leave_compensation:,.2f}đ.\n"
         f"- Khấu trừ BHXH (10.5%): {social_insurance_deduction:,.2f}đ ({'Có trích đóng' if social_insurance_deduction > 0 else 'Không đóng do làm < 14 ngày'}).\n"
@@ -481,24 +526,68 @@ def contract_terminate(
     slip.remarks = remarks.strip()
     slip.status = "paid"
 
-    total_days_str = f"{float(working_days):g}"
-    ot_hours_str = f"{float(total_ot_hours):g}"
+    total_days_str = f"{float(working_days + paid_leave_days):g}"
     unused_leave_str = f"{float(unused_leave_days):g}"
 
-    slip.breakdown = {
-        "incomes": [
+    incomes = [
+        {
+            "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
+            "amount": float(base_salary_earned),
+        }
+    ]
+
+    if overtime_amount_earned > 0:
+        if ot_normal_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày thường (1.5x) ({float(ot_normal_hours):g} giờ)",
+                    "amount": float(ot_normal_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_weekend_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca Chủ nhật (2.0x) ({float(ot_weekend_hours):g} giờ)",
+                    "amount": float(ot_weekend_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_holiday_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày Lễ/Tết (3.0x) ({float(ot_holiday_hours):g} giờ)",
+                    "amount": float(ot_holiday_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_compensatory_hours > 0:
+            rate_str = f"{float(compensatory_ot_rate):g}x"
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày nghỉ bù ({rate_str}) ({float(ot_compensatory_hours):g} giờ)",
+                    "amount": float(ot_compensatory_amount.quantize(Decimal("0.01"))),
+                }
+            )
+    else:
+        incomes.append(
             {
-                "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
-                "amount": float(base_salary_earned),
-            },
-            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+                "name": "Lương tăng ca (OT) (0 giờ)",
+                "amount": 0.0,
+            }
+        )
+
+    incomes.extend(
+        [
             {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
             {
                 "name": f"Bồi thường phép năm chưa nghỉ ({unused_leave_str} ngày)",
                 "amount": float(unused_leave_compensation),
             },
             {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
-        ],
+        ]
+    )
+
+    slip.breakdown = {
+        "standard_working_days": int(standard_working_days),
+        "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
             {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
@@ -789,6 +878,14 @@ def attendance_batch_record(
     if creator:
         PermissionChecker.check_permission(creator, "hrm.add_attendance")
 
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    salary_period = f"{date.year:04d}-{date.month:02d}"
+    if is_salary_period_fully_paid(salary_period):
+        raise ValidationException(
+            f"Kỳ lương {salary_period} đã được thanh toán 100%. Không cho phép chỉnh sửa chấm công."
+        )
+
     result = []
     for rec in records:
         employee_id = rec.get("employee_id")
@@ -954,6 +1051,22 @@ def leave_request_approve(
             raise ValidationException("Người phê duyệt không tồn tại")
 
     PermissionChecker.check_permission(approved_by, "hrm.change_leaverequest")
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    start = leave_request.start_date
+    end = leave_request.end_date
+    unique_periods = set()
+    current_date = start
+    while current_date <= end:
+        unique_periods.add(f"{current_date.year:04d}-{current_date.month:02d}")
+        current_date += timedelta(days=1)
+
+    for period in unique_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(
+                f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép duyệt đơn xin nghỉ phép trong thời gian này."
+            )
 
     old_status = leave_request.status
     leave_request.status = "approved"
@@ -1148,6 +1261,71 @@ def discipline_record_create(
     return discipline
 
 
+def get_holiday_dates_for_period(
+    year: int,
+    month: int,
+    end_limit_date: Optional[date] = None,
+) -> tuple[set[date], set[date]]:
+    """
+    Xác định (official_holiday_dates, compensatory_holiday_dates) trong tháng/năm.
+    Hỗ trợ chế độ làm việc cố định 6 ngày/tuần (Nghỉ Chủ Nhật).
+    """
+    import calendar
+
+    from django.conf import settings
+
+    weekly_rest_days = getattr(settings, "HRM_WEEKLY_REST_DAYS", [6])
+    period_start_date = date(year, month, 1)
+
+    # Sử dụng khoảng đệm cố định 30 ngày để tối ưu index (Rule 3)
+    fetch_start = period_start_date - timedelta(days=30)
+
+    last_day = calendar.monthrange(year, month)[1]
+    upper_bound = end_limit_date or date(year, month, last_day)
+
+    # Lấy các ngày nghỉ lễ chính thức
+    public_holidays = PublicHoliday.objects.filter(start_date__gte=fetch_start, start_date__lte=upper_bound).order_by(
+        "start_date"
+    )
+
+    official_holiday_dates = set()
+    for holiday in public_holidays:
+        for i in range(holiday.days):
+            h_date = holiday.start_date + timedelta(days=i)
+            official_holiday_dates.add(h_date)
+
+    # Tính toán ngày nghỉ bù
+    sorted_official = sorted(list(official_holiday_dates))
+    compensatory_holiday_dates = set()
+
+    for h_date in sorted_official:
+        if h_date.weekday() in weekly_rest_days:
+            # Lễ trùng với ngày nghỉ hằng tuần, nghỉ bù vào ngày làm việc kế tiếp
+            comp_date = h_date + timedelta(days=1)
+            while (
+                comp_date.weekday() in weekly_rest_days
+                or comp_date in official_holiday_dates
+                or comp_date in compensatory_holiday_dates
+            ):
+                comp_date += timedelta(days=1)
+            compensatory_holiday_dates.add(comp_date)
+
+    # Lọc lại chỉ giữ các ngày nằm trong tháng/năm mục tiêu và trước hoặc bằng upper_bound
+    final_official = set()
+    for d in official_holiday_dates:
+        if d.year == year and d.month == month:
+            if not end_limit_date or d <= end_limit_date:
+                final_official.add(d)
+
+    final_compensatory = set()
+    for d in compensatory_holiday_dates:
+        if d.year == year and d.month == month:
+            if not end_limit_date or d <= end_limit_date:
+                final_compensatory.add(d)
+
+    return final_official, final_compensatory
+
+
 @transaction.atomic
 def payroll_initialize_period(
     *,
@@ -1212,8 +1390,11 @@ def payroll_calculate_salary(
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
-    # Cố định số ngày công tiêu chuẩn là 26 ngày x 8 giờ
-    standard_days = 26
+    from django.conf import settings
+
+    weekly_rest_days = getattr(settings, "HRM_WEEKLY_REST_DAYS", [6])
+    standard_days = getattr(settings, "HRM_STANDARD_WORKING_DAYS", 26)
+    compensatory_ot_rate = Decimal(str(getattr(settings, "HRM_COMPENSATORY_OVERTIME_RATE", 2.0)))
 
     try:
         slip = SalarySlip.objects.get(id=salary_slip_id)
@@ -1232,37 +1413,42 @@ def payroll_calculate_salary(
 
     attendances = Attendance.objects.filter(employee=employee, date__year=year, date__month=month)
 
+    # Fetch public holidays and compensatory holidays for this period
+    official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(year, month)
+    all_holiday_dates = official_holiday_dates | compensatory_holiday_dates
+
     working_days = Decimal("0.00")
     paid_leave_days = Decimal("0.00")
-    total_ot_hours = Decimal("0.00")
+    ot_normal_hours = Decimal("0.00")
+    ot_weekend_hours = Decimal("0.00")
+    ot_holiday_hours = Decimal("0.00")
+    ot_compensatory_hours = Decimal("0.00")
 
     recorded_dates = set()
     for att in attendances:
         recorded_dates.add(att.date)
-        if att.status == "working":
+        if att.status == "working" and (att.work_hours or 0) > 0:
             working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "sick_leave", "holiday"]:
+        elif att.status in ["paid_leave", "holiday"]:
             paid_leave_days += Decimal("1.00")
 
-        total_ot_hours += att.overtime_hours or Decimal("0.00")
+        ot_h = att.overtime_hours or Decimal("0.00")
+        if ot_h > 0:
+            if att.date in official_holiday_dates:
+                ot_holiday_hours += ot_h
+            elif att.date in compensatory_holiday_dates:
+                ot_compensatory_hours += ot_h
+            elif att.date.weekday() in weekly_rest_days:
+                ot_weekend_hours += ot_h
+            else:
+                ot_normal_hours += ot_h
 
-    # Tự động tính 100% lương cho ngày nghỉ lễ nếu chưa có chấm công
-    from django.db.models import Max
-
-    max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
-    period_start_date = date(year, month, 1)
-
+    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
     credited_holiday_dates = set()
-    public_holidays = PublicHoliday.objects.filter(
-        start_date__lte=period_end_date, start_date__gte=period_start_date - timedelta(days=int(max_days))
-    )
-    for holiday in public_holidays:
-        for i in range(holiday.days):
-            h_date = holiday.start_date + timedelta(days=i)
-            if h_date.year == year and h_date.month == month:
-                if h_date not in recorded_dates and h_date not in credited_holiday_dates:
-                    credited_holiday_dates.add(h_date)
-                    paid_leave_days += Decimal("1.00")
+    for h_date in all_holiday_dates:
+        if h_date not in recorded_dates and h_date not in credited_holiday_dates:
+            credited_holiday_dates.add(h_date)
+            paid_leave_days += Decimal("1.00")
 
     if standard_days > 0:
         base_salary_earned = salary_base * ((working_days + paid_leave_days) / Decimal(str(standard_days)))
@@ -1272,9 +1458,22 @@ def payroll_calculate_salary(
 
     if standard_days > 0:
         hourly_rate = salary_base / Decimal(str(standard_days)) / Decimal("8.00")
-        ot_rate = hourly_rate * Decimal("1.5")
-        overtime_amount_earned = total_ot_hours * ot_rate
+        ot_normal_rate = hourly_rate * Decimal("1.5")
+        ot_weekend_rate = hourly_rate * Decimal("2.0")
+        ot_holiday_rate = hourly_rate * Decimal("3.0")
+        ot_compensatory_rate = hourly_rate * compensatory_ot_rate
+
+        ot_normal_amount = ot_normal_hours * ot_normal_rate
+        ot_weekend_amount = ot_weekend_hours * ot_weekend_rate
+        ot_holiday_amount = ot_holiday_hours * ot_holiday_rate
+        ot_compensatory_amount = ot_compensatory_hours * ot_compensatory_rate
+
+        overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount + ot_compensatory_amount
     else:
+        ot_normal_amount = Decimal("0.00")
+        ot_weekend_amount = Decimal("0.00")
+        ot_holiday_amount = Decimal("0.00")
+        ot_compensatory_amount = Decimal("0.00")
         overtime_amount_earned = Decimal("0.00")
     overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
@@ -1345,19 +1544,62 @@ def payroll_calculate_salary(
 
     total_days = float(working_days + paid_leave_days)
     total_days_str = f"{total_days:g}"
-    ot_hours = float(total_ot_hours)
-    ot_hours_str = f"{ot_hours:g}"
 
-    slip.breakdown = {
-        "incomes": [
+    incomes = [
+        {
+            "name": f"Lương theo ngày công ({total_days_str}/{standard_days} ngày)",
+            "amount": float(base_salary_earned),
+        }
+    ]
+
+    if overtime_amount_earned > 0:
+        if ot_normal_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày thường (1.5x) ({float(ot_normal_hours):g} giờ)",
+                    "amount": float(ot_normal_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_weekend_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca Chủ nhật (2.0x) ({float(ot_weekend_hours):g} giờ)",
+                    "amount": float(ot_weekend_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_holiday_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày Lễ/Tết (3.0x) ({float(ot_holiday_hours):g} giờ)",
+                    "amount": float(ot_holiday_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_compensatory_hours > 0:
+            rate_str = f"{float(compensatory_ot_rate):g}x"
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày nghỉ bù ({rate_str}) ({float(ot_compensatory_hours):g} giờ)",
+                    "amount": float(ot_compensatory_amount.quantize(Decimal("0.01"))),
+                }
+            )
+    else:
+        incomes.append(
             {
-                "name": f"Lương theo ngày công ({total_days_str}/{standard_days} ngày)",
-                "amount": float(base_salary_earned),
-            },
-            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+                "name": "Lương tăng ca (OT) (0 giờ)",
+                "amount": 0.0,
+            }
+        )
+
+    incomes.extend(
+        [
             {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
             {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
-        ],
+        ]
+    )
+
+    slip.breakdown = {
+        "standard_working_days": int(standard_days),
+        "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
             {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
@@ -1389,72 +1631,6 @@ def payroll_calculate_salary(
 
 
 @transaction.atomic
-def payroll_confirm_and_pay(
-    *,
-    salary_slip_id: str,
-    creator: Optional[User] = None,
-) -> SalarySlip:
-    """
-    Xác nhận và chi trả phiếu lương. Tự động sinh ra bút toán chi tiền CashFlowTransaction tại finance.
-    """
-    if creator:
-        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
-
-    try:
-        slip = SalarySlip.objects.get(id=salary_slip_id)
-    except SalarySlip.DoesNotExist:
-        raise ValidationException("Phiếu lương không tồn tại")
-
-    if slip.status == "paid":
-        raise ValidationException("Phiếu lương này đã được thanh toán")
-
-    old_status = slip.status
-    slip.status = "paid"
-    slip.save(update_fields=["status"])
-
-    create_system_log(
-        user=creator,
-        action="update",
-        table_name="salary_slip",
-        record_id=str(slip.id),
-        old_value={"status": old_status},
-        new_value={"status": "paid"},
-    )
-
-    from apps.finance.models import CashFlowTransaction
-
-    tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{slip.salary_period}"
-
-    tx, created = CashFlowTransaction.objects.get_or_create(
-        name=tx_name,
-        defaults={
-            "payment_type": "pay",
-            "category": "Chi trả lương nhân viên",
-            "amount": slip.net_pay,
-            "payment_date": date.today(),
-            "remarks": f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {slip.salary_period}",
-        },
-    )
-
-    if created:
-        create_system_log(
-            user=creator,
-            action="create",
-            table_name="cash_flow_transaction",
-            record_id=str(tx.id),
-            new_value={
-                "name": tx.name,
-                "payment_type": tx.payment_type,
-                "category": tx.category,
-                "amount": str(tx.amount),
-                "payment_date": str(tx.payment_date),
-            },
-        )
-
-    return slip
-
-
-@transaction.atomic
 def payroll_bulk_confirm_and_pay(
     *,
     salary_period: str,
@@ -1463,36 +1639,105 @@ def payroll_bulk_confirm_and_pay(
 ) -> list[SalarySlip]:
     """
     Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
+    Tối ưu hóa bulk operations để giảm số truy cập DB từ O(N) xuống O(1).
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
-    slips = SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid")
-    updated_slips = []
+    # 1. Lấy danh sách các slip chưa paid trong kỳ kèm employee để tránh N+1
+    slips = list(
+        SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid").select_related("employee")
+    )
+    if not slips:
+        return []
+
+    from apps.accounts.models import SystemLog
+    from apps.finance.models import CashFlowTransaction
+
+    # 2. Lấy danh sách các giao dịch CashFlowTransaction đã tồn tại cho các nhân viên này trong kỳ
+    tx_names = [f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}" for slip in slips]
+    existing_tx_names = set(CashFlowTransaction.objects.filter(name__in=tx_names).values_list("name", flat=True))
+
+    slips_to_update = []
+    txs_to_create = []
+    logs_to_create = []
 
     for slip in slips:
-        # Cập nhật payment_method nếu khác
+        old_status = slip.status
         old_method = slip.payment_method
-        if old_method != payment_method:
-            slip.payment_method = payment_method
-            slip.save(update_fields=["payment_method"])
-            create_system_log(
+
+        # Cập nhật thông tin trên bộ nhớ
+        slip.status = "paid"
+        slip.payment_method = payment_method
+        slips_to_update.append(slip)
+
+        # Tạo log thay đổi trạng thái và payment_method của SalarySlip
+        logs_to_create.append(
+            SystemLog(
                 user=creator,
                 action="update",
                 table_name="salary_slip",
                 record_id=str(slip.id),
-                old_value={"payment_method": old_method},
-                new_value={"payment_method": payment_method},
+                old_value={"status": old_status, "payment_method": old_method},
+                new_value={"status": "paid", "payment_method": payment_method},
+            )
+        )
+
+        # Chuẩn bị giao dịch CashFlowTransaction nếu chưa tồn tại
+        tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
+        if tx_name not in existing_tx_names:
+            if slip.net_pay > 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="pay",
+                        category="Chi trả lương nhân viên",
+                        amount=slip.net_pay,
+                        payment_date=date.today(),
+                        remarks=f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period}",
+                    )
+                )
+            elif slip.net_pay < 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="receive",
+                        category="Chi trả lương nhân viên",
+                        amount=abs(slip.net_pay),
+                        payment_date=date.today(),
+                        remarks=f"Thu hồi lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period} do âm lương",
+                    )
+                )
+
+    # 3. Thực thi bulk update các phiếu lương
+    SalarySlip.objects.bulk_update(slips_to_update, fields=["status", "payment_method"])
+
+    # 4. Thực thi bulk create các giao dịch dòng tiền
+    if txs_to_create:
+        created_txs = CashFlowTransaction.objects.bulk_create(txs_to_create)
+        # Tạo log cho các giao dịch dòng tiền mới được tạo
+        for tx in created_txs:
+            logs_to_create.append(
+                SystemLog(
+                    user=creator,
+                    action="create",
+                    table_name="cash_flow_transaction",
+                    record_id=str(tx.id),
+                    new_value={
+                        "name": tx.name,
+                        "payment_type": tx.payment_type,
+                        "category": tx.category,
+                        "amount": str(tx.amount),
+                        "payment_date": str(tx.payment_date),
+                    },
+                )
             )
 
-        # Chạy confirm & pay từng phiếu
-        updated_slip = payroll_confirm_and_pay(
-            salary_slip_id=str(slip.id),
-            creator=creator,
-        )
-        updated_slips.append(updated_slip)
+    # 5. Thực thi bulk create tất cả log hệ thống
+    if logs_to_create:
+        SystemLog.objects.bulk_create(logs_to_create)
 
-    return updated_slips
+    return slips
 
 
 @transaction.atomic

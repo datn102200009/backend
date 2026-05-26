@@ -15,12 +15,10 @@ class Attendance(BaseModel):
         ("working", "Đi làm"),
         ("paid_leave", "Nghỉ phép có lương"),
         ("unpaid_leave", "Nghỉ không lương"),
-        ("sick_leave", "Nghỉ ốm"),
         ("holiday", "Nghỉ lễ"),
-        ("other", "Khác"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="attendances")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="attendances")
     date = models.DateField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     work_hours = models.DecimalField(max_digits=4, decimal_places=2, default=8.00)
@@ -55,7 +53,7 @@ class LeaveRequest(BaseModel):
         ("cancelled", "Đã hủy"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="leave_requests")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="leave_requests")
     leave_type = models.CharField(max_length=20, choices=LEAVE_TYPES)
     start_date = models.DateField()
     end_date = models.DateField()
@@ -96,7 +94,7 @@ class EmploymentContract(BaseModel):
         ("terminated", "Chấm dứt"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="contracts")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="contracts")
     contract_no = models.CharField(max_length=100, unique=True)
     contract_type = models.CharField(max_length=20, choices=CONTRACT_TYPES)
     start_date = models.DateField()
@@ -129,7 +127,7 @@ class EmployeeDocument(BaseModel):
         ("other", "Khác"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="documents")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="documents")
     doc_type = models.CharField(max_length=50, choices=DOC_TYPES)
     title = models.CharField(max_length=255)
     file_url = models.CharField(max_length=255)
@@ -156,7 +154,7 @@ class EmploymentHistory(BaseModel):
         ("other", "Khác"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="employment_histories")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="employment_histories")
     change_type = models.CharField(max_length=50, choices=CHANGE_TYPES)
     old_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     new_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -192,7 +190,7 @@ class RewardRecord(BaseModel):
         ("other", "Khác"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="rewards")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="rewards")
     reward_date = models.DateField()
     reward_type = models.CharField(max_length=50, choices=REWARD_TYPES)
     amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
@@ -224,7 +222,7 @@ class DisciplineRecord(BaseModel):
         ("other", "Khác"),
     ]
 
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="disciplines")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="disciplines")
     incident_date = models.DateField()
     discipline_date = models.DateField()
     discipline_type = models.CharField(max_length=50, choices=DISCIPLINE_TYPES)

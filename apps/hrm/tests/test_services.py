@@ -26,7 +26,6 @@ from apps.hrm.services import (
     leave_request_approve,
     leave_request_create,
     payroll_calculate_salary,
-    payroll_confirm_and_pay,
     payroll_initialize_period,
     reward_record_create,
 )
@@ -704,39 +703,6 @@ class TestPayrollAndRewardDisciplineServices:
         assert calculated_slip.remarks is not None
         assert "cảnh báo" in calculated_slip.remarks.lower() or "tiền mặt" in calculated_slip.remarks.lower()
 
-    def test_payroll_confirm_and_pay_creates_cash_flow_transaction(self):
-        from apps.finance.models import CashFlowTransaction
-
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP7008", full_name="Nguyen Van Finance")
-        admin = UserFactory(username="admin_payroll")
-
-        # Tạo sẵn slip đã được tính toán lương
-        slip = SalarySlipFactory(
-            employee=employee,
-            salary_period="2026-05",
-            base_salary=Decimal("8000000.00"),
-            gross_pay=Decimal("8000000.00"),
-            deductions=Decimal("0.00"),
-            net_pay=Decimal("8000000.00"),
-            payment_method="bank_transfer",
-            status="draft",
-        )
-
-        # Act
-        paid_slip = payroll_confirm_and_pay(salary_slip_id=slip.id, creator=admin)
-
-        # Assert
-        paid_slip.refresh_from_db()
-        assert paid_slip.status == "paid"
-
-        # Verify that CashFlowTransaction was created
-        tx = CashFlowTransaction.objects.filter(payment_type="pay", amount=Decimal("8000000.00")).first()
-        assert tx is not None
-        assert tx.category == "Chi trả lương nhân viên"
-        assert "Nguyen Van Finance" in tx.remarks
-        assert "2026-05" in tx.remarks
-
     def test_payroll_initialize_period_uses_employee_salary_base(self):
         # Arrange
         EmployeeFactory(employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active")
@@ -810,6 +776,81 @@ class TestPayrollAndRewardDisciplineServices:
         assert tx1.amount == Decimal("5000000.00")
         assert tx2 is not None
         assert tx2.amount == Decimal("6000000.00")
+
+        # Verify SystemLogs
+        slip_logs = SystemLog.objects.filter(table_name="salary_slip", action="update", user=admin)
+        assert slip_logs.count() == 2
+
+        tx_logs = SystemLog.objects.filter(table_name="cash_flow_transaction", action="create", user=admin)
+        assert tx_logs.count() == 2
+
+    def test_payroll_bulk_confirm_and_pay_handles_zero_and_negative_net_pay(self):
+        from apps.finance.models import CashFlowTransaction, SalarySlip
+
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP9503", full_name="Emp 3")  # Lương dương -> pay
+        emp2 = EmployeeFactory(employee_id="EMP9504", full_name="Emp 4")  # Lương bằng 0 -> bỏ qua
+        emp3 = EmployeeFactory(employee_id="EMP9505", full_name="Emp 5")  # Lương âm -> receive
+        admin = UserFactory(username="admin_payroll_neg")
+
+        slip_positive = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-05",
+            base_salary=Decimal("5000000.00"),
+            net_pay=Decimal("5000000.00"),
+            status="draft",
+        )
+        slip_zero = SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-05",
+            base_salary=Decimal("0.00"),
+            net_pay=Decimal("0.00"),
+            status="draft",
+        )
+        slip_negative = SalarySlipFactory(
+            employee=emp3,
+            salary_period="2026-05",
+            base_salary=Decimal("1000000.00"),
+            net_pay=Decimal("-200000.00"),
+            status="draft",
+        )
+
+        # Act
+        from apps.hrm.services import payroll_bulk_confirm_and_pay
+
+        updated_slips = payroll_bulk_confirm_and_pay(
+            salary_period="2026-05", payment_method="bank_transfer", creator=admin
+        )
+
+        # Assert
+        assert len(updated_slips) == 3
+
+        # Refresh from DB
+        slip_positive.refresh_from_db()
+        slip_zero.refresh_from_db()
+        slip_negative.refresh_from_db()
+
+        assert slip_positive.status == "paid"
+        assert slip_zero.status == "paid"
+        assert slip_negative.status == "paid"
+
+        # Verify CashFlowTransactions
+        tx_pos = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9503-2026-05").first()
+        tx_zero = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9504-2026-05").first()
+        tx_neg = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9505-2026-05").first()
+
+        # Tiền dương -> pay
+        assert tx_pos is not None
+        assert tx_pos.payment_type == "pay"
+        assert tx_pos.amount == Decimal("5000000.00")
+
+        # Tiền bằng 0 -> bỏ qua không tạo transaction
+        assert tx_zero is None
+
+        # Tiền âm -> receive với trị tuyệt đối abs(amount)
+        assert tx_neg is not None
+        assert tx_neg.payment_type == "receive"
+        assert tx_neg.amount == Decimal("200000.00")
 
     def test_payroll_calculate_salary_with_late_reward_and_discipline(self):
         from apps.finance.models import SalarySlip
@@ -1153,11 +1194,11 @@ class TestHrmPermissionAndBypass:
         # Act: Calculate salary without any attendance records
         calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
 
-        # Assert: Employee should receive 3.0 paid leave days dynamically from the multi-day public holiday
+        # Assert: Employee should receive 4.0 paid leave days dynamically from the multi-day public holiday (including compensatory day)
         calculated_slip.refresh_from_db()
-        # 3 days of base salary = 13,000,000 / 26 * 3 = 1,500,000
-        assert calculated_slip.base_salary == Decimal("1500000.00")
-        assert calculated_slip.net_pay == Decimal("1500000.00")
+        # 4 days of base salary = 13,000,000 / 26 * 4 = 2,000,000
+        assert calculated_slip.base_salary == Decimal("2000000.00")
+        assert calculated_slip.net_pay == Decimal("2000000.00")
 
     def test_payroll_calculate_salary_with_spanning_public_holiday(self):
         from apps.hrm.models import PublicHoliday
@@ -1186,3 +1227,430 @@ class TestHrmPermissionAndBypass:
         # 2 days of base salary = 13,000,000 / 26 * 2 = 1,000,000
         assert calculated_slip.base_salary == Decimal("1000000.00")
         assert calculated_slip.net_pay == Decimal("1000000.00")
+
+    def test_payroll_calculate_salary_with_different_ot_rates(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8803",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_ot")
+
+        # Create a public holiday in 2026-05
+        PublicHoliday.objects.create(name="Ngày Chiến thắng", start_date=date(2026, 5, 1), days=1)
+
+        # Chấm công
+        # May 1st (Holiday): đi làm 8h OT
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 1),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("8.00"),
+        )
+        # May 3rd (Sunday): đi làm 4h OT
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 3),
+            status="working",
+            work_hours=Decimal("0.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+        # May 4th (Weekday): đi làm 8h, OT 2h
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+        )
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+
+        # May 1 (working) -> +1 day. May 4 (working) -> +1 day. Total = 2 working days.
+        # Base salary earned = 10,400,000 * 2 / 26 = 800,000
+        assert calculated_slip.base_salary == Decimal("800000.00")
+
+        # Overtime:
+        # Normal OT: 2 hours * 50,000 * 1.5 = 150,000
+        # Weekend OT: 4 hours * 50,000 * 2.0 = 400,000
+        # Holiday OT: 8 hours * 50,000 * 3.0 = 1,200,000
+        # Total OT Amount = 1,750,000
+        assert calculated_slip.overtime_amount == Decimal("1750000.00")
+        assert calculated_slip.net_pay == Decimal("2550000.00")
+
+        # Check breakdown
+        incomes = calculated_slip.breakdown["incomes"]
+        normal_ot_entry = next((inc for inc in incomes if "ngày thường" in inc["name"]), None)
+        weekend_ot_entry = next((inc for inc in incomes if "Chủ nhật" in inc["name"]), None)
+        holiday_ot_entry = next((inc for inc in incomes if "ngày Lễ/Tết" in inc["name"]), None)
+
+        assert normal_ot_entry is not None
+        assert normal_ot_entry["amount"] == 150000.0
+        assert weekend_ot_entry is not None
+        assert weekend_ot_entry["amount"] == 400000.0
+        assert holiday_ot_entry is not None
+        assert holiday_ot_entry["amount"] == 1200000.0
+
+    def test_contract_terminate_with_overtime_rates(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8804",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day
+            is_union_member=False,
+            employment_status="active",
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8804", status="active")
+        admin = UserFactory(username="admin_payroll_term")
+
+        # Create a public holiday in 2026-05
+        PublicHoliday.objects.create(name="Ngày Chiến thắng", start_date=date(2026, 5, 1), days=1)
+
+        # Chấm công từ ngày 1 đến 5 (May 1st: holiday 8h OT, May 3rd: Sunday 4h OT, May 4th: weekday 8h work + 2h OT, May 5th: weekday 8h work)
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 1),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("8.00"),
+        )
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 3),
+            status="working",
+            work_hours=Decimal("0.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+        )
+        AttendanceFactory(employee=employee, date=date(2026, 5, 5), status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 5, 5),
+            reason="Thôi việc đúng luật",
+            terminator=admin,
+            is_lawful=True,
+            unused_leave_days=Decimal("0.0"),
+            standard_working_days=26,
+        )
+
+        # Assert
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-05")
+        assert slip.status == "paid"
+
+        # Overtime calculation:
+        # Normal OT: 2 hours * 50,000 * 1.5 = 150,000
+        # Weekend OT: 4 hours * 50,000 * 2.0 = 400,000
+        # Holiday OT: 8 hours * 50,000 * 3.0 = 1,200,000
+        # Total OT Amount = 1,750,000
+        assert slip.overtime_amount == Decimal("1750000.00")
+
+        incomes = slip.breakdown["incomes"]
+        normal_ot_entry = next((inc for inc in incomes if "ngày thường" in inc["name"]), None)
+        weekend_ot_entry = next((inc for inc in incomes if "Chủ nhật" in inc["name"]), None)
+        holiday_ot_entry = next((inc for inc in incomes if "ngày Lễ/Tết" in inc["name"]), None)
+
+        assert normal_ot_entry is not None
+        assert normal_ot_entry["amount"] == 150000.0
+        assert weekend_ot_entry is not None
+        assert weekend_ot_entry["amount"] == 400000.0
+        assert holiday_ot_entry is not None
+        assert holiday_ot_entry["amount"] == 1200000.0
+
+    def test_payroll_calculate_salary_with_simplified_statuses(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8809",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_simple")
+
+        # Chấm công trong tháng 5/2026: 24 ngày working, 2 ngày paid_leave
+        for day in range(1, 25):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+        for day in range(25, 27):
+            AttendanceFactory(
+                employee=employee, date=date(2026, 5, day), status="paid_leave", work_hours=Decimal("0.00")
+            )
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        # 24 working + 2 paid_leave = 26 standard days. Base salary earned = 13,000,000 * 26 / 26 = 13,000,000
+        assert calculated_slip.base_salary == Decimal("13000000.00")
+        assert calculated_slip.net_pay == Decimal("13000000.00")
+
+    def test_leave_request_approve_sync_attendance(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP8810", employment_status="active")
+        approver = UserFactory(username="approver_sync_test")
+
+        # Pending leave request for 1 day: 2026-05-18, type 'paid'
+        leave_request = LeaveRequestFactory(
+            employee=employee,
+            leave_type="paid",
+            start_date=date(2026, 5, 18),
+            end_date=date(2026, 5, 18),
+            days=Decimal("1.0"),
+            status="pending",
+        )
+
+        # Act 1: Approve leave request
+        approved_request = leave_request_approve(
+            leave_request_id=leave_request.id,
+            approved_by_user_id=str(approver.id),
+        )
+
+        # Assert 1: Leave request approved, attendance synchronized to paid_leave
+        assert approved_request.status == "approved"
+        attendance = Attendance.objects.filter(employee=employee, date=date(2026, 5, 18)).first()
+        assert attendance is not None
+        assert attendance.status == "paid_leave"
+        assert attendance.work_hours == Decimal("0.00")
+
+        # Act 2: Employee goes to work on 2026-05-18 despite leave approval, update attendance to 'working'
+        attendance.status = "working"
+        attendance.work_hours = Decimal("8.00")
+        attendance.save()
+
+        # Assert 2: Attendance record is updated correctly
+        attendance.refresh_from_db()
+        assert attendance.status == "working"
+        assert attendance.work_hours == Decimal("8.00")
+
+
+@pytest.mark.django_db
+class TestHrmCompensatoryHolidayRules:
+
+    def test_compensatory_holiday_overlap_sunday(self):
+        from apps.hrm.models import PublicHoliday
+        from apps.hrm.services import get_holiday_dates_for_period
+
+        # May 3rd, 2026 is a Sunday
+        PublicHoliday.objects.create(name="Lễ Trùng Chủ Nhật", start_date=date(2026, 5, 3), days=1)
+
+        official, compensatory = get_holiday_dates_for_period(2026, 5)
+
+        assert date(2026, 5, 3) in official
+        assert date(2026, 5, 4) in compensatory
+        assert len(official) == 1
+        assert len(compensatory) == 1
+
+    def test_holiday_on_saturday_no_compensation(self):
+        from apps.hrm.models import PublicHoliday
+        from apps.hrm.services import get_holiday_dates_for_period
+
+        # May 2nd, 2026 is a Saturday
+        PublicHoliday.objects.create(name="Lễ Thứ Bảy", start_date=date(2026, 5, 2), days=1)
+
+        official, compensatory = get_holiday_dates_for_period(2026, 5)
+
+        assert date(2026, 5, 2) in official
+        assert len(compensatory) == 0
+
+    def test_compensatory_holiday_multi_day_block_ends_tuesday(self):
+        from apps.hrm.models import PublicHoliday
+        from apps.hrm.services import get_holiday_dates_for_period
+
+        # May 2nd (Saturday) to May 5th (Tuesday) - May 3rd is Sunday
+        PublicHoliday.objects.create(name="Lễ Dài Ngày", start_date=date(2026, 5, 2), days=4)
+
+        official, compensatory = get_holiday_dates_for_period(2026, 5)
+
+        assert date(2026, 5, 2) in official
+        assert date(2026, 5, 3) in official
+        assert date(2026, 5, 4) in official
+        assert date(2026, 5, 5) in official
+        assert date(2026, 5, 6) in compensatory  # Wednesday May 6th is compensatory day
+        assert len(official) == 4
+        assert len(compensatory) == 1
+
+    def test_working_on_compensatory_holiday_rate(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8805",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_comp_ot")
+
+        # May 3rd, 2026 is Sunday, May 4th is compensatory holiday
+        PublicHoliday.objects.create(name="Lễ Chủ Nhật", start_date=date(2026, 5, 3), days=1)
+
+        # Chấm công làm việc 8 tiếng và làm thêm 4 tiếng vào ngày nghỉ bù thứ Hai 4/5
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        # 1 working day (4/5) + 1 credited holiday day (3/5) = 2 days
+        # Base salary = 10,400,000 * 2 / 26 = 800,000
+        assert calculated_slip.base_salary == Decimal("800000.00")
+
+        # Overtime on compensatory day: 4 hours * 50,000 * 2.0 (compensatory OT rate) = 400,000
+        assert calculated_slip.overtime_amount == Decimal("400000.00")
+
+        incomes = calculated_slip.breakdown["incomes"]
+        comp_ot_entry = next((inc for inc in incomes if "ngày nghỉ bù" in inc["name"]), None)
+        assert comp_ot_entry is not None
+        assert comp_ot_entry["amount"] == 400000.0
+
+    def test_contract_terminate_with_compensatory_holidays(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8806",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
+            is_union_member=False,
+            employment_status="active",
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8806", status="active")
+        admin = UserFactory(username="admin_comp_term")
+
+        # May 3rd, 2026 is Sunday, May 4th is compensatory holiday
+        PublicHoliday.objects.create(name="Lễ Chủ Nhật", start_date=date(2026, 5, 3), days=1)
+
+        # Chấm công làm việc vào ngày nghỉ bù thứ Hai 4/5
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+        # Thôi việc vào ngày 5/5
+        AttendanceFactory(employee=employee, date=date(2026, 5, 5), status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 5, 5),
+            reason="Thôi việc đúng luật",
+            terminator=admin,
+            is_lawful=True,
+            unused_leave_days=Decimal("0.0"),
+            standard_working_days=26,
+        )
+
+        # Assert
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-05")
+        assert slip.status == "paid"
+
+        # Days worked/credited:
+        # May 3 (holiday) -> credited 1.0 day
+        # May 4 (worked) -> 1.0 day
+        # May 5 (worked) -> 1.0 day
+        # Total = 3 days. Base salary earned = 10,400,000 * 3 / 26 = 1,200,000
+        assert slip.base_salary == Decimal("1200000.00")
+
+        # Overtime on compensatory day: 4 hours * 50,000 * 2.0 = 400,000
+        assert slip.overtime_amount == Decimal("400000.00")
+
+        incomes = slip.breakdown["incomes"]
+        comp_ot_entry = next((inc for inc in incomes if "ngày nghỉ bù" in inc["name"]), None)
+        assert comp_ot_entry is not None
+        assert comp_ot_entry["amount"] == 400000.0
+        assert slip.breakdown["standard_working_days"] == 26
+
+
+@pytest.mark.django_db
+class TestPayrollPeriodConstraintsAndEmployeeProtection:
+
+    def test_attendance_batch_record_blocked_when_period_paid(self):
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_1", employment_status="active")
+        admin = UserFactory(username="admin_constraint_1")
+
+        # Create a paid salary slip for 2026-05
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="paid")
+
+        # Act & Assert
+        records = [{"employee_id": str(employee.id), "status": "working", "work_hours": Decimal("8.00")}]
+        with pytest.raises(ValidationException) as exc_info:
+            attendance_batch_record(date=date(2026, 5, 15), records=records, creator=admin)
+
+        assert "Kỳ lương 2026-05 đã được thanh toán 100%" in str(exc_info.value)
+
+    def test_leave_request_approve_blocked_when_period_paid(self):
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_2", employment_status="active")
+        admin = UserFactory(username="admin_constraint_2")
+
+        # Create a paid salary slip for 2026-05
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="paid")
+
+        # Create a pending leave request spanning 2026-05-10 to 2026-05-12
+        leave_data = {
+            "leave_type": "paid",
+            "start_date": date(2026, 5, 10),
+            "end_date": date(2026, 5, 12),
+            "days": Decimal("3.0"),
+            "reason": "Nghỉ phép",
+        }
+        request = leave_request_create(employee_id=employee.id, data=leave_data)
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as exc_info:
+            leave_request_approve(leave_request_id=request.id, approved_by_user_id=admin.id)
+
+        assert "Kỳ lương 2026-05 đã được thanh toán 100%" in str(exc_info.value)
+
+    def test_employee_deletion_blocked_by_protected_records(self):
+        from django.db.models.deletion import ProtectedError
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_3", employment_status="active")
+
+        # Create a related record, e.g. Attendance
+        AttendanceFactory(employee=employee, date=date(2026, 5, 15), status="working")
+
+        # Act & Assert
+        with pytest.raises(ProtectedError):
+            employee.delete()
