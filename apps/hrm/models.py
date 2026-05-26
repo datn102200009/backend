@@ -251,14 +251,15 @@ class PublicHoliday(BaseModel):
     """
 
     name = models.CharField(max_length=255)
-    date = models.DateField(unique=True)
+    start_date = models.DateField(unique=True)
+    days = models.IntegerField(default=1)
     description = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = "public_holiday"
         verbose_name = "Public Holiday"
         verbose_name_plural = "Public Holidays"
-        ordering = ["-date"]
+        ordering = ["-start_date"]
 
     def __str__(self):
-        return f"{self.name} ({self.date})"
+        return f"{self.name} ({self.start_date} +{self.days}d)"

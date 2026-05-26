@@ -312,7 +312,8 @@ class PublicHolidaySerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
-            "date",
+            "start_date",
+            "days",
             "description",
             "created_at",
             "updated_at",

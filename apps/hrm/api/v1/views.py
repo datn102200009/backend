@@ -707,11 +707,18 @@ def public_holiday_list_create_view(request):
 
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_publicholiday")
-        qs = PublicHoliday.objects.all().order_by("-date")
+        qs = PublicHoliday.objects.all().order_by("-start_date")
         year = request.query_params.get("year")
         if year:
             try:
-                qs = qs.filter(date__year=int(year))
+                year_val = int(year)
+                from datetime import timedelta
+
+                qs = [
+                    h
+                    for h in qs
+                    if h.start_date.year == year_val or (h.start_date + timedelta(days=h.days - 1)).year == year_val
+                ]
             except ValueError:
                 pass
         serializer = PublicHolidaySerializer(qs, many=True)
@@ -724,7 +731,8 @@ def public_holiday_list_create_view(request):
         try:
             holiday = public_holiday_create(
                 name=serializer.validated_data["name"],
-                date_val=serializer.validated_data["date"],
+                start_date=serializer.validated_data["start_date"],
+                days=serializer.validated_data.get("days", 1),
                 description=serializer.validated_data.get("description", ""),
                 creator=user,
             )
