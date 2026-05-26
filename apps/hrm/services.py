@@ -880,6 +880,14 @@ def attendance_batch_record(
     if creator:
         PermissionChecker.check_permission(creator, "hrm.add_attendance")
 
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    salary_period = f"{date.year:04d}-{date.month:02d}"
+    if is_salary_period_fully_paid(salary_period):
+        raise ValidationException(
+            f"Kỳ lương {salary_period} đã được thanh toán 100%. Không cho phép chỉnh sửa chấm công."
+        )
+
     result = []
     for rec in records:
         employee_id = rec.get("employee_id")
@@ -1045,6 +1053,22 @@ def leave_request_approve(
             raise ValidationException("Người phê duyệt không tồn tại")
 
     PermissionChecker.check_permission(approved_by, "hrm.change_leaverequest")
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    start = leave_request.start_date
+    end = leave_request.end_date
+    unique_periods = set()
+    current_date = start
+    while current_date <= end:
+        unique_periods.add(f"{current_date.year:04d}-{current_date.month:02d}")
+        current_date += timedelta(days=1)
+
+    for period in unique_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(
+                f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép duyệt đơn xin nghỉ phép trong thời gian này."
+            )
 
     old_status = leave_request.status
     leave_request.status = "approved"

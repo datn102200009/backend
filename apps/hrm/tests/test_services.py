@@ -1553,3 +1553,63 @@ class TestHrmCompensatoryHolidayRules:
         assert comp_ot_entry is not None
         assert comp_ot_entry["amount"] == 400000.0
         assert slip.breakdown["standard_working_days"] == 26
+
+
+@pytest.mark.django_db
+class TestPayrollPeriodConstraintsAndEmployeeProtection:
+
+    def test_attendance_batch_record_blocked_when_period_paid(self):
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_1", employment_status="active")
+        admin = UserFactory(username="admin_constraint_1")
+
+        # Create a paid salary slip for 2026-05
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="paid")
+
+        # Act & Assert
+        records = [{"employee_id": str(employee.id), "status": "working", "work_hours": Decimal("8.00")}]
+        with pytest.raises(ValidationException) as exc_info:
+            attendance_batch_record(date=date(2026, 5, 15), records=records, creator=admin)
+
+        assert "Kỳ lương 2026-05 đã được thanh toán 100%" in str(exc_info.value)
+
+    def test_leave_request_approve_blocked_when_period_paid(self):
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_2", employment_status="active")
+        admin = UserFactory(username="admin_constraint_2")
+
+        # Create a paid salary slip for 2026-05
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="paid")
+
+        # Create a pending leave request spanning 2026-05-10 to 2026-05-12
+        leave_data = {
+            "leave_type": "paid",
+            "start_date": date(2026, 5, 10),
+            "end_date": date(2026, 5, 12),
+            "days": Decimal("3.0"),
+            "reason": "Nghỉ phép",
+        }
+        request = leave_request_create(employee_id=employee.id, data=leave_data)
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as exc_info:
+            leave_request_approve(leave_request_id=request.id, approved_by_user_id=admin.id)
+
+        assert "Kỳ lương 2026-05 đã được thanh toán 100%" in str(exc_info.value)
+
+    def test_employee_deletion_blocked_by_protected_records(self):
+        from django.db.models.deletion import ProtectedError
+
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_CONSTRAINT_3", employment_status="active")
+
+        # Create a related record, e.g. Attendance
+        AttendanceFactory(employee=employee, date=date(2026, 5, 15), status="working")
+
+        # Act & Assert
+        with pytest.raises(ProtectedError):
+            employee.delete()

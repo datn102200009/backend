@@ -10,8 +10,8 @@ class SalarySlip(BaseModel):
     """
 
     name = models.CharField(max_length=255, unique=True)
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="salary_slips")
-    salary_period = models.CharField(max_length=10)  # Format: YYYY-MM
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="salary_slips")
+    salary_period = models.CharField(max_length=10, db_index=True)  # Format: YYYY-MM
     base_salary = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     overtime_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     allowance_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
