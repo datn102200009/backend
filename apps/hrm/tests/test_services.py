@@ -1186,3 +1186,153 @@ class TestHrmPermissionAndBypass:
         # 2 days of base salary = 13,000,000 / 26 * 2 = 1,000,000
         assert calculated_slip.base_salary == Decimal("1000000.00")
         assert calculated_slip.net_pay == Decimal("1000000.00")
+
+    def test_payroll_calculate_salary_with_different_ot_rates(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8803",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_ot")
+
+        # Create a public holiday in 2026-05
+        PublicHoliday.objects.create(name="Ngày Chiến thắng", start_date=date(2026, 5, 1), days=1)
+
+        # Chấm công
+        # May 1st (Holiday): đi làm 8h OT
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 1),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("8.00"),
+        )
+        # May 3rd (Sunday): đi làm 4h OT
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 3),
+            status="other",
+            work_hours=Decimal("0.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+        # May 4th (Weekday): đi làm 8h, OT 2h
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+        )
+
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+
+        # May 1 (working) -> +1 day. May 4 (working) -> +1 day. Total = 2 working days.
+        # Base salary earned = 10,400,000 * 2 / 26 = 800,000
+        assert calculated_slip.base_salary == Decimal("800000.00")
+
+        # Overtime:
+        # Normal OT: 2 hours * 50,000 * 1.5 = 150,000
+        # Weekend OT: 4 hours * 50,000 * 2.0 = 400,000
+        # Holiday OT: 8 hours * 50,000 * 3.0 = 1,200,000
+        # Total OT Amount = 1,750,000
+        assert calculated_slip.overtime_amount == Decimal("1750000.00")
+        assert calculated_slip.net_pay == Decimal("2550000.00")
+
+        # Check breakdown
+        incomes = calculated_slip.breakdown["incomes"]
+        normal_ot_entry = next((inc for inc in incomes if "ngày thường" in inc["name"]), None)
+        weekend_ot_entry = next((inc for inc in incomes if "Chủ nhật" in inc["name"]), None)
+        holiday_ot_entry = next((inc for inc in incomes if "ngày Lễ/Tết" in inc["name"]), None)
+
+        assert normal_ot_entry is not None
+        assert normal_ot_entry["amount"] == 150000.0
+        assert weekend_ot_entry is not None
+        assert weekend_ot_entry["amount"] == 400000.0
+        assert holiday_ot_entry is not None
+        assert holiday_ot_entry["amount"] == 1200000.0
+
+    def test_contract_terminate_with_overtime_rates(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8804",
+            salary_base=Decimal("10400000.00"),  # 400.000 / day
+            is_union_member=False,
+            employment_status="active",
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8804", status="active")
+        admin = UserFactory(username="admin_payroll_term")
+
+        # Create a public holiday in 2026-05
+        PublicHoliday.objects.create(name="Ngày Chiến thắng", start_date=date(2026, 5, 1), days=1)
+
+        # Chấm công từ ngày 1 đến 5 (May 1st: holiday 8h OT, May 3rd: Sunday 4h OT, May 4th: weekday 8h work + 2h OT, May 5th: weekday 8h work)
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 1),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("8.00"),
+        )
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 3),
+            status="other",
+            work_hours=Decimal("0.00"),
+            overtime_hours=Decimal("4.00"),
+        )
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 4),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+        )
+        AttendanceFactory(employee=employee, date=date(2026, 5, 5), status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        contract_terminate(
+            contract_id=contract.id,
+            termination_date=date(2026, 5, 5),
+            reason="Thôi việc đúng luật",
+            terminator=admin,
+            is_lawful=True,
+            unused_leave_days=Decimal("0.0"),
+            standard_working_days=26,
+        )
+
+        # Assert
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-05")
+        assert slip.status == "paid"
+
+        # Overtime calculation:
+        # Normal OT: 2 hours * 50,000 * 1.5 = 150,000
+        # Weekend OT: 4 hours * 50,000 * 2.0 = 400,000
+        # Holiday OT: 8 hours * 50,000 * 3.0 = 1,200,000
+        # Total OT Amount = 1,750,000
+        assert slip.overtime_amount == Decimal("1750000.00")
+
+        incomes = slip.breakdown["incomes"]
+        normal_ot_entry = next((inc for inc in incomes if "ngày thường" in inc["name"]), None)
+        weekend_ot_entry = next((inc for inc in incomes if "Chủ nhật" in inc["name"]), None)
+        holiday_ot_entry = next((inc for inc in incomes if "ngày Lễ/Tết" in inc["name"]), None)
+
+        assert normal_ot_entry is not None
+        assert normal_ot_entry["amount"] == 150000.0
+        assert weekend_ot_entry is not None
+        assert weekend_ot_entry["amount"] == 400000.0
+        assert holiday_ot_entry is not None
+        assert holiday_ot_entry["amount"] == 1200000.0

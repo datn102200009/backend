@@ -379,14 +379,44 @@ def contract_terminate(
         employee=employee, date__year=year, date__month=month, date__lte=termination_date
     )
 
+    # Fetch public holidays for the month once and keep in memory
+    from django.db.models import Max
+
+    max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
+    period_start_date = date(year, month, 1)
+
+    public_holidays = PublicHoliday.objects.filter(
+        start_date__lte=termination_date, start_date__gte=period_start_date - timedelta(days=int(max_days))
+    )
+
+    # Build a set of all holiday dates in this month up to termination_date
+    all_holiday_dates = set()
+    for holiday in public_holidays:
+        for i in range(holiday.days):
+            h_date = holiday.start_date + timedelta(days=i)
+            if h_date.year == year and h_date.month == month and h_date <= termination_date:
+                all_holiday_dates.add(h_date)
+
     working_days = Decimal("0.00")
+    ot_normal_hours = Decimal("0.00")
+    ot_weekend_hours = Decimal("0.00")
+    ot_holiday_hours = Decimal("0.00")
     total_ot_hours = Decimal("0.00")
     for att in attendances:
         if att.status == "working":
             working_days += Decimal("1.00")
         elif att.status in ["paid_leave", "sick_leave", "holiday"]:
             working_days += Decimal("1.00")
-        total_ot_hours += att.overtime_hours or Decimal("0.00")
+
+        ot_h = att.overtime_hours or Decimal("0.00")
+        if ot_h > 0:
+            total_ot_hours += ot_h
+            if att.date in all_holiday_dates:
+                ot_holiday_hours += ot_h
+            elif att.date.weekday() == 6:  # Sunday
+                ot_weekend_hours += ot_h
+            else:
+                ot_normal_hours += ot_h
 
     # 2.2. Xác định ngày công chia lương (divisor) - Cố định Cách 1
     divisor = Decimal(str(standard_working_days))
@@ -415,8 +445,16 @@ def contract_terminate(
 
     # 2.7. Tính toán OT, Kinh phí công đoàn, Thưởng & Kỷ luật phạt thông thường
     hourly_rate = salary_base / divisor / Decimal("8.00")
-    ot_rate = hourly_rate * Decimal("1.5")
-    overtime_amount_earned = (total_ot_hours * ot_rate).quantize(Decimal("0.01"))
+    ot_normal_rate = hourly_rate * Decimal("1.5")
+    ot_weekend_rate = hourly_rate * Decimal("2.0")
+    ot_holiday_rate = hourly_rate * Decimal("3.0")
+
+    ot_normal_amount = ot_normal_hours * ot_normal_rate
+    ot_weekend_amount = ot_weekend_hours * ot_weekend_rate
+    ot_holiday_amount = ot_holiday_hours * ot_holiday_rate
+
+    overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount
+    overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
     union_fee = Decimal("0.00")
     if employee.is_union_member:
@@ -482,23 +520,58 @@ def contract_terminate(
     slip.status = "paid"
 
     total_days_str = f"{float(working_days):g}"
-    ot_hours_str = f"{float(total_ot_hours):g}"
     unused_leave_str = f"{float(unused_leave_days):g}"
 
-    slip.breakdown = {
-        "incomes": [
+    incomes = [
+        {
+            "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
+            "amount": float(base_salary_earned),
+        }
+    ]
+
+    if overtime_amount_earned > 0:
+        if ot_normal_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày thường (1.5x) ({float(ot_normal_hours):g} giờ)",
+                    "amount": float(ot_normal_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_weekend_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca Chủ nhật (2.0x) ({float(ot_weekend_hours):g} giờ)",
+                    "amount": float(ot_weekend_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_holiday_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày Lễ/Tết (3.0x) ({float(ot_holiday_hours):g} giờ)",
+                    "amount": float(ot_holiday_amount.quantize(Decimal("0.01"))),
+                }
+            )
+    else:
+        incomes.append(
             {
-                "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
-                "amount": float(base_salary_earned),
-            },
-            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+                "name": "Lương tăng ca (OT) (0 giờ)",
+                "amount": 0.0,
+            }
+        )
+
+    incomes.extend(
+        [
             {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
             {
                 "name": f"Bồi thường phép năm chưa nghỉ ({unused_leave_str} ngày)",
                 "amount": float(unused_leave_compensation),
             },
             {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
-        ],
+        ]
+    )
+
+    slip.breakdown = {
+        "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
             {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
@@ -1232,8 +1305,29 @@ def payroll_calculate_salary(
 
     attendances = Attendance.objects.filter(employee=employee, date__year=year, date__month=month)
 
+    # Fetch public holidays for the month once and keep in memory
+    from django.db.models import Max
+
+    max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
+    period_start_date = date(year, month, 1)
+
+    public_holidays = PublicHoliday.objects.filter(
+        start_date__lte=period_end_date, start_date__gte=period_start_date - timedelta(days=int(max_days))
+    )
+
+    # Build a set of all holiday dates in this month
+    all_holiday_dates = set()
+    for holiday in public_holidays:
+        for i in range(holiday.days):
+            h_date = holiday.start_date + timedelta(days=i)
+            if h_date.year == year and h_date.month == month:
+                all_holiday_dates.add(h_date)
+
     working_days = Decimal("0.00")
     paid_leave_days = Decimal("0.00")
+    ot_normal_hours = Decimal("0.00")
+    ot_weekend_hours = Decimal("0.00")
+    ot_holiday_hours = Decimal("0.00")
     total_ot_hours = Decimal("0.00")
 
     recorded_dates = set()
@@ -1244,7 +1338,15 @@ def payroll_calculate_salary(
         elif att.status in ["paid_leave", "sick_leave", "holiday"]:
             paid_leave_days += Decimal("1.00")
 
-        total_ot_hours += att.overtime_hours or Decimal("0.00")
+        ot_h = att.overtime_hours or Decimal("0.00")
+        if ot_h > 0:
+            total_ot_hours += ot_h
+            if att.date in all_holiday_dates:
+                ot_holiday_hours += ot_h
+            elif att.date.weekday() == 6:  # Sunday
+                ot_weekend_hours += ot_h
+            else:
+                ot_normal_hours += ot_h
 
     # Tự động tính 100% lương cho ngày nghỉ lễ nếu chưa có chấm công
     from django.db.models import Max
@@ -1272,9 +1374,19 @@ def payroll_calculate_salary(
 
     if standard_days > 0:
         hourly_rate = salary_base / Decimal(str(standard_days)) / Decimal("8.00")
-        ot_rate = hourly_rate * Decimal("1.5")
-        overtime_amount_earned = total_ot_hours * ot_rate
+        ot_normal_rate = hourly_rate * Decimal("1.5")
+        ot_weekend_rate = hourly_rate * Decimal("2.0")
+        ot_holiday_rate = hourly_rate * Decimal("3.0")
+
+        ot_normal_amount = ot_normal_hours * ot_normal_rate
+        ot_weekend_amount = ot_weekend_hours * ot_weekend_rate
+        ot_holiday_amount = ot_holiday_hours * ot_holiday_rate
+
+        overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount
     else:
+        ot_normal_amount = Decimal("0.00")
+        ot_weekend_amount = Decimal("0.00")
+        ot_holiday_amount = Decimal("0.00")
         overtime_amount_earned = Decimal("0.00")
     overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
@@ -1345,19 +1457,53 @@ def payroll_calculate_salary(
 
     total_days = float(working_days + paid_leave_days)
     total_days_str = f"{total_days:g}"
-    ot_hours = float(total_ot_hours)
-    ot_hours_str = f"{ot_hours:g}"
 
-    slip.breakdown = {
-        "incomes": [
+    incomes = [
+        {
+            "name": f"Lương theo ngày công ({total_days_str}/{standard_days} ngày)",
+            "amount": float(base_salary_earned),
+        }
+    ]
+
+    if overtime_amount_earned > 0:
+        if ot_normal_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày thường (1.5x) ({float(ot_normal_hours):g} giờ)",
+                    "amount": float(ot_normal_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_weekend_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca Chủ nhật (2.0x) ({float(ot_weekend_hours):g} giờ)",
+                    "amount": float(ot_weekend_amount.quantize(Decimal("0.01"))),
+                }
+            )
+        if ot_holiday_hours > 0:
+            incomes.append(
+                {
+                    "name": f"Lương tăng ca ngày Lễ/Tết (3.0x) ({float(ot_holiday_hours):g} giờ)",
+                    "amount": float(ot_holiday_amount.quantize(Decimal("0.01"))),
+                }
+            )
+    else:
+        incomes.append(
             {
-                "name": f"Lương theo ngày công ({total_days_str}/{standard_days} ngày)",
-                "amount": float(base_salary_earned),
-            },
-            {"name": f"Lương tăng ca (OT) ({ot_hours_str} giờ)", "amount": float(overtime_amount_earned)},
+                "name": "Lương tăng ca (OT) (0 giờ)",
+                "amount": 0.0,
+            }
+        )
+
+    incomes.extend(
+        [
             {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
             {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
-        ],
+        ]
+    )
+
+    slip.breakdown = {
+        "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
             {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},

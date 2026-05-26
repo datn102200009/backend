@@ -361,6 +361,7 @@ components:
           nullable: true
         breakdown:
           type: object
+          description: Chi tiết bảng lương bao gồm lương theo ngày công và phân loại các loại lương tăng ca ngoài giờ (OT ngày thường 1.5x, OT Chủ Nhật 2.0x, OT ngày Lễ 3.0x).
           nullable: true
           properties:
             incomes:
