@@ -364,6 +364,9 @@ components:
           description: Chi tiết bảng lương bao gồm lương theo ngày công và phân loại các loại lương tăng ca ngoài giờ (OT ngày thường 1.5x, OT Chủ Nhật 2.0x, OT ngày Lễ 3.0x).
           nullable: true
           properties:
+            standard_working_days:
+              type: integer
+              description: Số ngày công tiêu chuẩn hằng tháng theo chế độ làm việc của doanh nghiệp (ví dụ 26 ngày).
             incomes:
               type: array
               items:
