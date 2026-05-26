@@ -396,7 +396,6 @@ def contract_terminate(
     ot_weekend_hours = Decimal("0.00")
     ot_holiday_hours = Decimal("0.00")
     ot_compensatory_hours = Decimal("0.00")
-    total_ot_hours = Decimal("0.00")
 
     recorded_dates = set()
     for att in attendances:
@@ -408,7 +407,6 @@ def contract_terminate(
 
         ot_h = att.overtime_hours or Decimal("0.00")
         if ot_h > 0:
-            total_ot_hours += ot_h
             if att.date in official_holiday_dates:
                 ot_holiday_hours += ot_h
             elif att.date in compensatory_holiday_dates:
@@ -1425,7 +1423,6 @@ def payroll_calculate_salary(
     ot_weekend_hours = Decimal("0.00")
     ot_holiday_hours = Decimal("0.00")
     ot_compensatory_hours = Decimal("0.00")
-    total_ot_hours = Decimal("0.00")
 
     recorded_dates = set()
     for att in attendances:
@@ -1437,7 +1434,6 @@ def payroll_calculate_salary(
 
         ot_h = att.overtime_hours or Decimal("0.00")
         if ot_h > 0:
-            total_ot_hours += ot_h
             if att.date in official_holiday_dates:
                 ot_holiday_hours += ot_h
             elif att.date in compensatory_holiday_dates:
@@ -1635,72 +1631,6 @@ def payroll_calculate_salary(
 
 
 @transaction.atomic
-def payroll_confirm_and_pay(
-    *,
-    salary_slip_id: str,
-    creator: Optional[User] = None,
-) -> SalarySlip:
-    """
-    Xác nhận và chi trả phiếu lương. Tự động sinh ra bút toán chi tiền CashFlowTransaction tại finance.
-    """
-    if creator:
-        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
-
-    try:
-        slip = SalarySlip.objects.get(id=salary_slip_id)
-    except SalarySlip.DoesNotExist:
-        raise ValidationException("Phiếu lương không tồn tại")
-
-    if slip.status == "paid":
-        raise ValidationException("Phiếu lương này đã được thanh toán")
-
-    old_status = slip.status
-    slip.status = "paid"
-    slip.save(update_fields=["status"])
-
-    create_system_log(
-        user=creator,
-        action="update",
-        table_name="salary_slip",
-        record_id=str(slip.id),
-        old_value={"status": old_status},
-        new_value={"status": "paid"},
-    )
-
-    from apps.finance.models import CashFlowTransaction
-
-    tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{slip.salary_period}"
-
-    tx, created = CashFlowTransaction.objects.get_or_create(
-        name=tx_name,
-        defaults={
-            "payment_type": "pay",
-            "category": "Chi trả lương nhân viên",
-            "amount": slip.net_pay,
-            "payment_date": date.today(),
-            "remarks": f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {slip.salary_period}",
-        },
-    )
-
-    if created:
-        create_system_log(
-            user=creator,
-            action="create",
-            table_name="cash_flow_transaction",
-            record_id=str(tx.id),
-            new_value={
-                "name": tx.name,
-                "payment_type": tx.payment_type,
-                "category": tx.category,
-                "amount": str(tx.amount),
-                "payment_date": str(tx.payment_date),
-            },
-        )
-
-    return slip
-
-
-@transaction.atomic
 def payroll_bulk_confirm_and_pay(
     *,
     salary_period: str,
@@ -1709,36 +1639,105 @@ def payroll_bulk_confirm_and_pay(
 ) -> list[SalarySlip]:
     """
     Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
+    Tối ưu hóa bulk operations để giảm số truy cập DB từ O(N) xuống O(1).
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
-    slips = SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid")
-    updated_slips = []
+    # 1. Lấy danh sách các slip chưa paid trong kỳ kèm employee để tránh N+1
+    slips = list(
+        SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid").select_related("employee")
+    )
+    if not slips:
+        return []
+
+    from apps.accounts.models import SystemLog
+    from apps.finance.models import CashFlowTransaction
+
+    # 2. Lấy danh sách các giao dịch CashFlowTransaction đã tồn tại cho các nhân viên này trong kỳ
+    tx_names = [f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}" for slip in slips]
+    existing_tx_names = set(CashFlowTransaction.objects.filter(name__in=tx_names).values_list("name", flat=True))
+
+    slips_to_update = []
+    txs_to_create = []
+    logs_to_create = []
 
     for slip in slips:
-        # Cập nhật payment_method nếu khác
+        old_status = slip.status
         old_method = slip.payment_method
-        if old_method != payment_method:
-            slip.payment_method = payment_method
-            slip.save(update_fields=["payment_method"])
-            create_system_log(
+
+        # Cập nhật thông tin trên bộ nhớ
+        slip.status = "paid"
+        slip.payment_method = payment_method
+        slips_to_update.append(slip)
+
+        # Tạo log thay đổi trạng thái và payment_method của SalarySlip
+        logs_to_create.append(
+            SystemLog(
                 user=creator,
                 action="update",
                 table_name="salary_slip",
                 record_id=str(slip.id),
-                old_value={"payment_method": old_method},
-                new_value={"payment_method": payment_method},
+                old_value={"status": old_status, "payment_method": old_method},
+                new_value={"status": "paid", "payment_method": payment_method},
+            )
+        )
+
+        # Chuẩn bị giao dịch CashFlowTransaction nếu chưa tồn tại
+        tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
+        if tx_name not in existing_tx_names:
+            if slip.net_pay > 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="pay",
+                        category="Chi trả lương nhân viên",
+                        amount=slip.net_pay,
+                        payment_date=date.today(),
+                        remarks=f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period}",
+                    )
+                )
+            elif slip.net_pay < 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="receive",
+                        category="Chi trả lương nhân viên",
+                        amount=abs(slip.net_pay),
+                        payment_date=date.today(),
+                        remarks=f"Thu hồi lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period} do âm lương",
+                    )
+                )
+
+    # 3. Thực thi bulk update các phiếu lương
+    SalarySlip.objects.bulk_update(slips_to_update, fields=["status", "payment_method"])
+
+    # 4. Thực thi bulk create các giao dịch dòng tiền
+    if txs_to_create:
+        created_txs = CashFlowTransaction.objects.bulk_create(txs_to_create)
+        # Tạo log cho các giao dịch dòng tiền mới được tạo
+        for tx in created_txs:
+            logs_to_create.append(
+                SystemLog(
+                    user=creator,
+                    action="create",
+                    table_name="cash_flow_transaction",
+                    record_id=str(tx.id),
+                    new_value={
+                        "name": tx.name,
+                        "payment_type": tx.payment_type,
+                        "category": tx.category,
+                        "amount": str(tx.amount),
+                        "payment_date": str(tx.payment_date),
+                    },
+                )
             )
 
-        # Chạy confirm & pay từng phiếu
-        updated_slip = payroll_confirm_and_pay(
-            salary_slip_id=str(slip.id),
-            creator=creator,
-        )
-        updated_slips.append(updated_slip)
+    # 5. Thực thi bulk create tất cả log hệ thống
+    if logs_to_create:
+        SystemLog.objects.bulk_create(logs_to_create)
 
-    return updated_slips
+    return slips
 
 
 @transaction.atomic

@@ -55,7 +55,6 @@ from apps.hrm.services import (
     leave_request_create,
     payroll_bulk_confirm_and_pay,
     payroll_calculate_salary,
-    payroll_confirm_and_pay,
     payroll_initialize_period,
     public_holiday_create,
     public_holiday_delete,
@@ -534,52 +533,6 @@ def salary_slip_calculate_view(request, pk):
         raise NotFoundException("Không tìm thấy phiếu lương")
 
     updated_slip = payroll_calculate_salary(
-        salary_slip_id=pk,
-        creator=user,
-    )
-
-    out_serializer = SalarySlipOutputSerializer(updated_slip)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def salary_slip_confirm_view(request, pk):
-    """
-    Xác nhận chi trả lương và tự động ghi nhận bút toán CashFlowTransaction.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "finance.change_salaryslip")
-
-    try:
-        slip = SalarySlip.objects.get(id=pk)
-    except SalarySlip.DoesNotExist:
-        raise NotFoundException("Không tìm thấy phiếu lương")
-
-    serializer = SalarySlipConfirmInputSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-
-    payment_method = serializer.validated_data["payment_method"]
-
-    # Lưu payment_method trước khi confirm
-    old_method = slip.payment_method
-    if old_method != payment_method:
-        slip.payment_method = payment_method
-        slip.save(update_fields=["payment_method"])
-        create_system_log(
-            user=user,
-            action="update",
-            table_name="salary_slip",
-            record_id=str(slip.id),
-            old_value={"payment_method": old_method},
-            new_value={"payment_method": payment_method},
-        )
-
-    # Chạy confirm & pay
-    updated_slip = payroll_confirm_and_pay(
         salary_slip_id=pk,
         creator=user,
     )

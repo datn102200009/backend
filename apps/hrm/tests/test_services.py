@@ -26,7 +26,6 @@ from apps.hrm.services import (
     leave_request_approve,
     leave_request_create,
     payroll_calculate_salary,
-    payroll_confirm_and_pay,
     payroll_initialize_period,
     reward_record_create,
 )
@@ -704,39 +703,6 @@ class TestPayrollAndRewardDisciplineServices:
         assert calculated_slip.remarks is not None
         assert "cảnh báo" in calculated_slip.remarks.lower() or "tiền mặt" in calculated_slip.remarks.lower()
 
-    def test_payroll_confirm_and_pay_creates_cash_flow_transaction(self):
-        from apps.finance.models import CashFlowTransaction
-
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP7008", full_name="Nguyen Van Finance")
-        admin = UserFactory(username="admin_payroll")
-
-        # Tạo sẵn slip đã được tính toán lương
-        slip = SalarySlipFactory(
-            employee=employee,
-            salary_period="2026-05",
-            base_salary=Decimal("8000000.00"),
-            gross_pay=Decimal("8000000.00"),
-            deductions=Decimal("0.00"),
-            net_pay=Decimal("8000000.00"),
-            payment_method="bank_transfer",
-            status="draft",
-        )
-
-        # Act
-        paid_slip = payroll_confirm_and_pay(salary_slip_id=slip.id, creator=admin)
-
-        # Assert
-        paid_slip.refresh_from_db()
-        assert paid_slip.status == "paid"
-
-        # Verify that CashFlowTransaction was created
-        tx = CashFlowTransaction.objects.filter(payment_type="pay", amount=Decimal("8000000.00")).first()
-        assert tx is not None
-        assert tx.category == "Chi trả lương nhân viên"
-        assert "Nguyen Van Finance" in tx.remarks
-        assert "2026-05" in tx.remarks
-
     def test_payroll_initialize_period_uses_employee_salary_base(self):
         # Arrange
         EmployeeFactory(employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active")
@@ -810,6 +776,81 @@ class TestPayrollAndRewardDisciplineServices:
         assert tx1.amount == Decimal("5000000.00")
         assert tx2 is not None
         assert tx2.amount == Decimal("6000000.00")
+
+        # Verify SystemLogs
+        slip_logs = SystemLog.objects.filter(table_name="salary_slip", action="update", user=admin)
+        assert slip_logs.count() == 2
+
+        tx_logs = SystemLog.objects.filter(table_name="cash_flow_transaction", action="create", user=admin)
+        assert tx_logs.count() == 2
+
+    def test_payroll_bulk_confirm_and_pay_handles_zero_and_negative_net_pay(self):
+        from apps.finance.models import CashFlowTransaction, SalarySlip
+
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP9503", full_name="Emp 3")  # Lương dương -> pay
+        emp2 = EmployeeFactory(employee_id="EMP9504", full_name="Emp 4")  # Lương bằng 0 -> bỏ qua
+        emp3 = EmployeeFactory(employee_id="EMP9505", full_name="Emp 5")  # Lương âm -> receive
+        admin = UserFactory(username="admin_payroll_neg")
+
+        slip_positive = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-05",
+            base_salary=Decimal("5000000.00"),
+            net_pay=Decimal("5000000.00"),
+            status="draft",
+        )
+        slip_zero = SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-05",
+            base_salary=Decimal("0.00"),
+            net_pay=Decimal("0.00"),
+            status="draft",
+        )
+        slip_negative = SalarySlipFactory(
+            employee=emp3,
+            salary_period="2026-05",
+            base_salary=Decimal("1000000.00"),
+            net_pay=Decimal("-200000.00"),
+            status="draft",
+        )
+
+        # Act
+        from apps.hrm.services import payroll_bulk_confirm_and_pay
+
+        updated_slips = payroll_bulk_confirm_and_pay(
+            salary_period="2026-05", payment_method="bank_transfer", creator=admin
+        )
+
+        # Assert
+        assert len(updated_slips) == 3
+
+        # Refresh from DB
+        slip_positive.refresh_from_db()
+        slip_zero.refresh_from_db()
+        slip_negative.refresh_from_db()
+
+        assert slip_positive.status == "paid"
+        assert slip_zero.status == "paid"
+        assert slip_negative.status == "paid"
+
+        # Verify CashFlowTransactions
+        tx_pos = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9503-2026-05").first()
+        tx_zero = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9504-2026-05").first()
+        tx_neg = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9505-2026-05").first()
+
+        # Tiền dương -> pay
+        assert tx_pos is not None
+        assert tx_pos.payment_type == "pay"
+        assert tx_pos.amount == Decimal("5000000.00")
+
+        # Tiền bằng 0 -> bỏ qua không tạo transaction
+        assert tx_zero is None
+
+        # Tiền âm -> receive với trị tuyệt đối abs(amount)
+        assert tx_neg is not None
+        assert tx_neg.payment_type == "receive"
+        assert tx_neg.amount == Decimal("200000.00")
 
     def test_payroll_calculate_salary_with_late_reward_and_discipline(self):
         from apps.finance.models import SalarySlip
