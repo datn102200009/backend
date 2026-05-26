@@ -451,11 +451,11 @@ class TestHrmAPI:
 
         # Test Create holiday (tương lai)
         tomorrow = (timezone.now() + timedelta(days=1)).date()
-        data = {"name": "Giỗ tổ Hùng Vương", "date": str(tomorrow), "description": "Ngày Giỗ tổ"}
+        data = {"name": "Giỗ tổ Hùng Vương", "start_date": str(tomorrow), "days": 1, "description": "Ngày Giỗ tổ"}
         response = auth_client.post(url, data, format="json")
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["name"] == "Giỗ tổ Hùng Vương"
-        assert PublicHoliday.objects.filter(date=tomorrow).exists()
+        assert PublicHoliday.objects.filter(start_date=tomorrow).exists()
 
         # Test List has 1
         response = auth_client.get(url)
@@ -470,15 +470,16 @@ class TestHrmAPI:
         from apps.hrm.models import PublicHoliday
 
         future_date = (timezone.now() + timedelta(days=2)).date()
-        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", date=future_date)
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", start_date=future_date, days=1)
 
         # Test update
         url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
-        data = {"name": "Tết Tây 2026", "date": str(future_date)}
+        data = {"name": "Tết Tây 2026", "start_date": str(future_date), "days": 3}
         response = auth_client.patch(url, data, format="json")
         assert response.status_code == status.HTTP_200_OK
         holiday.refresh_from_db()
         assert holiday.name == "Tết Tây 2026"
+        assert holiday.days == 3
 
         # Test delete
         response = auth_client.delete(url)
@@ -492,7 +493,7 @@ class TestHrmAPI:
 
         url = "/api/v1/hrm/public-holidays/"
         yesterday = (timezone.now() - timedelta(days=1)).date()
-        data = {"name": "Giỗ tổ Hùng Vương", "date": str(yesterday), "description": "Ngày Giỗ tổ"}
+        data = {"name": "Giỗ tổ Hùng Vương", "start_date": str(yesterday), "days": 1, "description": "Ngày Giỗ tổ"}
         response = auth_client.post(url, data, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Không được chọn ngày nghỉ lễ trong quá khứ." in response.data["error"]
@@ -505,11 +506,11 @@ class TestHrmAPI:
         from apps.hrm.models import PublicHoliday
 
         future_date = (timezone.now() + timedelta(days=2)).date()
-        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", date=future_date)
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", start_date=future_date, days=1)
 
         url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
         yesterday = (timezone.now() - timedelta(days=1)).date()
-        data = {"date": str(yesterday)}
+        data = {"start_date": str(yesterday)}
         response = auth_client.patch(url, data, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Không được chọn ngày nghỉ lễ trong quá khứ." in response.data["error"]
@@ -536,8 +537,8 @@ class TestHrmAPI:
             # Đảm bảo date2 ở năm sau
             date2 = date(next_year, 1, 1)
 
-            PublicHoliday.objects.create(name="Lễ năm nay", date=date1)
-            PublicHoliday.objects.create(name="Lễ năm sau", date=date2)
+            PublicHoliday.objects.create(name="Lễ năm nay", start_date=date1, days=1)
+            PublicHoliday.objects.create(name="Lễ năm sau", start_date=date2, days=1)
 
             url = "/api/v1/hrm/public-holidays/"
 
@@ -552,3 +553,34 @@ class TestHrmAPI:
             assert response.status_code == 200
             assert len(response.data) == 1
             assert response.data[0]["name"] == "Lễ năm sau"
+
+    def test_list_public_holidays_filter_by_year_spanning(self, mock_check, auth_client):
+        from datetime import date, datetime
+
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        this_year = timezone.now().year
+        fixed_now = timezone.make_aware(datetime(this_year, 6, 15))
+
+        with patch("django.utils.timezone.now", return_value=fixed_now):
+            PublicHoliday.objects.all().delete()
+
+            # Create a holiday that starts Dec 30 of this year with 5 days
+            # So it spans into next year (Dec 30, Dec 31, Jan 1, Jan 2, Jan 3)
+            PublicHoliday.objects.create(name="Tết Tây Liên Năm", start_date=date(this_year, 12, 30), days=5)
+
+            url = "/api/v1/hrm/public-holidays/"
+
+            # Verify that filtering by this year includes the holiday
+            response_this = auth_client.get(url, {"year": this_year})
+            assert response_this.status_code == 200
+            assert len(response_this.data) == 1
+            assert response_this.data[0]["name"] == "Tết Tây Liên Năm"
+
+            # Verify that filtering by next year also includes the holiday
+            response_next = auth_client.get(url, {"year": this_year + 1})
+            assert response_next.status_code == 200
+            assert len(response_next.data) == 1
+            assert response_next.data[0]["name"] == "Tết Tây Liên Năm"

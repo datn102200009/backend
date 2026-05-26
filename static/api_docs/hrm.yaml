@@ -463,9 +463,11 @@ components:
           format: uuid
         name:
           type: string
-        date:
+        start_date:
           type: string
           format: date
+        days:
+          type: integer
         description:
           type: string
           nullable: true
@@ -1427,7 +1429,7 @@ paths:
           required: false
           schema:
             type: integer
-          description: Lọc ngày nghỉ lễ theo năm cụ thể.
+          description: Lọc ngày nghỉ lễ theo năm cụ thể. Bao gồm cả các ngày nghỉ lễ kéo dài vắt qua ranh giới năm.
       responses:
         '200':
           description: Thành công
@@ -1452,15 +1454,18 @@ paths:
               type: object
               required:
                 - name
-                - date
+                - start_date
               properties:
                 name:
                   type: string
                   example: "Tết Nguyên Đán"
-                date:
+                start_date:
                   type: string
                   format: date
                   example: "2026-02-17"
+                days:
+                  type: integer
+                  example: 5
                 description:
                   type: string
                   example: "Nghỉ Tết Nguyên Đán 2026"
@@ -1512,15 +1517,18 @@ paths:
               type: object
               required:
                 - name
-                - date
+                - start_date
               properties:
                 name:
                   type: string
                   example: "Tết Nguyên Đán (Sửa)"
-                date:
+                start_date:
                   type: string
                   format: date
                   example: "2026-02-17"
+                days:
+                  type: integer
+                  example: 5
                 description:
                   type: string
                   example: "Nghỉ Tết Nguyên Đán 2026 điều chỉnh"

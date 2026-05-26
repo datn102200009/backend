@@ -1108,7 +1108,7 @@ class TestHrmPermissionAndBypass:
         admin = UserFactory(username="admin_payroll")
 
         # Create a public holiday in 2026-05
-        PublicHoliday.objects.create(name="Tết Đoan Ngọ", date=date(2026, 5, 5))
+        PublicHoliday.objects.create(name="Tết Đoan Ngọ", start_date=date(2026, 5, 5), days=1)
 
         # Initialize slip
         slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
@@ -1131,3 +1131,58 @@ class TestHrmPermissionAndBypass:
 
         # Assert 2: They have a working record, so they get 1 day of base salary (no double credit for holiday)
         assert calculated_slip.base_salary == Decimal("500000.00")
+
+    def test_payroll_calculate_salary_with_multi_day_public_holiday(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8801",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_multi")
+
+        # Create a 3-day public holiday in 2026-05 (May 1st, 2nd, 3rd)
+        PublicHoliday.objects.create(name="Đại Lễ 30/4-1/5", start_date=date(2026, 5, 1), days=3)
+
+        # Initialize slip
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act: Calculate salary without any attendance records
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert: Employee should receive 3.0 paid leave days dynamically from the multi-day public holiday
+        calculated_slip.refresh_from_db()
+        # 3 days of base salary = 13,000,000 / 26 * 3 = 1,500,000
+        assert calculated_slip.base_salary == Decimal("1500000.00")
+        assert calculated_slip.net_pay == Decimal("1500000.00")
+
+    def test_payroll_calculate_salary_with_spanning_public_holiday(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8802",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_spanning")
+
+        # Create a 3-day public holiday starting on last day of April (April 30th) spanning into May
+        # April 30, May 1, May 2
+        PublicHoliday.objects.create(name="Ngày Lễ Kéo Dài", start_date=date(2026, 4, 30), days=3)
+
+        # Initialize slip for May (2026-05)
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act: Calculate salary without any attendance records
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert: Employee should receive 2.0 paid leave days (May 1st & May 2nd) dynamically from the public holiday
+        calculated_slip.refresh_from_db()
+        # 2 days of base salary = 13,000,000 / 26 * 2 = 1,000,000
+        assert calculated_slip.base_salary == Decimal("1000000.00")
+        assert calculated_slip.net_pay == Decimal("1000000.00")
