@@ -19,7 +19,7 @@ class Attendance(BaseModel):
     ]
 
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="attendances")
-    date = models.DateField()
+    date = models.DateField(db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     work_hours = models.DecimalField(max_digits=4, decimal_places=2, default=8.00)
     overtime_hours = models.DecimalField(max_digits=4, decimal_places=2, default=0.00)

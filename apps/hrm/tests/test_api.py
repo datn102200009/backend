@@ -497,6 +497,39 @@ class TestHrmAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Không được chọn ngày nghỉ lễ trong quá khứ." in response.data["error"]
 
+    def test_update_public_holiday_ongoing_or_past_fails(self, mock_check, auth_client):
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        # Ngày nghỉ lễ đang diễn ra (bắt đầu hôm nay)
+        today = timezone.now().date()
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", start_date=today, days=1)
+
+        url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
+        data = {"name": "Tết Dương Lịch Sửa Đổi"}
+        response = auth_client.patch(url, data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "Không được phép chỉnh sửa hoặc xóa ngày nghỉ lễ trong quá khứ hoặc đang diễn ra." in response.data["error"]
+        )
+
+    def test_delete_public_holiday_ongoing_or_past_fails(self, mock_check, auth_client):
+        from django.utils import timezone
+
+        from apps.hrm.models import PublicHoliday
+
+        # Ngày nghỉ lễ đang diễn ra (bắt đầu hôm nay)
+        today = timezone.now().date()
+        holiday = PublicHoliday.objects.create(name="Tết Dương Lịch", start_date=today, days=1)
+
+        url = f"/api/v1/hrm/public-holidays/{holiday.id}/"
+        response = auth_client.delete(url)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "Không được phép chỉnh sửa hoặc xóa ngày nghỉ lễ trong quá khứ hoặc đang diễn ra." in response.data["error"]
+        )
+
     def test_list_public_holidays_filter_by_year(self, mock_check, auth_client):
         from datetime import date, datetime, timedelta
         from unittest.mock import patch

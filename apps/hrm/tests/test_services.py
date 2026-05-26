@@ -605,6 +605,22 @@ class TestPayrollAndRewardDisciplineServices:
             assert log is not None
             assert log.action == "create"
 
+    def test_payroll_initialize_period_already_exists(self):
+        # Arrange
+        from apps.common.xlib.exceptions import ValidationException
+
+        employee = EmployeeFactory(employee_id="EMP7003", employment_status="active")
+        admin = UserFactory(username="admin_payroll")
+
+        # Khởi tạo trước một phiếu lương để kỳ lương này xem như đã tồn tại
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as excinfo:
+            payroll_initialize_period(salary_period="2026-05", creator=admin)
+
+        assert "Kỳ lương đã được khởi tạo trước đó." in str(excinfo.value)
+
     def test_payroll_calculate_salary_with_all_components(self):
         # Arrange
         employee = EmployeeFactory(
