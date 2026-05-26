@@ -1247,8 +1247,15 @@ def payroll_calculate_salary(
         total_ot_hours += att.overtime_hours or Decimal("0.00")
 
     # Tự động tính 100% lương cho ngày nghỉ lễ nếu chưa có chấm công
+    from django.db.models import Max
+
+    max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
+    period_start_date = date(year, month, 1)
+
     credited_holiday_dates = set()
-    public_holidays = PublicHoliday.objects.filter(start_date__lte=period_end_date)
+    public_holidays = PublicHoliday.objects.filter(
+        start_date__lte=period_end_date, start_date__gte=period_start_date - timedelta(days=int(max_days))
+    )
     for holiday in public_holidays:
         for i in range(holiday.days):
             h_date = holiday.start_date + timedelta(days=i)

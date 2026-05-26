@@ -1429,7 +1429,7 @@ paths:
           required: false
           schema:
             type: integer
-          description: Lọc ngày nghỉ lễ theo năm cụ thể.
+          description: Lọc ngày nghỉ lễ theo năm cụ thể. Bao gồm cả các ngày nghỉ lễ kéo dài vắt qua ranh giới năm.
       responses:
         '200':
           description: Thành công

@@ -1158,3 +1158,31 @@ class TestHrmPermissionAndBypass:
         # 3 days of base salary = 13,000,000 / 26 * 3 = 1,500,000
         assert calculated_slip.base_salary == Decimal("1500000.00")
         assert calculated_slip.net_pay == Decimal("1500000.00")
+
+    def test_payroll_calculate_salary_with_spanning_public_holiday(self):
+        from apps.hrm.models import PublicHoliday
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP8802",
+            salary_base=Decimal("13000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_spanning")
+
+        # Create a 3-day public holiday starting on last day of April (April 30th) spanning into May
+        # April 30, May 1, May 2
+        PublicHoliday.objects.create(name="Ngày Lễ Kéo Dài", start_date=date(2026, 4, 30), days=3)
+
+        # Initialize slip for May (2026-05)
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05")
+
+        # Act: Calculate salary without any attendance records
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip.id, creator=admin)
+
+        # Assert: Employee should receive 2.0 paid leave days (May 1st & May 2nd) dynamically from the public holiday
+        calculated_slip.refresh_from_db()
+        # 2 days of base salary = 13,000,000 / 26 * 2 = 1,000,000
+        assert calculated_slip.base_salary == Decimal("1000000.00")
+        assert calculated_slip.net_pay == Decimal("1000000.00")

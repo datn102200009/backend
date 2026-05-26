@@ -712,12 +712,25 @@ def public_holiday_list_create_view(request):
         if year:
             try:
                 year_val = int(year)
-                from datetime import timedelta
+                from datetime import date, timedelta
 
+                from django.db.models import Max
+
+                year_start_date = date(year_val, 1, 1)
+                year_end_date = date(year_val, 12, 31)
+
+                max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
+
+                # Lọc thô ở database để tăng tốc độ truy vấn
+                qs = qs.filter(
+                    start_date__lte=year_end_date, start_date__gte=year_start_date - timedelta(days=int(max_days))
+                )
+
+                # Lọc chính xác ở Python để độc lập với DB loại nào
                 qs = [
                     h
                     for h in qs
-                    if h.start_date.year == year_val or (h.start_date + timedelta(days=h.days - 1)).year == year_val
+                    if h.start_date <= year_end_date and (h.start_date + timedelta(days=h.days - 1)) >= year_start_date
                 ]
             except ValueError:
                 pass
