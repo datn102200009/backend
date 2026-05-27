@@ -69,10 +69,27 @@ class Employee(BaseModel):
     employee_id = models.CharField(max_length=50, unique=True)
     full_name = models.CharField(max_length=255)
     department = models.CharField(max_length=255, null=True, blank=True)
+    position_title = models.CharField(max_length=255, null=True, blank=True)
     salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     is_union_member = models.BooleanField(default=False)
     email = models.EmailField(null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
+    gender = models.CharField(
+        max_length=10,
+        choices=[("male", "Male"), ("female", "Female"), ("other", "Other")],
+        null=True,
+        blank=True,
+    )
+    date_of_birth = models.DateField(null=True, blank=True)
+    address = models.TextField(null=True, blank=True)
+    emergency_contact = models.TextField(null=True, blank=True)
+    join_date = models.DateField(null=True, blank=True)
+    leave_date = models.DateField(null=True, blank=True)
+    employment_status = models.CharField(
+        max_length=20,
+        choices=[("active", "Active"), ("inactive", "Inactive")],
+        default="active",
+    )
 
     class Meta:
         db_table = "employee"

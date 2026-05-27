@@ -113,6 +113,12 @@ TIME_ZONE = "Asia/Ho_Chi_Minh"
 USE_I18N = True
 USE_TZ = True
 
+# HRM Custom Settings for Public Holidays and Work Schedule
+# Chế độ làm việc của doanh nghiệp cố định 6 ngày / tuần
+HRM_WEEKLY_REST_DAYS = [6]  # Chỉ nghỉ Chủ Nhật (6: Sunday)
+HRM_STANDARD_WORKING_DAYS = 26  # Công chuẩn cố định là 26 ngày
+HRM_COMPENSATORY_OVERTIME_RATE = 2.0  # Hệ số làm thêm giờ ngày nghỉ bù là 200%
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 STATIC_URL = "/static/"
