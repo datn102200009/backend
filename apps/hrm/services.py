@@ -1338,6 +1338,11 @@ def payroll_initialize_period(
     if creator:
         PermissionChecker.check_permission(creator, "finance.add_salaryslip")
 
+    from apps.finance.models import SalarySlip
+
+    if SalarySlip.objects.filter(salary_period=salary_period).exists():
+        raise ValidationException("Kỳ lương đã được khởi tạo trước đó.")
+
     active_employees = Employee.objects.filter(employment_status="active")
     slips = []
 
@@ -1800,6 +1805,9 @@ def public_holiday_update(
     if updater:
         PermissionChecker.check_permission(updater, "hrm.change_publicholiday")
 
+    if holiday.start_date <= timezone.now().date():
+        raise ValidationException("Không được phép chỉnh sửa hoặc xóa ngày nghỉ lễ trong quá khứ hoặc đang diễn ra.")
+
     old_value = {
         "name": holiday.name,
         "start_date": str(holiday.start_date),
@@ -1862,6 +1870,9 @@ def public_holiday_delete(
     """
     if deleter:
         PermissionChecker.check_permission(deleter, "hrm.delete_publicholiday")
+
+    if holiday.start_date <= timezone.now().date():
+        raise ValidationException("Không được phép chỉnh sửa hoặc xóa ngày nghỉ lễ trong quá khứ hoặc đang diễn ra.")
 
     old_value = {
         "name": holiday.name,
