@@ -92,6 +92,11 @@ components:
           type: string
           nullable: true
           description: Tên role của user
+        permissions:
+          type: array
+          items:
+            type: string
+          description: Danh sách mã quyền của user
 security:
   - bearerAuth: []
 paths:
