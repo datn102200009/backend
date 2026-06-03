@@ -197,9 +197,10 @@ def validate_sales_order_credit(sales_order_id: str) -> bool:
         return False
 
     current_debt = get_customer_current_debt(str(customer.id))
-    projected_debt = current_debt + order.total_amount
+    projected_credit_amount = order.total_amount - order.advance_paid_amount
+    projected_debt = current_debt + projected_credit_amount
 
-    if customer.credit_limit > 0 and projected_debt > customer.credit_limit:
+    if projected_debt > customer.credit_limit:
         return False
 
     if check_customer_overdue_debts(str(customer.id), max_days=30):

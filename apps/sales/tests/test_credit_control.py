@@ -210,3 +210,45 @@ class TestCreditControl:
             # CFO user có quyền
             order_res = approve_credit_bypass(user=cfo_user, order_id=str(order.id))
             assert order_res.status == SalesOrder.Status.PENDING
+
+    def test_approve_order_with_zero_credit_limit(self, setup_data):
+        user, customer, item = setup_data
+        customer.credit_limit = Decimal("0.00")
+        customer.save()
+
+        # 1. Trường hợp không ứng trước (phát sinh nợ) -> Bị chặn
+        order_no_advance = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_no_advance.id))
+        order_no_advance.refresh_from_db()
+        assert order_no_advance.status == SalesOrder.Status.PENDING_CREDIT_APPROVAL
+
+        # 2. Trường hợp ứng trước một phần (< 100%) -> Bị chặn
+        order_partial_advance = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        order_partial_advance.advance_paid_amount = Decimal("50.00")
+        order_partial_advance.save()
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_partial_advance.id))
+        order_partial_advance.refresh_from_db()
+        assert order_partial_advance.status == SalesOrder.Status.PENDING_CREDIT_APPROVAL
+
+        # 3. Trường hợp ứng trước 100% -> Được duyệt thành công (PAID_UNSHIPPED do chưa giao hàng)
+        order_full_advance = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        order_full_advance.advance_paid_amount = Decimal("100.00")
+        order_full_advance.save()
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_full_advance.id))
+        order_full_advance.refresh_from_db()
+        assert order_full_advance.status == SalesOrder.Status.PAID_UNSHIPPED

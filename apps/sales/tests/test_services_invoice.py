@@ -17,7 +17,7 @@ class TestSalesInvoiceServices:
     @pytest.fixture
     def setup_data(self):
         user = UserFactory()
-        customer = CustomerFactory()
+        customer = CustomerFactory(credit_limit=Decimal("10000.00"))
         item = ItemFactory()
         warehouse = WarehouseFactory()
 

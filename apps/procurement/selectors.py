@@ -5,7 +5,7 @@ from apps.procurement.models import Supplier
 
 
 def supplier_list() -> QuerySet:
-    return Supplier.objects.filter(is_active=True).order_by("-created_at")
+    return Supplier.objects.filter(is_active=True).order_by("-created_at", "id")
 
 
 def supplier_detail(*, supplier_id: str) -> Supplier:

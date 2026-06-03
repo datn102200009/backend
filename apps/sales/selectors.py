@@ -13,7 +13,7 @@ def sales_order_list() -> QuerySet:
     """
     Returns a queryset of SalesOrder, optimized with select_related.
     """
-    return SalesOrder.objects.select_related("customer").order_by("-created_at")
+    return SalesOrder.objects.select_related("customer").order_by("-created_at", "id")
 
 
 def sales_order_detail(*, order_id: str) -> SalesOrder:
@@ -27,7 +27,7 @@ def sales_invoice_list() -> QuerySet:
     """
     Returns a queryset of SalesInvoice, optimized with select_related.
     """
-    return SalesInvoice.objects.select_related("customer", "order").order_by("-created_at")
+    return SalesInvoice.objects.select_related("customer", "order").order_by("-created_at", "id")
 
 
 def sales_invoice_detail(*, invoice_id: str) -> SalesInvoice:
