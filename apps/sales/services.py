@@ -183,10 +183,10 @@ def sales_order_update_status(order: SalesOrder) -> None:
     order.save()
 
 
-def validate_sales_order_credit(sales_order_id: str) -> bool:
+def validate_sales_order_credit(sales_order_id: str) -> tuple[bool, str]:
     """
     Kiểm tra tín dụng của khách hàng liên quan đến đơn bán hàng.
-    Trả về True nếu tín dụng hợp lệ, False nếu bị khóa nợ, vượt hạn mức hoặc có nợ quá hạn > 30 ngày.
+    Trả về (True, "") nếu tín dụng hợp lệ, (False, lý do) nếu bị khóa nợ, vượt hạn mức hoặc có nợ quá hạn > 30 ngày.
     """
     order = SalesOrder.objects.filter(id=sales_order_id).select_related("customer").first()
     if not order:
@@ -194,19 +194,22 @@ def validate_sales_order_credit(sales_order_id: str) -> bool:
 
     customer = order.customer
     if customer.is_credit_locked:
-        return False
+        return False, "Khách hàng bị khóa tín dụng chủ động"
 
     current_debt = get_customer_current_debt(str(customer.id))
-    projected_credit_amount = order.total_amount - order.advance_paid_amount
+    projected_credit_amount = max(Decimal("0.00"), order.total_amount - order.advance_paid_amount)
     projected_debt = current_debt + projected_credit_amount
 
     if projected_debt > customer.credit_limit:
-        return False
+        return (
+            False,
+            f"Vượt hạn mức tín dụng công nợ (Hạn mức: {customer.credit_limit}, Dư nợ dự kiến: {projected_debt})",
+        )
 
     if check_customer_overdue_debts(str(customer.id), max_days=30):
-        return False
+        return False, "Có hóa đơn quá hạn thanh toán trên 30 ngày"
 
-    return True
+    return True, ""
 
 
 @transaction.atomic
@@ -227,7 +230,7 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
         raise ValidationException("Chỉ có thể duyệt đơn hàng đang ở trạng thái Nháp.")
 
     # Kiểm tra tín dụng trước khi duyệt
-    is_credit_valid = validate_sales_order_credit(order_id)
+    is_credit_valid, credit_block_reason = validate_sales_order_credit(order_id)
 
     if not is_credit_valid:
         order.status = SalesOrder.Status.PENDING_CREDIT_APPROVAL
@@ -238,7 +241,7 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
             action="approve",
             table_name="sales_order",
             record_id=str(order.id),
-            new_value={"status": order.status, "message": "Bị khóa tín dụng công nợ"},
+            new_value={"status": order.status, "message": f"Bị khóa tín dụng công nợ: {credit_block_reason}"},
         )
         return order
 

@@ -252,3 +252,70 @@ class TestCreditControl:
             sales_order_approve(user=user, order_id=str(order_full_advance.id))
         order_full_advance.refresh_from_db()
         assert order_full_advance.status == SalesOrder.Status.PAID_UNSHIPPED
+
+    def test_credit_control_reasons_and_negative_clamp(self, setup_data):
+        from apps.accounts.models import SystemLog
+
+        user, customer, item = setup_data
+
+        # 1. Test lý do chặn chi tiết trong log khi vượt hạn mức
+        customer.credit_limit = Decimal("50.00")
+        customer.save()
+        order_over_limit = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_over_limit.id))
+
+        log_limit = SystemLog.objects.filter(record_id=str(order_over_limit.id), action="approve").first()
+        assert log_limit is not None
+        assert "Vượt hạn mức tín dụng công nợ" in log_limit.new_value["message"]
+
+        # 2. Test lý do chặn chi tiết trong log khi bị khóa chủ động
+        customer.credit_limit = Decimal("5000.00")
+        customer.is_credit_locked = True
+        customer.save()
+        order_locked = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_locked.id))
+
+        log_locked = SystemLog.objects.filter(record_id=str(order_locked.id), action="approve").first()
+        assert log_locked is not None
+        assert "Khách hàng bị khóa tín dụng chủ động" in log_locked.new_value["message"]
+
+        # 3. Test clamp âm: advance_paid_amount > total_amount
+        customer.is_credit_locked = False
+        customer.credit_limit = Decimal("0.00")
+        customer.save()
+
+        # Tạo đơn hàng nợ (sẽ làm current_debt > 0)
+        order_debt = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        # Duyệt đặc cách để phát sinh nợ
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_debt.id))
+            approve_credit_bypass(user=user, order_id=str(order_debt.id))
+
+        # Bây giờ current_debt = 100.00. Tạo đơn hàng mới có total = 100 và cọc 150 (overpay)
+        order_overpay = sales_order_create(
+            user=user,
+            customer_id=str(customer.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("1"), "unit_price": Decimal("100.00")}],
+        )
+        order_overpay.advance_paid_amount = Decimal("150.00")
+        order_overpay.save()
+
+        with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
+            sales_order_approve(user=user, order_id=str(order_overpay.id))
+
+        order_overpay.refresh_from_db()
+        assert order_overpay.status == SalesOrder.Status.PENDING_CREDIT_APPROVAL
