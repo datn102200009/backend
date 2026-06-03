@@ -31,7 +31,7 @@ def bom_list(
     Returns:
         Optimized QuerySet
     """
-    qs = BOM.objects.select_related("item").prefetch_related("items__item").order_by("-created_at")
+    qs = BOM.objects.select_related("item").prefetch_related("items__item").order_by("-created_at", "id")
 
     if is_active is not None:
         qs = qs.filter(is_active=is_active)
@@ -80,7 +80,7 @@ def work_order_list(
     qs = WorkOrder.objects.select_related(
         "bom",
         "production_item",
-    ).order_by("-created_at")
+    ).order_by("-created_at", "id")
 
     if status:
         qs = qs.filter(status=status)

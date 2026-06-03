@@ -30,6 +30,9 @@ class CustomerListCreateAPIView(APIView):
             contact_email=serializer.validated_data.get("contact_email"),
             contact_phone=serializer.validated_data.get("contact_phone"),
             address=serializer.validated_data.get("address"),
+            credit_limit=serializer.validated_data.get("credit_limit"),
+            payment_terms=serializer.validated_data.get("payment_terms"),
+            is_credit_locked=serializer.validated_data.get("is_credit_locked"),
         )
         return Response(CustomerSerializer(customer).data, status=status.HTTP_201_CREATED)
 
@@ -55,6 +58,9 @@ class CustomerDetailUpdateDeleteAPIView(APIView):
             contact_email=serializer.validated_data.get("contact_email"),
             contact_phone=serializer.validated_data.get("contact_phone"),
             address=serializer.validated_data.get("address"),
+            credit_limit=serializer.validated_data.get("credit_limit"),
+            payment_terms=serializer.validated_data.get("payment_terms"),
+            is_credit_locked=serializer.validated_data.get("is_credit_locked"),
         )
         return Response(CustomerSerializer(customer).data)
 

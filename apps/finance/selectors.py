@@ -16,7 +16,7 @@ def cash_flow_list() -> QuerySet:
     """
     return CashFlowTransaction.objects.select_related(
         "purchase_order", "sales_order", "purchase_invoice", "sales_invoice"
-    ).order_by("-payment_date", "-created_at")
+    ).order_by("-payment_date", "-created_at", "id")
 
 
 def cash_flow_detail(*, transaction_id: str) -> CashFlowTransaction:

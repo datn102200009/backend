@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from apps.sales.selectors import sales_invoice_detail, sales_invoice_list, sales_order_detail, sales_order_list
 from apps.sales.services import (
+    approve_credit_bypass,
     sales_order_approve,
     sales_order_create,
     sales_order_delete,
@@ -85,6 +86,14 @@ class SalesOrderApproveAPIView(APIView):
 
     def post(self, request, pk, *args, **kwargs):
         order = sales_order_approve(user=request.user, order_id=str(pk))
+        return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
+
+
+class SalesOrderApproveCreditBypassAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        order = approve_credit_bypass(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
 

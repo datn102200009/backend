@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 
 from apps.accounts.models import User
@@ -17,6 +19,9 @@ def customer_create(
     contact_email: str = None,
     contact_phone: str = None,
     address: str = None,
+    credit_limit: Decimal = Decimal("0.00"),
+    payment_terms: str = "NET30",
+    is_credit_locked: bool = False,
 ) -> Customer:
     PermissionChecker.check_permission(user, "crm.customer_create")
 
@@ -30,6 +35,9 @@ def customer_create(
         contact_email=contact_email,
         contact_phone=contact_phone,
         address=address,
+        credit_limit=credit_limit,
+        payment_terms=payment_terms,
+        is_credit_locked=is_credit_locked,
     )
 
     create_system_log(
@@ -37,7 +45,13 @@ def customer_create(
         action="create",
         table_name="customer",
         record_id=str(customer.id),
-        new_value={"name": name, "customer_name": customer_name},
+        new_value={
+            "name": name,
+            "customer_name": customer_name,
+            "credit_limit": str(credit_limit),
+            "payment_terms": payment_terms,
+            "is_credit_locked": is_credit_locked,
+        },
     )
     return customer
 
@@ -53,6 +67,9 @@ def customer_update(
     contact_email: str = None,
     contact_phone: str = None,
     address: str = None,
+    credit_limit: Decimal = None,
+    payment_terms: str = None,
+    is_credit_locked: bool = None,
 ) -> Customer:
     PermissionChecker.check_permission(user, "crm.customer_update")
 
@@ -69,6 +86,14 @@ def customer_update(
     customer.contact_email = contact_email
     customer.contact_phone = contact_phone
     customer.address = address
+
+    if credit_limit is not None:
+        customer.credit_limit = credit_limit
+    if payment_terms is not None:
+        customer.payment_terms = payment_terms
+    if is_credit_locked is not None:
+        customer.is_credit_locked = is_credit_locked
+
     customer.save()
 
     create_system_log(
@@ -76,7 +101,13 @@ def customer_update(
         action="update",
         table_name="customer",
         record_id=str(customer.id),
-        new_value={"name": name, "customer_name": customer_name},
+        new_value={
+            "name": name,
+            "customer_name": customer_name,
+            "credit_limit": str(customer.credit_limit),
+            "payment_terms": customer.payment_terms,
+            "is_credit_locked": customer.is_credit_locked,
+        },
     )
     return customer
 

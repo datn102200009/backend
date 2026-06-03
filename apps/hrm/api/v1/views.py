@@ -362,7 +362,7 @@ def leave_request_list_view(request):
     status_param = request.query_params.get("status")
     employee_id = request.query_params.get("employee_id")
 
-    qs = LeaveRequest.objects.all().select_related("employee", "approved_by").order_by("-created_at")
+    qs = LeaveRequest.objects.all().select_related("employee", "approved_by").order_by("-created_at", "id")
 
     if status_param:
         qs = qs.filter(status=status_param)
@@ -559,7 +559,7 @@ def reward_list_create_view(request):
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_rewardrecord")
         employee_id = request.query_params.get("employee_id")
-        qs = RewardRecord.objects.all().select_related("employee").order_by("-reward_date")
+        qs = RewardRecord.objects.all().select_related("employee").order_by("-reward_date", "-created_at", "id")
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
         serializer = RewardRecordOutputSerializer(qs, many=True)
@@ -596,7 +596,7 @@ def discipline_list_create_view(request):
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_disciplinerecord")
         employee_id = request.query_params.get("employee_id")
-        qs = DisciplineRecord.objects.all().select_related("employee").order_by("-discipline_date")
+        qs = DisciplineRecord.objects.all().select_related("employee").order_by("-discipline_date", "-created_at", "id")
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
         serializer = DisciplineRecordOutputSerializer(qs, many=True)
@@ -660,7 +660,7 @@ def public_holiday_list_create_view(request):
 
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_publicholiday")
-        qs = PublicHoliday.objects.all().order_by("-start_date")
+        qs = PublicHoliday.objects.all().order_by("-start_date", "id")
         year = request.query_params.get("year")
         if year:
             try:

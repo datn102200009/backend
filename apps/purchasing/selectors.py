@@ -7,7 +7,7 @@ def purchase_order_list() -> QuerySet:
     """
     Returns a queryset of PurchaseOrder, optimized with select_related.
     """
-    return PurchaseOrder.objects.select_related("vendor").order_by("-created_at")
+    return PurchaseOrder.objects.select_related("vendor").order_by("-created_at", "id")
 
 
 def purchase_order_detail(*, order_id: str) -> PurchaseOrder:
@@ -21,7 +21,7 @@ def purchase_invoice_list() -> QuerySet:
     """
     Returns a queryset of PurchaseInvoice, optimized with select_related.
     """
-    return PurchaseInvoice.objects.select_related("vendor", "order").order_by("-created_at")
+    return PurchaseInvoice.objects.select_related("vendor", "order").order_by("-created_at", "id")
 
 
 def purchase_invoice_detail(*, invoice_id: str) -> PurchaseInvoice:

@@ -47,7 +47,7 @@ def stock_entry_list_by_status(
     if purpose:
         qs = qs.filter(purpose=purpose)
 
-    return qs.order_by("-created_at")
+    return qs.order_by("-created_at", "id")
 
 
 def stock_entry_detail_list(stock_entry_id: str) -> QuerySet:

@@ -5,7 +5,7 @@ from apps.crm.models import Customer
 
 
 def customer_list() -> QuerySet:
-    return Customer.objects.filter(is_active=True).order_by("-created_at")
+    return Customer.objects.filter(is_active=True).order_by("-created_at", "id")
 
 
 def customer_detail(*, customer_id: str) -> Customer:
