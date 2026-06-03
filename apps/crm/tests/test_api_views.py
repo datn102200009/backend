@@ -39,12 +39,18 @@ class TestCustomerAPIViews:
             "contact_email": "c1@example.com",
             "contact_phone": "0987654321",
             "address": "123 Street",
+            "credit_limit": 50000000.00,
+            "payment_terms": "NET30",
+            "is_credit_locked": True,
         }
         response = client.post(url, payload)
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["name"] == "C001"
         assert response.data["customer_name"] == "Customer 1"
+        assert float(response.data["credit_limit"]) == 50000000.00
+        assert response.data["payment_terms"] == "NET30"
+        assert response.data["is_credit_locked"] is True
 
     def test_get_customer_detail(self):
         from rest_framework.test import APIClient
@@ -69,12 +75,21 @@ class TestCustomerAPIViews:
 
         customer = CustomerFactory(name="C001", customer_name="Customer 1")
         url = reverse("customer-detail-update-delete", kwargs={"pk": customer.id})
-        payload = {"name": "C001-NEW", "customer_name": "Customer 1 Updated"}
+        payload = {
+            "name": "C001-NEW",
+            "customer_name": "Customer 1 Updated",
+            "credit_limit": 100000000.00,
+            "payment_terms": "NET45",
+            "is_credit_locked": False,
+        }
         response = client.put(url, payload)
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["name"] == "C001-NEW"
         assert response.data["customer_name"] == "Customer 1 Updated"
+        assert float(response.data["credit_limit"]) == 100000000.00
+        assert response.data["payment_terms"] == "NET45"
+        assert response.data["is_credit_locked"] is False
 
     def test_delete_customer(self):
         from rest_framework.test import APIClient

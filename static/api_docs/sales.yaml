@@ -46,7 +46,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [draft, pending, paid_unshipped, shipped_unpaid, completed, cancelled]
+          enum: [draft, pending, pending_credit_approval, paid_unshipped, shipped_unpaid, completed, cancelled]
         lines:
           type: array
           minItems: 1
@@ -98,7 +98,7 @@ components:
           type: string
         status:
           type: string
-          enum: [draft, pending, paid_unshipped, shipped_unpaid, completed, cancelled]
+          enum: [draft, pending, pending_credit_approval, paid_unshipped, shipped_unpaid, completed, cancelled]
         total_amount:
           type: number
           format: double
@@ -412,6 +412,35 @@ paths:
       responses:
         '200':
           description: Đơn bán hàng đã được duyệt thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sales/orders/{pk}/approve-credit-bypass/:
+    post:
+      summary: Approve Credit Bypass for Sales Order
+      description: Phê duyệt tín dụng đặc cách cho Đơn bán hàng (chuyển sang PENDING, sinh tự động Hóa đơn bán hàng và Phiếu xuất kho nháp).
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Đơn bán hàng đã được duyệt đặc cách tín dụng thành công.
           content:
             application/json:
               schema:

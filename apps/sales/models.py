@@ -9,6 +9,7 @@ class SalesOrder(BaseModel):
     class Status(models.TextChoices):
         DRAFT = "draft", "Nháp"
         PENDING = "pending", "Chờ xử lý"
+        PENDING_CREDIT_APPROVAL = "pending_credit_approval", "Chờ duyệt tín dụng"
         PAID_UNSHIPPED = "paid_unshipped", "Đã nhận tiền, chưa giao hàng"
         SHIPPED_UNPAID = "shipped_unpaid", "Đã giao hàng, chưa thanh toán"
         COMPLETED = "completed", "Hoàn tất"
@@ -17,7 +18,7 @@ class SalesOrder(BaseModel):
     customer = models.ForeignKey(
         Customer, on_delete=models.PROTECT, related_name="sales_orders", verbose_name="Khách hàng"
     )
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, verbose_name="Trạng thái")
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     advance_paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã ứng trước")
 
@@ -72,7 +73,9 @@ class SalesInvoice(BaseModel):
     customer = models.ForeignKey(
         Customer, on_delete=models.PROTECT, related_name="sales_invoices", verbose_name="Khách hàng"
     )
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNPAID, verbose_name="Trạng thái")
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.UNPAID, db_index=True, verbose_name="Trạng thái"
+    )
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã thanh toán")
 
