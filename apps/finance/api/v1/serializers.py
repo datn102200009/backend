@@ -11,6 +11,7 @@ class CashFlowTransactionSerializer(serializers.ModelSerializer):
             "name",
             "payment_type",
             "category",
+            "payment_method",
             "amount",
             "payment_date",
             "remarks",
@@ -29,6 +30,16 @@ class CashFlowInputSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
     payment_date = serializers.DateField()
     category = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    payment_method = serializers.ChoiceField(
+        choices=[
+            ("cash", "Cash"),
+            ("bank_transfer", "Bank Transfer"),
+            ("credit_card", "Credit Card"),
+            ("other", "Other"),
+        ],
+        default="bank_transfer",
+        required=False,
+    )
 
     purchase_order_id = serializers.UUIDField(required=False, allow_null=True)
     sales_order_id = serializers.UUIDField(required=False, allow_null=True)

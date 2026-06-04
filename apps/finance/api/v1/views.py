@@ -27,6 +27,7 @@ class CashFlowListCreateAPIView(APIView):
             amount=data["amount"],
             payment_date=data["payment_date"],
             category=data.get("category"),
+            payment_method=data.get("payment_method", "bank_transfer"),
             purchase_order_id=data.get("purchase_order_id") and str(data["purchase_order_id"]),
             sales_order_id=data.get("sales_order_id") and str(data["sales_order_id"]),
             purchase_invoice_id=data.get("purchase_invoice_id") and str(data["purchase_invoice_id"]),

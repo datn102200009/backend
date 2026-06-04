@@ -36,6 +36,10 @@ components:
         category:
           type: string
           maxLength: 100
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer, credit_card, other]
+          default: bank_transfer
         purchase_order_id:
           type: string
           format: uuid

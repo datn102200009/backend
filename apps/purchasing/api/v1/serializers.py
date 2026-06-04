@@ -63,6 +63,9 @@ class PurchaseOrderLineInputSerializer(serializers.Serializer):
 class PurchaseOrderInputSerializer(serializers.Serializer):
     vendor_id = serializers.UUIDField()
     status = serializers.ChoiceField(choices=PurchaseOrder.Status.choices, required=False)
+    advance_paid_amount = serializers.DecimalField(
+        max_digits=15, decimal_places=2, required=False, default=0, min_value=0
+    )
     lines = serializers.ListField(child=PurchaseOrderLineInputSerializer(), allow_empty=False)
 
 

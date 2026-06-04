@@ -4,6 +4,8 @@ Services for purchasing app.
 All write operations for Purchase Orders and Purchase Invoices.
 """
 
+import uuid
+from decimal import Decimal
 from typing import Any, Dict, List
 
 from django.db import transaction
@@ -19,7 +21,9 @@ from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, Purchas
 
 
 @transaction.atomic
-def purchase_order_create(*, user: User, vendor_id: str, lines: List[Dict[str, Any]]) -> PurchaseOrder:
+def purchase_order_create(
+    *, user: User, vendor_id: str, lines: List[Dict[str, Any]], advance_paid_amount: Decimal = Decimal("0.00")
+) -> PurchaseOrder:
     """
     Khởi tạo Đơn mua hàng (Purchase Order).
     """
@@ -31,14 +35,14 @@ def purchase_order_create(*, user: User, vendor_id: str, lines: List[Dict[str, A
 
     order = PurchaseOrder.objects.create(vendor=vendor, status=PurchaseOrder.Status.DRAFT)
 
-    total_amount = 0
+    total_amount = Decimal("0.00")
     for line in lines:
         item = Item.objects.filter(id=line["item_id"]).first()
         if not item:
             raise NotFoundException(f"Sản phẩm với ID {line['item_id']} không tồn tại.")
 
-        qty = line.get("quantity", 0)
-        unit_price = line.get("unit_price", 0)
+        qty = Decimal(str(line.get("quantity", 0)))
+        unit_price = Decimal(str(line.get("unit_price", 0)))
         line_total = qty * unit_price
         total_amount += line_total
 
@@ -46,7 +50,11 @@ def purchase_order_create(*, user: User, vendor_id: str, lines: List[Dict[str, A
             order=order, item=item, quantity=qty, unit_price=unit_price, line_total=line_total
         )
 
+    if advance_paid_amount > total_amount:
+        raise ValidationException("Số tiền cọc không được lớn hơn tổng giá trị đơn hàng.")
+
     order.total_amount = total_amount
+    order.advance_paid_amount = advance_paid_amount
     order.save()
 
     create_system_log(
@@ -54,7 +62,7 @@ def purchase_order_create(*, user: User, vendor_id: str, lines: List[Dict[str, A
         action="create",
         table_name="purchase_order",
         record_id=str(order.id),
-        new_value={"status": order.status, "total": str(total_amount)},
+        new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
     )
 
     return order
@@ -62,7 +70,13 @@ def purchase_order_create(*, user: User, vendor_id: str, lines: List[Dict[str, A
 
 @transaction.atomic
 def purchase_order_update(
-    *, user: User, order_id: str, vendor_id: str, status: str, lines: List[Dict[str, Any]]
+    *,
+    user: User,
+    order_id: str,
+    vendor_id: str,
+    status: str,
+    lines: List[Dict[str, Any]],
+    advance_paid_amount: Decimal = Decimal("0.00"),
 ) -> PurchaseOrder:
     """
     Cập nhật Đơn mua hàng. Chỉ cho phép khi ở trạng thái Draft.
@@ -80,20 +94,31 @@ def purchase_order_update(
     if not vendor:
         raise NotFoundException(f"Nhà cung cấp với ID {vendor_id} không tồn tại.")
 
+    # Kiểm tra dòng tiền tạm thời để validate
+    temp_total_amount = Decimal("0.00")
+    for line in lines:
+        qty = Decimal(str(line.get("quantity", 0)))
+        unit_price = Decimal(str(line.get("unit_price", 0)))
+        temp_total_amount += qty * unit_price
+
+    if advance_paid_amount > temp_total_amount:
+        raise ValidationException("Số tiền cọc không được lớn hơn tổng giá trị đơn hàng.")
+
     order.vendor = vendor
     order.status = status
+    order.advance_paid_amount = advance_paid_amount
 
     # Xóa các line cũ và tạo mới
     order.lines.all().delete()
 
-    total_amount = 0
+    total_amount = Decimal("0.00")
     for line in lines:
         item = Item.objects.filter(id=line["item_id"]).first()
         if not item:
             raise NotFoundException(f"Sản phẩm với ID {line['item_id']} không tồn tại.")
 
-        qty = line.get("quantity", 0)
-        unit_price = line.get("unit_price", 0)
+        qty = Decimal(str(line.get("quantity", 0)))
+        unit_price = Decimal(str(line.get("unit_price", 0)))
         line_total = qty * unit_price
         total_amount += line_total
 
@@ -109,7 +134,7 @@ def purchase_order_update(
         action="update",
         table_name="purchase_order",
         record_id=str(order.id),
-        new_value={"status": order.status, "total": str(total_amount)},
+        new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
     )
 
     return order
@@ -128,6 +153,11 @@ def purchase_order_delete(*, user: User, order_id: str) -> None:
 
     if order.status != PurchaseOrder.Status.DRAFT:
         raise ValidationException("Chỉ có thể xóa hoàn toàn đơn hàng khi đang ở trạng thái Nháp.")
+
+    if order.advance_paid_amount > 0:
+        raise ValidationException(
+            "Không thể xóa đơn hàng đã phát sinh thanh toán cọc. Vui lòng hoàn trả dòng tiền cọc trước khi xóa."
+        )
 
     order_id_str = str(order.id)
     order.delete()
@@ -201,9 +231,24 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
     order.status = PurchaseOrder.Status.PENDING
     order.save()
 
-    # 2. Tạo Phiếu nhập kho nháp (Draft Stock Entry)
-    import uuid
+    # Tự động ghi nhận dòng tiền cọc (Chi tiền cọc) nếu có cọc và chưa có dòng tiền cọc
+    if order.advance_paid_amount > 0:
+        if not order.cash_flows.filter(payment_type="pay").exists():
+            from apps.finance.models import CashFlowTransaction
 
+            payment_name = f"CF-PAY-DEP-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
+            CashFlowTransaction.objects.create(
+                name=payment_name,
+                payment_type="pay",
+                category="Đặt cọc đơn hàng",
+                payment_method="bank_transfer",
+                amount=order.advance_paid_amount,
+                payment_date=order.updated_at.date(),
+                purchase_order=order,
+                remarks=f"Tự động chi tiền cọc cho đơn mua hàng {order.id} (Nhà cung cấp: {order.vendor.supplier_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {order.advance_paid_amount:,.2f}đ).",
+            )
+
+    # 2. Tạo Phiếu nhập kho nháp (Draft Stock Entry)
     from apps.inventory.models import StockEntry, StockEntryDetail
 
     stock_name = f"IN-PUR-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
@@ -256,6 +301,78 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
         table_name="purchase_order",
         record_id=str(order.id),
         new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": str(stock_entry.id)},
+    )
+
+    return order
+
+
+@transaction.atomic
+def purchase_order_cancel(*, user: User, order_id: str) -> PurchaseOrder:
+    """
+    Hủy Đơn mua hàng (Purchase Order) đã duyệt bằng cách:
+    1. Chuyển trạng thái các StockEntry liên quan sang cancelled hoặc đối ứng.
+    2. Đảo ngược các CashFlowTransaction liên quan.
+    3. Hủy các Invoice liên quan và cập nhật paid_amount về 0.
+    4. Đổi trạng thái PO sang cancelled.
+    """
+    PermissionChecker.check_permission(user, "purchasing.cancel_order")
+
+    order = PurchaseOrder.objects.select_for_update().filter(id=order_id).first()
+    if not order:
+        raise NotFoundException("Đơn mua hàng không tồn tại.")
+
+    if order.status == PurchaseOrder.Status.DRAFT:
+        raise ValidationException(
+            "Đơn hàng ở trạng thái Nháp không thể hủy theo quy trình này. Vui lòng cập nhật hoặc xóa đơn hàng."
+        )
+    if order.status == PurchaseOrder.Status.CANCELLED:
+        raise ValidationException("Đơn hàng đã được hủy trước đó.")
+
+    from django.db.models import Q
+
+    from apps.finance.models import CashFlowTransaction
+    from apps.finance.services import cash_flow_reverse
+    from apps.inventory.models import StockEntry
+    from apps.inventory.services import stock_entry_cancel, stock_entry_reverse
+
+    # 1. Xử lý các StockEntry liên kết
+    stock_entries = StockEntry.objects.select_for_update().filter(purchase_order=order)
+    for entry in stock_entries.iterator(chunk_size=1000):
+        if entry.status == "draft":
+            stock_entry_cancel(user=user, stock_entry=entry)
+        elif entry.status == "posted":
+            remarks_rev = f"Xuất kho trả hàng tự động do hủy đơn mua {order.id}"
+            stock_entry_reverse(user=user, original_entry=entry, remarks=remarks_rev)
+
+    # 2. Xử lý các CashFlowTransaction liên kết
+    invoice_ids = list(order.invoices.values_list("id", flat=True))
+    cash_flows = CashFlowTransaction.objects.select_for_update().filter(
+        Q(purchase_order=order) | Q(purchase_invoice_id__in=invoice_ids)
+    )
+    for tx in cash_flows.iterator(chunk_size=1000):
+        if tx.category == "Hoàn trả thanh toán":
+            continue
+        remarks_rev = f"Hoàn trả chi tiền tự động do hủy đơn mua {order.id} (Đối ứng cho giao dịch đặt cọc/thanh toán gốc {tx.name}, Số tiền hoàn: {tx.amount:,.2f}đ)."
+        cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+
+    # 3. Cập nhật các Hóa đơn liên kết
+    invoices = order.invoices.select_for_update()
+    for invoice in invoices.iterator(chunk_size=1000):
+        invoice.status = PurchaseInvoice.Status.CANCELLED
+        invoice.paid_amount = Decimal("0.00")
+        invoice.save()
+
+    # 4. Cập nhật Đơn hàng
+    order.status = PurchaseOrder.Status.CANCELLED
+    order.advance_paid_amount = Decimal("0.00")
+    order.save()
+
+    create_system_log(
+        user=user,
+        action="cancel",
+        table_name="purchase_order",
+        record_id=str(order.id),
+        new_value={"status": order.status},
     )
 
     return order

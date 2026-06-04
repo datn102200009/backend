@@ -133,6 +133,17 @@ class CashFlowTransaction(BaseModel):
     name = models.CharField(max_length=255, unique=True)
     payment_type = models.CharField(max_length=50, choices=[("receive", "Receive Money"), ("pay", "Pay Money")])
     category = models.CharField(max_length=100, blank=True, null=True, verbose_name="Loại Thu/Chi")
+    payment_method = models.CharField(
+        max_length=50,
+        choices=[
+            ("cash", "Cash"),
+            ("bank_transfer", "Bank Transfer"),
+            ("credit_card", "Credit Card"),
+            ("other", "Other"),
+        ],
+        default="bank_transfer",
+        db_index=True,
+    )
     # References to Orders (for advance payment/deposits)
     purchase_order = models.ForeignKey(
         "purchasing.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"

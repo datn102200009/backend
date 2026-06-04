@@ -47,6 +47,10 @@ components:
         status:
           type: string
           enum: [draft, pending, completed, cancelled]
+        advance_paid_amount:
+          type: number
+          format: double
+          minimum: 0
         lines:
           type: array
           minItems: 1
@@ -415,6 +419,35 @@ paths:
       responses:
         '200':
           description: Đơn mua hàng đã được duyệt thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/orders/{pk}/cancel/:
+    post:
+      summary: Cancel Purchase Order
+      description: Hủy Đơn mua hàng (chuyển sang CANCELLED), đảo ngược/hủy phiếu kho và giao dịch dòng tiền liên quan.
+      tags:
+        - Purchasing Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Đơn mua hàng đã được hủy thành công.
           content:
             application/json:
               schema:

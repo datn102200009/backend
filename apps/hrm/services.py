@@ -618,9 +618,10 @@ def contract_terminate(
             defaults={
                 "payment_type": "pay",
                 "category": "Chi trả lương nhân viên thôi việc",
+                "payment_method": "bank_transfer",
                 "amount": net_pay,
                 "payment_date": date.today(),
-                "remarks": f"Quyết toán và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+                "remarks": f"Quyết toán thôi việc và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {net_pay:,.2f}đ.",
             },
         )
     elif net_pay < Decimal("0.00"):
@@ -630,9 +631,10 @@ def contract_terminate(
             defaults={
                 "payment_type": "receive",
                 "category": "Thu hồi bồi thường nhân viên thôi việc",
+                "payment_method": "bank_transfer",
                 "amount": abs(net_pay),
                 "payment_date": date.today(),
-                "remarks": f"Quyết toán và thu hồi tiền bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+                "remarks": f"Quyết toán thôi việc và thu hồi bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {abs(net_pay):,.2f}đ.",
             },
         )
 
@@ -1691,15 +1693,24 @@ def payroll_bulk_confirm_and_pay(
         # Chuẩn bị giao dịch CashFlowTransaction nếu chưa tồn tại
         tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
         if tx_name not in existing_tx_names:
+            try:
+                parts = salary_period.split("-")
+                period_year = parts[0]
+                period_month = parts[1]
+            except Exception:
+                period_year = ""
+                period_month = salary_period
+
             if slip.net_pay > 0:
                 txs_to_create.append(
                     CashFlowTransaction(
                         name=tx_name,
                         payment_type="pay",
                         category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
                         amount=slip.net_pay,
                         payment_date=date.today(),
-                        remarks=f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period}",
+                        remarks=f"Chi trả lương tháng {period_month}/{period_year} cho nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Thực lĩnh: {slip.net_pay:,.2f}đ. Phương thức: Chuyển khoản.",
                     )
                 )
             elif slip.net_pay < 0:
@@ -1708,9 +1719,10 @@ def payroll_bulk_confirm_and_pay(
                         name=tx_name,
                         payment_type="receive",
                         category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
                         amount=abs(slip.net_pay),
                         payment_date=date.today(),
-                        remarks=f"Thu hồi lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period} do âm lương",
+                        remarks=f"Thu hồi lương âm tháng {period_month}/{period_year} của nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Số tiền: {abs(slip.net_pay):,.2f}đ.",
                     )
                 )
 

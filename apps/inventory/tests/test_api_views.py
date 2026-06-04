@@ -260,6 +260,32 @@ class TestStockLedgerAPI:
         assert len(response.data) == 1
         assert Decimal(response.data[0]["total_quantity"]) == Decimal("150.00")
 
+    def test_stock_ledger_balance_detailed_success(self, authenticated_api_client):
+        """Test lấy tồn kho phân rã chi tiết theo từng kho (detailed=true) qua API."""
+
+        # Setup
+        warehouse1 = WarehouseFactory()
+        warehouse2 = WarehouseFactory()
+        item1 = ItemFactory()
+        item2 = ItemFactory()
+
+        StockLedgerFactory(item=item1, warehouse=warehouse1, actual_quantity=Decimal("100.00"))
+        StockLedgerFactory(item=item1, warehouse=warehouse2, actual_quantity=Decimal("50.00"))
+        StockLedgerFactory(item=item2, warehouse=warehouse1, actual_quantity=Decimal("0.00"))
+
+        response = authenticated_api_client.get(
+            "/api/v1/inventory/stock-ledger/balance/?detailed=true",
+        )
+
+        assert response.status_code == 200
+        # Should return 2 records since item2 has 0 balance and is filtered out
+        assert len(response.data) == 2
+
+        # Verify warehouse_id is populated
+        for record in response.data:
+            assert record["warehouse_id"] is not None
+            assert str(record["item_id"]) == str(item1.id)
+
     def test_stock_ledger_balance_no_auth(self, api_client):
         """Test lấy tồn kho mà không xác thực."""
         warehouse = WarehouseFactory()

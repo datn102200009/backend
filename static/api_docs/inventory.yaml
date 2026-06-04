@@ -415,6 +415,13 @@ paths:
           schema:
             type: string
             format: uuid
+        - in: query
+          name: detailed
+          required: false
+          schema:
+            type: boolean
+            default: false
+            description: Phân rã tồn kho chi tiết theo từng kho thay vì gộp chung.
       responses:
         '200':
           description: Success

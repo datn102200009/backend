@@ -137,6 +137,38 @@ class TestStockLedgerSelectors:
         assert item_balance["total_quantity"] == Decimal("150.00")
         assert item_balance["warehouse_id"] is None
 
+    def test_stock_ledger_balance_detailed_all_warehouses(self):
+        """Test tồn kho chi tiết (detailed=True) phân rã theo từng kho, lọc bỏ giá trị 0."""
+        # Setup
+        warehouse1 = WarehouseFactory()
+        warehouse2 = WarehouseFactory()
+        item1 = ItemFactory()
+        item2 = ItemFactory()
+
+        StockLedgerFactory(item=item1, warehouse=warehouse1, actual_quantity=Decimal("100.00"))
+        StockLedgerFactory(item=item1, warehouse=warehouse2, actual_quantity=Decimal("50.00"))
+        # Item 2 has net 0 balance in warehouse1, should be filtered out
+        StockLedgerFactory(item=item2, warehouse=warehouse1, actual_quantity=Decimal("20.00"))
+        StockLedgerFactory(item=item2, warehouse=warehouse1, actual_quantity=Decimal("-20.00"))
+
+        # Test
+        result = stock_ledger_balance(detailed=True)
+
+        # Output should contain 2 records (item1 @ warehouse1 and item1 @ warehouse2), excluding item2
+        assert result.count() == 2
+
+        records = list(result)
+        # Check that records have warehouse_id populated
+        assert all(r["warehouse_id"] is not None for r in records)
+
+        # Verify specific quantities
+        w1_record = next(r for r in records if str(r["warehouse_id"]) == str(warehouse1.id))
+        w2_record = next(r for r in records if str(r["warehouse_id"]) == str(warehouse2.id))
+
+        assert w1_record["total_quantity"] == Decimal("100.00")
+        assert w2_record["total_quantity"] == Decimal("50.00")
+        assert not any(r["item_id"] == item2.id for r in records)
+
 
 @pytest.mark.django_db
 class TestItemSelectors:
