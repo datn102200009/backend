@@ -47,6 +47,10 @@ components:
         status:
           type: string
           enum: [draft, pending, pending_credit_approval, paid_unshipped, shipped_unpaid, completed, cancelled]
+        advance_paid_amount:
+          type: number
+          format: double
+          minimum: 0
         lines:
           type: array
           minItems: 1
@@ -441,6 +445,35 @@ paths:
       responses:
         '200':
           description: Đơn bán hàng đã được duyệt đặc cách tín dụng thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesOrder'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sales/orders/{pk}/cancel/:
+    post:
+      summary: Cancel Sales Order
+      description: Hủy Đơn bán hàng (chuyển sang CANCELLED), đảo ngược/hủy phiếu kho và giao dịch dòng tiền liên quan.
+      tags:
+        - Sales Orders
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Đơn bán hàng đã được hủy thành công.
           content:
             application/json:
               schema:

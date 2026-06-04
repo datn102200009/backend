@@ -29,3 +29,23 @@ class TestPurchaseAPIViews:
         url = reverse("purchase-order-list-create")
         response = client.get(url)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_purchase_order_cancel_api_permission_check(self, authenticated_client, mock_permission_checker):
+        order = PurchaseOrderFactory(status="pending")
+        url = reverse("purchase-order-cancel", kwargs={"pk": order.id})
+
+        response = authenticated_client.post(url)
+        assert response.status_code == status.HTTP_200_OK
+        mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "purchasing.cancel_order")
+
+    def test_purchase_order_cancel_api_permission_denied(self, authenticated_client, mock_permission_checker):
+        from apps.common.xlib.exceptions import PermissionException
+
+        mock_permission_checker.side_effect = PermissionException("Không có quyền")
+
+        order = PurchaseOrderFactory(status="pending")
+        url = reverse("purchase-order-cancel", kwargs={"pk": order.id})
+
+        response = authenticated_client.post(url)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data == {"error": "Không có quyền"}

@@ -618,3 +618,142 @@ def stock_entry_update(
     )
 
     return stock_entry
+
+
+@transaction.atomic
+def stock_entry_cancel(
+    *,
+    user: User,
+    stock_entry: StockEntry,
+) -> StockEntry:
+    """
+    Chuyển trạng thái phiếu kho Draft sang Cancelled.
+    """
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"
+
+    PermissionChecker.check_permission(user, permission)
+
+    if stock_entry.status != "draft":
+        raise ValidationException("Chỉ có thể hủy phiếu kho ở trạng thái Draft.")
+
+    stock_entry.status = "cancelled"
+    stock_entry.save()
+
+    create_system_log(
+        user=user,
+        action="cancel",
+        table_name="stock_entry",
+        record_id=str(stock_entry.id),
+        new_value={"status": "cancelled"},
+    )
+    return stock_entry
+
+
+@transaction.atomic
+def stock_entry_reverse(
+    *,
+    user: User,
+    original_entry: StockEntry,
+    remarks: str,
+) -> StockEntry:
+    """
+    Tạo một phiếu kho đảo ngược (đối ứng) ở trạng thái posted, và ghi sổ cái đối ứng.
+    """
+    purpose = original_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in_approve"
+        reverse_purpose = "issue"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue_approve"
+        reverse_purpose = "receipt"
+    else:
+        permission = "inventory.stock_in_approve"
+        reverse_purpose = "receipt"
+
+    PermissionChecker.check_permission(user, permission)
+
+    if original_entry.status != "posted":
+        raise ValidationException("Chỉ có thể đảo ngược phiếu kho đã ghi sổ (posted).")
+
+    import uuid
+
+    from django.utils import timezone
+
+    reverse_name = f"ST-REV-{reverse_purpose.upper()}-{str(uuid.uuid4())[:8]}"
+    reverse_entry = StockEntry(
+        name=reverse_name,
+        purpose=reverse_purpose,
+        posting_date=timezone.now(),
+        remarks=remarks,
+        status="posted",
+        purchase_order=original_entry.purchase_order,
+        sales_order=original_entry.sales_order,
+    )
+    reverse_entry.save()
+
+    details_to_create = []
+    ledgers_to_create = []
+
+    for detail in original_entry.details.all():
+        if original_entry.purpose == "receipt":
+            source_wh = detail.target_warehouse
+            target_wh = None
+            qty_sign = -1
+            ledger_voucher_type = "Stock Issue (Reversal)"
+        elif original_entry.purpose == "issue":
+            source_wh = None
+            target_wh = detail.source_warehouse
+            qty_sign = 1
+            ledger_voucher_type = "Stock In (Reversal)"
+        else:
+            source_wh = detail.target_warehouse
+            target_wh = detail.source_warehouse
+            qty_sign = -1
+            ledger_voucher_type = "Stock Reversal"
+
+        rev_detail = StockEntryDetail(
+            parent=reverse_entry,
+            item=detail.item,
+            quantity=detail.quantity,
+            source_warehouse=source_wh,
+            target_warehouse=target_wh,
+        )
+        details_to_create.append(rev_detail)
+
+        rev_ledger = StockLedger(
+            item=detail.item,
+            warehouse=source_wh if source_wh else target_wh,
+            posting_date=reverse_entry.posting_date,
+            actual_quantity=qty_sign * detail.quantity,
+            voucher_number=reverse_entry.name,
+            voucher_type=ledger_voucher_type,
+        )
+        ledgers_to_create.append(rev_ledger)
+
+    if details_to_create:
+        StockEntryDetail.objects.bulk_create(details_to_create, batch_size=1000)
+    if ledgers_to_create:
+        StockLedger.objects.bulk_create(ledgers_to_create, batch_size=1000)
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="stock_entry",
+        record_id=str(reverse_entry.id),
+        new_value={
+            "name": reverse_entry.name,
+            "status": reverse_entry.status,
+            "is_reversal": True,
+            "original_entry_id": str(original_entry.id),
+        },
+    )
+
+    return reverse_entry

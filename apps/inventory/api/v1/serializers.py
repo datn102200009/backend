@@ -71,6 +71,8 @@ class StockEntrySerializer(serializers.ModelSerializer):
     details = StockEntryDetailSerializer(many=True, read_only=True)
     created_at_formatted = serializers.DateTimeField(source="created_at", format="%Y-%m-%d %H:%M:%S", read_only=True)
     posting_date_formatted = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    purchase_order_id = serializers.UUIDField(read_only=True, allow_null=True)
+    sales_order_id = serializers.UUIDField(read_only=True, allow_null=True)
 
     class Meta:
         model = StockEntry
@@ -82,6 +84,8 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "posting_date_formatted",
             "remarks",
             "status",
+            "purchase_order_id",
+            "sales_order_id",
             "details",
             "created_at",
             "created_at_formatted",

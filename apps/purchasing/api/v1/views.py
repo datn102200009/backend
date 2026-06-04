@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.xlib.permissions import PermissionChecker
 from apps.purchasing.selectors import (
     purchase_invoice_detail,
     purchase_invoice_list,
@@ -11,6 +12,7 @@ from apps.purchasing.selectors import (
 )
 from apps.purchasing.services import (
     purchase_order_approve,
+    purchase_order_cancel,
     purchase_order_create,
     purchase_order_delete,
     purchase_order_receive_goods,
@@ -39,6 +41,7 @@ class PurchaseOrderListCreateAPIView(APIView):
         order = purchase_order_create(
             user=request.user,
             vendor_id=serializer.validated_data["vendor_id"],
+            advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             lines=serializer.validated_data["lines"],
         )
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -60,6 +63,7 @@ class PurchaseOrderDetailUpdateDeleteAPIView(APIView):
             order_id=str(pk),
             vendor_id=serializer.validated_data["vendor_id"],
             status=serializer.validated_data.get("status", "draft"),
+            advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             lines=serializer.validated_data["lines"],
         )
         return Response(PurchaseOrderSerializer(order).data)
@@ -90,6 +94,15 @@ class PurchaseOrderApproveAPIView(APIView):
 
     def post(self, request, pk, *args, **kwargs):
         order = purchase_order_approve(user=request.user, order_id=str(pk))
+        return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_200_OK)
+
+
+class PurchaseOrderCancelAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "purchasing.cancel_order")
+        order = purchase_order_cancel(user=request.user, order_id=str(pk))
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_200_OK)
 
 

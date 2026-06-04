@@ -26,6 +26,7 @@ def cash_flow_create(
     amount: Decimal,
     payment_date: str,
     category: Optional[str] = None,
+    payment_method: str = "bank_transfer",
     purchase_order_id: Optional[str] = None,
     sales_order_id: Optional[str] = None,
     purchase_invoice_id: Optional[str] = None,
@@ -49,6 +50,7 @@ def cash_flow_create(
         amount=amount,
         payment_date=payment_date,
         category=category,
+        payment_method=payment_method,
         remarks=remarks,
     )
 
@@ -159,3 +161,52 @@ def cash_flow_create(
     )
 
     return transaction_obj
+
+
+@transaction.atomic
+def cash_flow_reverse(
+    *,
+    user: User,
+    original_tx: CashFlowTransaction,
+    remarks: str,
+) -> CashFlowTransaction:
+    """
+    Tạo một giao dịch dòng tiền đảo ngược (đối ứng) cho giao dịch dòng tiền gốc.
+    """
+    PermissionChecker.check_permission(user, "finance.create_cash_flow")
+
+    import datetime
+    import uuid
+
+    reverse_payment_type = "receive" if original_tx.payment_type == "pay" else "pay"
+    payment_name = f"CF-REV-{reverse_payment_type.upper()}-{str(uuid.uuid4())[:8]}"
+
+    reverse_tx = CashFlowTransaction(
+        name=payment_name,
+        payment_type=reverse_payment_type,
+        amount=original_tx.amount,
+        payment_date=datetime.date.today(),
+        category="Hoàn trả thanh toán",
+        payment_method=original_tx.payment_method,
+        purchase_order=original_tx.purchase_order,
+        sales_order=original_tx.sales_order,
+        purchase_invoice=original_tx.purchase_invoice,
+        sales_invoice=original_tx.sales_invoice,
+        remarks=remarks,
+    )
+    reverse_tx.save()
+
+    create_system_log(
+        user=user,
+        action="create",
+        table_name="cash_flow_transaction",
+        record_id=str(reverse_tx.id),
+        new_value={
+            "type": reverse_payment_type,
+            "amount": str(original_tx.amount),
+            "is_reversal": True,
+            "original_tx_id": str(original_tx.id),
+        },
+    )
+
+    return reverse_tx

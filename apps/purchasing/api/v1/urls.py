@@ -4,6 +4,7 @@ from .views import (
     PurchaseInvoiceDetailAPIView,
     PurchaseInvoiceListAPIView,
     PurchaseOrderApproveAPIView,
+    PurchaseOrderCancelAPIView,
     PurchaseOrderDetailUpdateDeleteAPIView,
     PurchaseOrderListCreateAPIView,
     PurchaseOrderReceiveAPIView,
@@ -19,6 +20,7 @@ urlpatterns = [
     ),
     path("orders/<uuid:pk>/receive/", PurchaseOrderReceiveAPIView.as_view(), name="purchase-order-receive"),
     path("orders/<uuid:pk>/approve/", PurchaseOrderApproveAPIView.as_view(), name="purchase-order-approve"),
+    path("orders/<uuid:pk>/cancel/", PurchaseOrderCancelAPIView.as_view(), name="purchase-order-cancel"),
     # Invoices
     path("invoices/", PurchaseInvoiceListAPIView.as_view(), name="purchase-invoice-list"),
     path("invoices/<uuid:pk>/", PurchaseInvoiceDetailAPIView.as_view(), name="purchase-invoice-detail"),

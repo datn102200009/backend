@@ -3,10 +3,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.xlib.permissions import PermissionChecker
 from apps.sales.selectors import sales_invoice_detail, sales_invoice_list, sales_order_detail, sales_order_list
 from apps.sales.services import (
     approve_credit_bypass,
     sales_order_approve,
+    sales_order_cancel,
     sales_order_create,
     sales_order_delete,
     sales_order_deliver_goods,
@@ -35,6 +37,7 @@ class SalesOrderListCreateAPIView(APIView):
         order = sales_order_create(
             user=request.user,
             customer_id=str(serializer.validated_data["customer_id"]),
+            advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             lines=serializer.validated_data["lines"],
         )
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -56,6 +59,7 @@ class SalesOrderDetailUpdateDeleteAPIView(APIView):
             order_id=str(pk),
             customer_id=str(serializer.validated_data["customer_id"]),
             status=serializer.validated_data.get("status", "draft"),
+            advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             lines=serializer.validated_data["lines"],
         )
         return Response(SalesOrderSerializer(order).data)
@@ -94,6 +98,15 @@ class SalesOrderApproveCreditBypassAPIView(APIView):
 
     def post(self, request, pk, *args, **kwargs):
         order = approve_credit_bypass(user=request.user, order_id=str(pk))
+        return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
+
+
+class SalesOrderCancelAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.cancel_order")
+        order = sales_order_cancel(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
 

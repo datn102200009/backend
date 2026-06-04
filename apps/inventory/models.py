@@ -28,6 +28,7 @@ class StockEntry(BaseModel):
             ("draft", "Draft"),
             ("submitted", "Submitted"),
             ("posted", "Posted"),
+            ("cancelled", "Cancelled"),
         ],
         default="draft",
     )

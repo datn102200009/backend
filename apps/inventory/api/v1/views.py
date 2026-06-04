@@ -276,7 +276,8 @@ def stock_ledger_balance_view(request):
         if not warehouse:
             raise NotFoundException(f"Warehouse với ID {warehouse_id} không tồn tại")
 
-    data = stock_ledger_balance(warehouse)
+    detailed = request.query_params.get("detailed", "false").lower() == "true"
+    data = stock_ledger_balance(warehouse, detailed=detailed)
     return Response(list(data), status=status.HTTP_200_OK)
 
 
