@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.common.services import create_system_log
-from apps.common.xlib.exceptions import ValidationException
+from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.models import SalarySlip
 from apps.hrm.models import (
@@ -1370,53 +1370,69 @@ def payroll_initialize_period(
 ) -> list[SalarySlip]:
     """
     Khởi tạo hàng loạt bản ghi SalarySlip ở trạng thái draft cho toàn bộ nhân sự đang active trong kỳ lương.
+    Cho phép khởi tạo bổ sung cho nhân sự mới.
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.add_salaryslip")
 
+    from apps.accounts.models import SystemLog
     from apps.finance.models import SalarySlip
 
-    if SalarySlip.objects.filter(salary_period=salary_period).exists():
+    active_employees = list(Employee.objects.filter(employment_status="active"))
+
+    # 1. Lấy danh sách nhân viên đã có phiếu lương trong kỳ (1 query)
+    existing_employee_ids = set(
+        SalarySlip.objects.filter(salary_period=salary_period).values_list("employee_id", flat=True)
+    )
+
+    if existing_employee_ids:
         raise ValidationException("Kỳ lương đã được khởi tạo trước đó.")
 
-    active_employees = Employee.objects.filter(employment_status="active").iterator(chunk_size=100)
-    slips = []
-
+    new_slips = []
     for employee in active_employees:
-        name = f"SALARY-{employee.employee_id}-{salary_period}"
-        slip, created = SalarySlip.objects.get_or_create(
-            employee=employee,
-            salary_period=salary_period,
-            defaults={
-                "name": name,
-                "base_salary": employee.salary_base or Decimal("0.00"),
-                "overtime_amount": Decimal("0.00"),
-                "allowance_amount": Decimal("0.00"),
-                "reward_amount_total": Decimal("0.00"),
-                "discipline_deduction_total": Decimal("0.00"),
-                "union_fee_2pct": Decimal("0.00"),
-                "gross_pay": Decimal("0.00"),
-                "deductions": Decimal("0.00"),
-                "net_pay": Decimal("0.00"),
-                "status": "draft",
-            },
-        )
-        if created:
-            create_system_log(
+        if employee.id not in existing_employee_ids:
+            name = f"SALARY-{employee.employee_id}-{salary_period}"
+            new_slips.append(
+                SalarySlip(
+                    employee=employee,
+                    salary_period=salary_period,
+                    name=name,
+                    base_salary=employee.salary_base or Decimal("0.00"),
+                    overtime_amount=Decimal("0.00"),
+                    allowance_amount=Decimal("0.00"),
+                    reward_amount_total=Decimal("0.00"),
+                    discipline_deduction_total=Decimal("0.00"),
+                    union_fee_2pct=Decimal("0.00"),
+                    gross_pay=Decimal("0.00"),
+                    deductions=Decimal("0.00"),
+                    net_pay=Decimal("0.00"),
+                    status="draft",
+                )
+            )
+
+    if new_slips:
+        # bulk create slips
+        created_slips = SalarySlip.objects.bulk_create(new_slips, ignore_conflicts=True)
+
+        # bulk create logs
+        logs = [
+            SystemLog(
                 user=creator,
                 action="create",
                 table_name="salary_slip",
                 record_id=str(slip.id),
                 new_value={
                     "name": slip.name,
-                    "employee_id": str(employee.id),
+                    "employee_id": str(slip.employee_id),
                     "salary_period": salary_period,
                     "status": "draft",
                 },
             )
-        slips.append(slip)
+            for slip in created_slips
+        ]
+        SystemLog.objects.bulk_create(logs)
 
-    return slips
+    return list(SalarySlip.objects.filter(salary_period=salary_period).select_related("employee"))
 
 
 @transaction.atomic
@@ -1594,7 +1610,7 @@ def payroll_calculate_salary(
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
-    slip.status = "approved"
+    slip.status = "calculated"
     slip.remarks = remarks
 
     total_days = float(working_days + paid_leave_days)
@@ -1679,6 +1695,46 @@ def payroll_calculate_salary(
             "deductions": str(slip.deductions),
             "net_pay": str(slip.net_pay),
             "remarks": slip.remarks,
+        },
+    )
+
+    return slip
+
+
+@transaction.atomic
+def payroll_approve_salary(
+    *,
+    user: User,
+    salary_slip_id: str,
+) -> SalarySlip:
+    """
+    Phê duyệt phiếu lương sau khi đã tính toán (calculated).
+    Yêu cầu quyền hrm.payroll_approve.
+    """
+    PermissionChecker.check_permission(user, "hrm.payroll_approve")
+
+    slip = SalarySlip.objects.select_for_update().filter(id=salary_slip_id).first()
+    if not slip:
+        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
+
+    if slip.status != "calculated":
+        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'")
+
+    slip.status = "approved"
+    slip.approved_by = user
+    slip.approved_at = timezone.now()
+    slip.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": "calculated"},
+        new_value={
+            "status": "approved",
+            "approved_by_id": str(user.id),
+            "approved_at": str(slip.approved_at),
         },
     )
 

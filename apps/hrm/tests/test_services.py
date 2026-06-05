@@ -25,6 +25,7 @@ from apps.hrm.services import (
     employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
+    payroll_approve_salary,
     payroll_calculate_salary,
     payroll_initialize_period,
     reward_record_create,
@@ -1720,3 +1721,67 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Act & Assert
         with pytest.raises(ProtectedError):
             employee.delete()
+
+
+@pytest.mark.django_db
+class TestPayrollApprovalServices:
+
+    def test_payroll_approve_salary_success(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_1", employment_status="active")
+        approver = UserFactory(username="payroll_approver")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
+
+        # Act
+        approved_slip = payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+
+        # Assert
+        assert approved_slip.status == "approved"
+        assert approved_slip.approved_by == approver
+        assert approved_slip.approved_at is not None
+
+        # Check log
+        log = SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=approver).first()
+        assert log is not None
+        assert log.action == "update"
+        assert log.old_value == {"status": "calculated"}
+        assert log.new_value["status"] == "approved"
+        assert log.new_value["approved_by_id"] == str(approver.id)
+
+    def test_payroll_approve_salary_fails_if_no_permission(self, mock_check_permission):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_2")
+        approver = UserFactory(username="no_permission_approver")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
+
+        # Mock check_permission to raise PermissionException
+        from apps.common.xlib.exceptions import PermissionException
+
+        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.payroll_approve")
+
+        # Act & Assert
+        with pytest.raises(PermissionException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+        assert "không có quyền: hrm.payroll_approve" in str(exc_info.value)
+
+    def test_payroll_approve_salary_fails_if_not_found(self):
+        # Arrange
+        approver = UserFactory(username="payroll_approver_3")
+        from apps.common.xlib.exceptions import NotFoundException
+
+        # Act & Assert
+        with pytest.raises(NotFoundException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id="00000000-0000-0000-0000-000000000000")
+        assert "Phiếu lương với ID 00000000-0000-0000-0000-000000000000 không tồn tại" in str(exc_info.value)
+
+    def test_payroll_approve_salary_fails_if_not_calculated(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_4")
+        approver = UserFactory(username="payroll_approver_4")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+        assert "Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'" in str(exc_info.value)

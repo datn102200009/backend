@@ -212,13 +212,24 @@ def stock_issue_create(
     if not warehouse:
         raise NotFoundException(f"Warehouse với ID {source_warehouse_id} không tồn tại")
 
+    if not details:
+        raise ValidationException("Chi tiết phiếu xuất không được để trống")
+
+    # Prefetch items (H-06)
+    item_ids = [str(detail["item_id"]) for detail in details]
+    items_map = {
+        str(item.id): item for item in Item.objects.filter(id__in=item_ids).only("id", "item_code", "item_name")
+    }
+
+    # Check missing items
+    missing_ids = set(item_ids) - set(items_map.keys())
+    if missing_ids:
+        raise NotFoundException(f"Item với ID {', '.join(str(i) for i in missing_ids)} không tồn tại")
+
     # Kiểm tra tồn kho cho từng linh kiện
     insufficient_items = []
     for detail in details:
-        item = Item.objects.filter(id=detail["item_id"]).first()
-        if not item:
-            raise NotFoundException(f"Item với ID {detail['item_id']} không tồn tại")
-
+        item = items_map[str(detail["item_id"])]
         required_qty = detail["quantity"]
         available_qty = _get_available_stock(item, warehouse)
 
@@ -248,7 +259,7 @@ def stock_issue_create(
 
     # Thêm chi tiết
     for detail in details:
-        item = Item.objects.filter(id=detail["item_id"]).first()
+        item = items_map[str(detail["item_id"])]
         StockEntryDetail.objects.create(
             parent=stock_entry,
             item=item,
@@ -390,16 +401,27 @@ def stock_transfer_create(
     if source_warehouse_id == target_warehouse_id:
         raise ValidationException("Kho nguồn và kho đích phải khác nhau")
 
+    if not details:
+        raise ValidationException("Chi tiết chuyển kho không được để trống")
+
+    # Prefetch items (H-06)
+    item_ids = [str(detail["item_id"]) for detail in details]
+    items_map = {
+        str(item.id): item for item in Item.objects.filter(id__in=item_ids).only("id", "item_code", "item_name")
+    }
+
+    # Check missing items
+    missing_ids = set(item_ids) - set(items_map.keys())
+    if missing_ids:
+        raise NotFoundException(f"Item với ID {', '.join(str(i) for i in missing_ids)} không tồn tại")
+
     # Kiểm tra tồn kho cho từng item
     for detail in details:
-        item = Item.objects.filter(id=detail["item_id"]).first()
-        if not item:
-            raise NotFoundException(f"Item với ID {detail['item_id']} không tồn tại")
-
+        item = items_map[str(detail["item_id"])]
         available_qty = _get_available_stock(item, source_warehouse)
         if available_qty < detail["quantity"]:
             raise ValidationException(
-                f"Không đủ tồn kho cho {item.item_code}. " f"Cần {detail['quantity']}, có {available_qty}"
+                f"Không đủ tồn kho cho {item.item_code}. Cần {detail['quantity']}, có {available_qty}"
             )
 
     # Tạo phiếu chuyển
@@ -413,7 +435,7 @@ def stock_transfer_create(
 
     # Thêm chi tiết
     for detail in details:
-        item = Item.objects.filter(id=detail["item_id"]).first()
+        item = items_map[str(detail["item_id"])]
         StockEntryDetail.objects.create(
             parent=stock_entry,
             item=item,

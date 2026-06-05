@@ -31,12 +31,21 @@ class SalarySlip(BaseModel):
         max_length=20,
         choices=[
             ("draft", "Draft"),
+            ("calculated", "Calculated"),
             ("submitted", "Submitted"),
             ("approved", "Approved"),
             ("paid", "Paid"),
         ],
         default="draft",
     )
+    approved_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_salary_slips",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
     breakdown = models.JSONField(null=True, blank=True)
 

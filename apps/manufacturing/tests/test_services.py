@@ -6,7 +6,14 @@ from django.utils import timezone
 
 from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.inventory.models import StockEntry, StockLedger
-from apps.inventory.tests.factories import BOMFactory, BOMItemFactory, ItemFactory, WarehouseFactory, WorkOrderFactory
+from apps.inventory.tests.factories import (
+    BOMFactory,
+    BOMItemFactory,
+    ItemFactory,
+    StockLedgerFactory,
+    WarehouseFactory,
+    WorkOrderFactory,
+)
 from apps.manufacturing.services import (
     bom_create,
     bom_delete,
@@ -231,6 +238,16 @@ class TestWorkOrderServices:
         source = WarehouseFactory()
         target = WarehouseFactory()
         production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho source
+        StockLedgerFactory(
+            item=item1,
+            warehouse=source,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
 
         wo = WorkOrderFactory(
             bom=bom,
