@@ -19,6 +19,7 @@ class AuthTokenOutputSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.CharField()
     role = serializers.CharField(allow_null=True)
+    full_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     permissions = serializers.ListField(child=serializers.CharField())
 
 

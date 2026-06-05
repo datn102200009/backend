@@ -113,8 +113,8 @@ def stock_in_approve(
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_in_approve")
 
-    # Lấy phiếu
-    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    # Lấy và khóa phiếu kho
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
 
@@ -122,6 +122,10 @@ def stock_in_approve(
         raise ValidationException(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
+
+    # Khóa các dòng sản phẩm (Item) liên quan theo thứ tự ID tăng dần để ngăn race condition và deadlock
+    detail_item_ids = list(stock_entry.details.values_list("item_id", flat=True))
+    Item.objects.select_for_update().filter(id__in=detail_item_ids).order_by("id")
 
     # Ghi sổ cái cho từng chi tiết
     for detail in stock_entry.details.all():

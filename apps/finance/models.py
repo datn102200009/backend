@@ -44,6 +44,9 @@ class SalarySlip(BaseModel):
         db_table = "salary_slip"
         verbose_name = "Salary Slip"
         verbose_name_plural = "Salary Slips"
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "salary_period"], name="unique_salary_slip_per_period")
+        ]
 
     def __str__(self):
         return self.name

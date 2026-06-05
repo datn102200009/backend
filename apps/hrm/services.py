@@ -1524,10 +1524,15 @@ def payroll_calculate_salary(
 
     from django.db.models import Q
 
-    # 2. Thưởng & Phạt trong kỳ (bao gồm lũy kế chưa thanh toán từ các kỳ trước)
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    # Định nghĩa ngày bắt đầu của kỳ lương
+    period_start_date = date(year, month, 1)
+
+    # 2. Thưởng & Phạt trong kỳ (không gom bù)
+    rewards = RewardRecord.objects.filter(
+        employee=employee,
+        reward_date__gte=period_start_date,
+        reward_date__lte=period_end_date,
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     reward_total = Decimal("0.00")
     rewards_to_update = []
@@ -1539,9 +1544,11 @@ def payroll_calculate_salary(
     if rewards_to_update:
         RewardRecord.objects.bulk_update(rewards_to_update, ["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    disciplines = DisciplineRecord.objects.filter(
+        employee=employee,
+        discipline_date__gte=period_start_date,
+        discipline_date__lte=period_end_date,
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     discipline_total = Decimal("0.00")
     disciplines_to_update = []

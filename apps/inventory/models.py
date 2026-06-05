@@ -40,6 +40,14 @@ class StockEntry(BaseModel):
         related_name="stock_entries",
         verbose_name="Đơn mua hàng",
     )
+    work_order = models.ForeignKey(
+        "master_data.WorkOrder",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="stock_entries",
+        verbose_name="Lệnh sản xuất",
+    )
     sales_order = models.ForeignKey(
         "sales.SalesOrder",
         on_delete=models.SET_NULL,

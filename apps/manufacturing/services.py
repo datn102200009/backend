@@ -406,6 +406,7 @@ def work_order_approve(
         purpose="transfer",
         posting_date=timezone.now(),
         status="posted",
+        work_order=work_order,
         remarks=f"Xuất nguyên liệu cho lệnh sản xuất {work_order.name}",
     )
 
@@ -499,6 +500,7 @@ def work_order_declare_production(
         purpose="manufacture",
         posting_date=timezone.now(),
         status="posted",
+        work_order=work_order,
         remarks=f"Nhập liệu sản xuất cho lệnh {work_order.name}",
     )
 
@@ -587,9 +589,7 @@ def work_order_complete(
     if work_order.status != "in_progress":
         raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện")
 
-    manufacture_entries = StockEntry.objects.filter(
-        purpose="manufacture", remarks__contains=work_order.name, status="posted"
-    )
+    manufacture_entries = StockEntry.objects.filter(purpose="manufacture", work_order=work_order, status="posted")
 
     total_produced_result = StockEntryDetail.objects.filter(
         parent__in=manufacture_entries,
@@ -609,6 +609,7 @@ def work_order_complete(
             purpose="transfer",
             posting_date=timezone.now(),
             status="posted",
+            work_order=work_order,
             remarks=f"Nhập kho đích thành phẩm từ lệnh {work_order.name}",
         )
         StockEntryDetail.objects.create(

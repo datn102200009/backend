@@ -326,6 +326,7 @@ class TestWorkOrderServices:
             purpose="manufacture",
             posting_date=timezone.now(),
             status="posted",
+            work_order=wo,
             remarks=f"Nhập liệu sản xuất cho lệnh {wo.name}",
         )
         from apps.inventory.models import StockEntryDetail
@@ -367,3 +368,67 @@ class TestWorkOrderServices:
                 user=production_user,
                 work_order_id=str(wo.id),
             )
+
+    def test_work_order_complete_substring_collision(self, production_user):
+        """Test complete lệnh sản xuất không bị nhận nhầm stock entry của lệnh khác có tên chứa substring tương tự."""
+        bom = BOMFactory(is_active=True)
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        # Tạo lệnh sản xuất ngắn (WO-001) và lệnh sản xuất dài (WO-0010)
+        wo_short = WorkOrderFactory(
+            name="WO-001",
+            bom=bom,
+            production_item=bom.item,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+            quantity=100,
+            produced_qty=100,
+        )
+        wo_long = WorkOrderFactory(
+            name="WO-0010",
+            bom=bom,
+            production_item=bom.item,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+            quantity=100,
+            produced_qty=100,
+        )
+
+        # Tạo phiếu sản xuất (manufacture StockEntry) cho lệnh WO-0010
+        # Ghi remarks chứa tên lệnh "WO-0010" (có chứa substring "WO-001")
+        # Gán khóa ngoại work_order = wo_long
+        se_long = StockEntry.objects.create(
+            name=f"MFG-{wo_long.name}-123",
+            purpose="manufacture",
+            posting_date=timezone.now(),
+            status="posted",
+            work_order=wo_long,
+            remarks=f"Nhập liệu sản xuất cho lệnh {wo_long.name}",  # remarks contain 'WO-0010'
+        )
+        from apps.inventory.models import StockEntryDetail
+
+        StockEntryDetail.objects.create(
+            parent=se_long,
+            item=wo_long.production_item,
+            quantity=Decimal("100.0"),
+            target_warehouse=production,
+        )
+
+        # Hoàn thành lệnh WO-001 (lệnh ngắn)
+        completed_wo = work_order_complete(
+            user=production_user,
+            work_order_id=str(wo_short.id),
+        )
+
+        assert completed_wo.status == "completed"
+
+        # Vì phiếu kho se_long thuộc về wo_long (qua FK), wo_short không được tính số lượng sản xuất từ se_long
+        # Do đó, không có phiếu TRF thành phẩm nào của wo_short được tạo ra.
+        trf_se = StockEntry.objects.filter(purpose="transfer", work_order=wo_short).first()
+        assert trf_se is None
