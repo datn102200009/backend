@@ -19,6 +19,8 @@ from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.master_data.models import BOM, BOMItem, Item, WorkOrder
 
+_UNSET = object()
+
 # ======================== BOM (Định mức vật tư) ========================
 
 
@@ -30,6 +32,7 @@ def bom_create(
     item_id: str,
     quantity: Decimal = Decimal("1"),
     description: Optional[str] = None,
+    mold_id: Optional[str] = None,
     items: List[Dict[str, Any]],
 ) -> BOM:
     """
@@ -41,6 +44,7 @@ def bom_create(
         item_id: ID sản phẩm thành phẩm
         quantity: Số lượng thành phẩm tiêu chuẩn (mặc định = 1)
         description: Mô tả
+        mold_id: ID khuôn mẫu tài sản cố định
         items: Danh sách linh kiện [{"item_id": "...", "quantity": 10.0}]
 
     Returns:
@@ -83,6 +87,15 @@ def bom_create(
     if str(item.id) in item_ids:
         raise ValidationException("Linh kiện không được trùng với sản phẩm thành phẩm")
 
+    # Resolve mold if passed
+    mold = None
+    if mold_id:
+        from apps.finance.models import FixedAsset
+
+        mold = FixedAsset.objects.filter(id=mold_id).first()
+        if not mold:
+            raise NotFoundException(f"Khuôn mẫu với ID {mold_id} không tồn tại")
+
     # Tạo BOM Header
     bom = BOM.objects.create(
         name=name,
@@ -90,6 +103,7 @@ def bom_create(
         quantity=quantity,
         is_active=True,
         description=description,
+        mold=mold,
     )
 
     # Tạo BOM Items (bulk create)
@@ -130,6 +144,7 @@ def bom_update(
     name: Optional[str] = None,
     quantity: Optional[Decimal] = None,
     description: Optional[str] = None,
+    mold_id: Optional[str] = _UNSET,  # type: ignore
     items: Optional[List[Dict[str, Any]]] = None,
 ) -> BOM:
     """
@@ -144,6 +159,7 @@ def bom_update(
         name: Tên/mã định mức mới
         quantity: Số lượng thành phẩm tiêu chuẩn mới
         description: Mô tả mới
+        mold_id: ID khuôn mẫu tài sản cố định mới
         items: Danh sách linh kiện mới [{"item_id": "...", "quantity": 10.0}]
 
     Returns:
@@ -161,6 +177,7 @@ def bom_update(
         "name": bom.name,
         "quantity": str(bom.quantity),
         "description": bom.description,
+        "mold_id": str(bom.mold_id) if bom.mold_id else None,
         "items_count": bom.items.count(),
     }
 
@@ -174,6 +191,18 @@ def bom_update(
         bom.quantity = quantity
     if description is not None:
         bom.description = description
+
+    if mold_id is not _UNSET:
+        if mold_id:
+            from apps.finance.models import FixedAsset
+
+            mold = FixedAsset.objects.filter(id=mold_id).first()
+            if not mold:
+                raise NotFoundException(f"Khuôn mẫu với ID {mold_id} không tồn tại")
+            bom.mold = mold
+        else:
+            bom.mold = None
+
     bom.save()
 
     # Cập nhật items (nếu có)
@@ -360,6 +389,7 @@ def work_order_approve(
     work_order = (
         WorkOrder.objects.select_for_update()
         .select_related("bom", "source_warehouse", "production_warehouse")
+        .prefetch_related("bom__items")
         .filter(id=work_order_id)
         .first()
     )
@@ -445,7 +475,8 @@ def work_order_declare_production(
 
     work_order = (
         WorkOrder.objects.select_for_update()
-        .select_related("bom", "production_item", "production_warehouse")
+        .select_related("bom", "production_warehouse", "production_item")
+        .prefetch_related("bom__items")
         .filter(id=work_order_id)
         .first()
     )

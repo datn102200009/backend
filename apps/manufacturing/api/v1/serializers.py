@@ -25,6 +25,7 @@ class BOMCreateSerializer(serializers.Serializer):
     item_id = serializers.UUIDField()
     quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01, required=False, default=1)
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    mold_id = serializers.UUIDField(required=False, allow_null=True)
     items = BOMItemCreateUpdateSerializer(many=True)
 
 
@@ -34,6 +35,7 @@ class BOMUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01, required=False)
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    mold_id = serializers.UUIDField(required=False, allow_null=True)
     items = BOMItemCreateUpdateSerializer(many=True, required=False)
 
 
@@ -60,6 +62,8 @@ class BOMListSerializer(serializers.ModelSerializer):
     item_code = serializers.CharField(source="item.item_code", read_only=True)
     item_name = serializers.CharField(source="item.item_name", read_only=True)
     items_count = serializers.IntegerField(source="items.count", read_only=True)
+    mold_code = serializers.CharField(source="mold.asset_code", read_only=True, allow_null=True)
+    mold_name = serializers.CharField(source="mold.asset_name", read_only=True, allow_null=True)
 
     class Meta:
         model = BOM
@@ -72,6 +76,9 @@ class BOMListSerializer(serializers.ModelSerializer):
             "quantity",
             "is_active",
             "description",
+            "mold",
+            "mold_code",
+            "mold_name",
             "items_count",
             "created_at",
             "updated_at",
