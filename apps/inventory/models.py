@@ -101,6 +101,12 @@ class StockEntryDetail(BaseModel):
         db_table = "stock_entry_detail"
         verbose_name = "Stock Entry Detail"
         verbose_name_plural = "Stock Entry Details"
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(quantity__gt=0),
+                name="stock_detail_qty_positive",
+            )
+        ]
 
     def __str__(self):
         return f"{self.parent.name} - {self.item.item_code}"

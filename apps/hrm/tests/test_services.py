@@ -1512,6 +1512,52 @@ class TestHrmPermissionAndBypass:
         assert attendance.status == "working"
         assert attendance.work_hours == Decimal("8.00")
 
+    def test_leave_request_approve_overwrites_working_attendance_with_warning(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP8811", employment_status="active")
+        approver = UserFactory(username="approver_warning_test")
+
+        # Pre-create a working attendance record
+        from apps.hrm.tests.factories import AttendanceFactory
+
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 20),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+            remarks="Giờ làm thực tế",
+        )
+
+        # Create a pending leave request overlapping with that day
+        leave_request = LeaveRequestFactory(
+            employee=employee,
+            leave_type="unpaid",
+            start_date=date(2026, 5, 20),
+            end_date=date(2026, 5, 20),
+            days=Decimal("1.0"),
+            status="pending",
+        )
+
+        # Act
+        with patch("apps.hrm.services.logger") as mock_logger:
+            approved_request = leave_request_approve(
+                leave_request_id=leave_request.id,
+                approved_by_user_id=str(approver.id),
+            )
+
+        # Assert
+        assert approved_request.status == "approved"
+        attendance = Attendance.objects.filter(employee=employee, date=date(2026, 5, 20)).first()
+        assert attendance is not None
+        assert attendance.status == "unpaid_leave"
+        assert attendance.work_hours == Decimal("0.00")
+        assert attendance.overtime_hours == Decimal("0.00")
+
+        # Verify logger warning was called
+        mock_logger.warning.assert_called_once()
+        assert "Overwriting working attendance" in mock_logger.warning.call_args[0][0]
+
 
 @pytest.mark.django_db
 class TestHrmCompensatoryHolidayRules:

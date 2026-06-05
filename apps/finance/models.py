@@ -194,6 +194,9 @@ class CashFlowTransaction(BaseModel):
         db_table = "cash_flow_transaction"
         verbose_name = "Cash Flow Transaction"
         verbose_name_plural = "Cash Flow Transactions"
+        indexes = [
+            models.Index(fields=["payment_type", "payment_date"]),
+        ]
 
     def __str__(self):
         return self.name

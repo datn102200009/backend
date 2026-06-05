@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -22,6 +23,8 @@ from apps.hrm.models import (
     RewardRecord,
 )
 from apps.master_data.models import Employee
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
@@ -1106,67 +1109,105 @@ def leave_request_approve(
 
     start = leave_request.start_date
     end = leave_request.end_date
+
+    # 1. Lấy toàn bộ Attendance hiện tại trong khoảng ngày phép bằng 1 câu truy vấn duy nhất (select_for_update)
+    existing_attendances = {
+        att.date: att
+        for att in Attendance.objects.select_for_update().filter(
+            employee=leave_request.employee, date__gte=start, date__lte=end
+        )
+    }
+
+    atts_to_create = []
+    atts_to_update = []
     current_date = start
 
     while current_date <= end:
-        attendance, created = Attendance.objects.get_or_create(
-            employee=leave_request.employee,
-            date=current_date,
-            defaults={
-                "status": attendance_status,
-                "work_hours": Decimal("0.00"),
-                "overtime_hours": Decimal("0.00"),
-                "remarks": f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}",
-            },
-        )
+        attendance = existing_attendances.get(current_date)
+        if attendance:
+            if attendance.status != attendance_status:
+                # Cảnh báo qua logger nếu ghi đè ngày công thực tế (có work_hours hoặc overtime_hours > 0)
+                if attendance.work_hours > 0 or attendance.overtime_hours > 0:
+                    logger.warning(
+                        f"Overwriting working attendance for employee {leave_request.employee.employee_id} "
+                        f"on {current_date}: work_hours={attendance.work_hours}, overtime_hours={attendance.overtime_hours}"
+                    )
 
-        if not created:
-            old_att_status = attendance.status
-            old_att_work = attendance.work_hours
-            old_att_overtime = attendance.overtime_hours
-            old_att_remarks = attendance.remarks
-
-            attendance.status = attendance_status
-            attendance.work_hours = Decimal("0.00")
-            attendance.overtime_hours = Decimal("0.00")
-            attendance.remarks = f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}"
-            attendance.save()
-
-            create_system_log(
-                user=approved_by,
-                action="update",
-                table_name="attendance",
-                record_id=str(attendance.id),
-                old_value={
-                    "status": old_att_status,
-                    "work_hours": str(old_att_work),
-                    "overtime_hours": str(old_att_overtime),
-                    "remarks": old_att_remarks,
-                },
-                new_value={
-                    "status": attendance_status,
-                    "work_hours": "0.00",
-                    "overtime_hours": "0.00",
+                # Lưu thông tin cũ cho log
+                attendance._old_values = {
+                    "status": attendance.status,
+                    "work_hours": str(attendance.work_hours),
+                    "overtime_hours": str(attendance.overtime_hours),
                     "remarks": attendance.remarks,
-                },
-            )
+                }
+
+                attendance.status = attendance_status
+                attendance.work_hours = Decimal("0.00")
+                attendance.overtime_hours = Decimal("0.00")
+                attendance.remarks = f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}"
+                atts_to_update.append(attendance)
         else:
-            create_system_log(
+            new_att = Attendance(
+                employee=leave_request.employee,
+                date=current_date,
+                status=attendance_status,
+                work_hours=Decimal("0.00"),
+                overtime_hours=Decimal("0.00"),
+                remarks=f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}",
+            )
+            atts_to_create.append(new_att)
+
+        current_date += timedelta(days=1)
+
+    # 2. Thực hiện ghi/cập nhật hàng loạt (Bulk Operations)
+    if atts_to_create:
+        created_records = Attendance.objects.bulk_create(atts_to_create)
+
+        # Ghi logs hệ thống hàng loạt cho các bản ghi mới tạo
+        from apps.accounts.models import SystemLog
+
+        new_logs = [
+            SystemLog(
                 user=approved_by,
                 action="create",
                 table_name="attendance",
-                record_id=str(attendance.id),
+                record_id=str(att.id),
                 new_value={
                     "employee_id": str(leave_request.employee.id),
-                    "date": str(current_date),
+                    "date": str(att.date),
                     "status": attendance_status,
                     "work_hours": "0.00",
                     "overtime_hours": "0.00",
-                    "remarks": attendance.remarks,
+                    "remarks": att.remarks,
                 },
             )
+            for att in created_records
+        ]
+        SystemLog.objects.bulk_create(new_logs)
 
-        current_date += timedelta(days=1)
+    if atts_to_update:
+        Attendance.objects.bulk_update(atts_to_update, ["status", "work_hours", "overtime_hours", "remarks"])
+
+        # Ghi logs hệ thống hàng loạt cho các bản ghi được cập nhật
+        from apps.accounts.models import SystemLog
+
+        update_logs = [
+            SystemLog(
+                user=approved_by,
+                action="update",
+                table_name="attendance",
+                record_id=str(att.id),
+                old_value=att._old_values,
+                new_value={
+                    "status": attendance_status,
+                    "work_hours": "0.00",
+                    "overtime_hours": "0.00",
+                    "remarks": att.remarks,
+                },
+            )
+            for att in atts_to_update
+        ]
+        SystemLog.objects.bulk_create(update_logs)
 
     return leave_request
 

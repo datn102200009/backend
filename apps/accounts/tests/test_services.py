@@ -55,3 +55,18 @@ class TestAuthLoginService:
             auth_login(username="inactive_user", password="secret")
 
         assert "Tài khoản đã bị vô hiệu hóa" in str(exc.value)
+
+
+@pytest.mark.django_db
+def test_role_deletion_blocked_by_active_users():
+    # Arrange
+    from django.db.models.deletion import ProtectedError
+
+    from apps.accounts.models import Role
+
+    role = Role.objects.create(name="temporary_role", description="temporary")
+    UserFactory(username="temp_user", role=role)
+
+    # Act & Assert
+    with pytest.raises(ProtectedError):
+        role.delete()
