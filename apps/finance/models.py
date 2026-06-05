@@ -185,3 +185,54 @@ class CashFlowTransaction(BaseModel):
 
     def __str__(self):
         return self.name
+
+
+class FixedAsset(BaseModel):
+    """
+    Fixed Asset model representing physical assets like machines and molds.
+    """
+
+    asset_code = models.CharField(max_length=100, unique=True)
+    asset_name = models.CharField(max_length=255)
+    original_value = models.DecimalField(max_digits=15, decimal_places=2)
+    salvage_value = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    depreciation_method = models.CharField(
+        max_length=50,
+        choices=[
+            ("straight_line", "Đường thẳng"),
+            ("unit_of_production", "Sản lượng"),
+        ],
+    )
+    useful_life_months = models.IntegerField()
+    remaining_life_months = models.IntegerField()
+    designed_capacity = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    accumulated_depreciation = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    department = models.CharField(max_length=100, null=True, blank=True)
+
+    class Meta:
+        db_table = "fixed_asset"
+        verbose_name = "Fixed Asset"
+        verbose_name_plural = "Fixed Assets"
+
+    def __str__(self):
+        return f"{self.asset_code} - {self.asset_name}"
+
+
+class FixedAssetDepreciationLog(BaseModel):
+    """
+    Depreciation log tracking monthly depreciation runs for fixed assets.
+    """
+
+    asset = models.ForeignKey(FixedAsset, on_delete=models.CASCADE, related_name="depreciation_logs")
+    period = models.CharField(max_length=7, db_index=True)  # Format: YYYY-MM
+    depreciation_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    remarks = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "fixed_asset_depreciation_log"
+        verbose_name = "Fixed Asset Depreciation Log"
+        verbose_name_plural = "Fixed Asset Depreciation Logs"
+        unique_together = ("asset", "period")
+
+    def __str__(self):
+        return f"{self.asset.asset_code} - {self.period} - {self.depreciation_amount}"

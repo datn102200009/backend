@@ -2,7 +2,7 @@ import factory
 from django.utils import timezone
 from factory import fuzzy
 
-from apps.finance.models import CashFlowTransaction
+from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
 
 
 class CashFlowTransactionFactory(factory.django.DjangoModelFactory):
@@ -15,3 +15,29 @@ class CashFlowTransactionFactory(factory.django.DjangoModelFactory):
     payment_date = factory.LazyFunction(timezone.now)
     created_at = factory.LazyFunction(timezone.now)
     updated_at = factory.LazyFunction(timezone.now)
+
+
+class FixedAssetFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = FixedAsset
+
+    asset_code = factory.Sequence(lambda n: f"ASSET-{n:04d}")
+    asset_name = factory.Faker("word")
+    original_value = fuzzy.FuzzyDecimal(1000.00, 10000.00, 2)
+    salvage_value = fuzzy.FuzzyDecimal(0.00, 500.00, 2)
+    depreciation_method = "straight_line"
+    useful_life_months = fuzzy.FuzzyInteger(6, 60)
+    remaining_life_months = factory.SelfAttribute("useful_life_months")
+    designed_capacity = fuzzy.FuzzyDecimal(1000, 5000, 2)
+    accumulated_depreciation = fuzzy.FuzzyDecimal(0, 0, 2)
+    department = factory.Faker("word")
+
+
+class FixedAssetDepreciationLogFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = FixedAssetDepreciationLog
+
+    asset = factory.SubFactory(FixedAssetFactory)
+    period = "2026-06"
+    depreciation_amount = fuzzy.FuzzyDecimal(10.00, 100.00, 2)
+    remarks = factory.Faker("sentence")

@@ -1,6 +1,8 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from apps.finance.models import CashFlowTransaction
+from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
 
 
 class CashFlowTransactionSerializer(serializers.ModelSerializer):
@@ -47,3 +49,93 @@ class CashFlowInputSerializer(serializers.Serializer):
     sales_invoice_id = serializers.UUIDField(required=False, allow_null=True)
 
     remarks = serializers.CharField(required=False, allow_blank=True)
+
+
+class FixedAssetDepreciationLogSerializer(serializers.ModelSerializer):
+    asset_code = serializers.CharField(source="asset.asset_code", read_only=True)
+    asset_name = serializers.CharField(source="asset.asset_name", read_only=True)
+
+    class Meta:
+        model = FixedAssetDepreciationLog
+        fields = [
+            "id",
+            "asset",
+            "asset_code",
+            "asset_name",
+            "period",
+            "depreciation_amount",
+            "remarks",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FixedAssetSerializer(serializers.ModelSerializer):
+    remaining_value = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FixedAsset
+        fields = [
+            "id",
+            "asset_code",
+            "asset_name",
+            "original_value",
+            "salvage_value",
+            "depreciation_method",
+            "useful_life_months",
+            "remaining_life_months",
+            "designed_capacity",
+            "accumulated_depreciation",
+            "remaining_value",
+            "department",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "remaining_life_months",
+            "accumulated_depreciation",
+            "remaining_value",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_remaining_value(self, obj) -> float:
+        return float(obj.original_value - obj.salvage_value - obj.accumulated_depreciation)
+
+
+class FixedAssetCreateInputSerializer(serializers.Serializer):
+    asset_code = serializers.CharField(max_length=100)
+    asset_name = serializers.CharField(max_length=255)
+    original_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
+    salvage_value = serializers.DecimalField(
+        max_digits=15, decimal_places=2, min_value=0, required=False, default=Decimal("0.00")
+    )
+    depreciation_method = serializers.ChoiceField(
+        choices=[("straight_line", "Đường thẳng"), ("unit_of_production", "Sản lượng")]
+    )
+    useful_life_months = serializers.IntegerField(min_value=1)
+    designed_capacity = serializers.DecimalField(
+        max_digits=15, decimal_places=2, min_value=0.01, required=False, allow_null=True
+    )
+    department = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+
+
+class FixedAssetUpdateInputSerializer(serializers.Serializer):
+    asset_name = serializers.CharField(max_length=255, required=False)
+    original_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01, required=False)
+    salvage_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0, required=False)
+    depreciation_method = serializers.ChoiceField(
+        choices=[("straight_line", "Đường thẳng"), ("unit_of_production", "Sản lượng")], required=False
+    )
+    useful_life_months = serializers.IntegerField(min_value=1, required=False)
+    designed_capacity = serializers.DecimalField(
+        max_digits=15, decimal_places=2, min_value=0.01, required=False, allow_null=True
+    )
+    department = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+
+
+class RunDepreciationInputSerializer(serializers.Serializer):
+    period = serializers.CharField(max_length=7)  # Format: YYYY-MM
