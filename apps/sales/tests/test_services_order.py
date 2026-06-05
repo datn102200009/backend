@@ -58,7 +58,6 @@ class TestSalesOrderServices:
             user=user,
             order_id=str(order.id),
             customer_id=str(customer.id),
-            status=SalesOrder.Status.DRAFT,
             lines=updated_lines,
         )
 
@@ -110,7 +109,6 @@ class TestSalesOrderServices:
             user=user,
             order_id=str(order.id),
             customer_id=str(customer.id),
-            status=SalesOrder.Status.DRAFT,
             lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
             advance_paid_amount=Decimal("150.00"),
         )
@@ -129,7 +127,6 @@ class TestSalesOrderServices:
                 user=user,
                 order_id=str(order.id),
                 customer_id=str(customer.id),
-                status=SalesOrder.Status.DRAFT,
                 lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
                 advance_paid_amount=Decimal("700.00"),
             )

@@ -149,3 +149,34 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+  /accounts/auth/me/:
+    get:
+      summary: Lấy thông tin user hiện tại
+      description: API Lấy thông tin user hiện tại và danh sách quyền hạn.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  username:
+                    type: string
+                  email:
+                    type: string
+                  role:
+                    type: string
+                    nullable: true
+                  employee_id:
+                    type: string
+                    nullable: true
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'

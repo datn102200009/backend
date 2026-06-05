@@ -3,7 +3,7 @@ from django.utils import timezone
 from factory import fuzzy
 
 from apps.inventory.tests.factories import ItemFactory, SupplierFactory
-from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine
+from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, Shipment
 
 
 class PurchaseOrderFactory(factory.django.DjangoModelFactory):
@@ -53,3 +53,14 @@ class PurchaseInvoiceLineFactory(factory.django.DjangoModelFactory):
     import_tax = 0
     vat_tax = 0
     line_total = factory.LazyAttribute(lambda o: (o.quantity * o.unit_price) + o.import_tax + o.vat_tax)
+
+
+class ShipmentFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Shipment
+
+    shipment_num = factory.Sequence(lambda n: f"SH-NUM-{n}")
+    name = factory.Sequence(lambda n: f"Shipment Name {n}")
+    total_logistic_fees = 0.00
+    status = "draft"
+    remarks = "mock remarks"

@@ -294,7 +294,7 @@ def contract_terminate_view(request, pk):
 def attendance_list_view(request):
     """
     Xem danh sách chấm công.
-    Hỗ trợ lọc theo date và employee_id.
+    Hỗ trợ lọc theo date và employee_id, kèm phân trang.
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -305,6 +305,14 @@ def attendance_list_view(request):
     date_param = request.query_params.get("date")
     employee_id = request.query_params.get("employee_id")
 
+    try:
+        limit = int(request.query_params.get("limit", 20))
+        offset = int(request.query_params.get("offset", 0))
+        limit = min(limit, 100)
+    except ValueError:
+        limit = 20
+        offset = 0
+
     qs = Attendance.objects.all().select_related("employee").order_by("-date", "employee__employee_id")
 
     if date_param:
@@ -312,8 +320,19 @@ def attendance_list_view(request):
     if employee_id:
         qs = qs.filter(employee_id=employee_id)
 
-    serializer = AttendanceOutputSerializer(qs, many=True)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    count = qs.count()
+    results = qs[offset : offset + limit]
+
+    serializer = AttendanceOutputSerializer(results, many=True)
+    return Response(
+        {
+            "count": count,
+            "next": None,
+            "previous": None,
+            "results": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"])
@@ -351,7 +370,7 @@ def attendance_batch_view(request):
 def leave_request_list_view(request):
     """
     Xem danh sách đơn xin nghỉ phép.
-    Lọc theo status và employee_id.
+    Lọc theo status và employee_id, kèm phân trang.
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -362,6 +381,14 @@ def leave_request_list_view(request):
     status_param = request.query_params.get("status")
     employee_id = request.query_params.get("employee_id")
 
+    try:
+        limit = int(request.query_params.get("limit", 20))
+        offset = int(request.query_params.get("offset", 0))
+        limit = min(limit, 100)
+    except ValueError:
+        limit = 20
+        offset = 0
+
     qs = LeaveRequest.objects.all().select_related("employee", "approved_by").order_by("-created_at", "id")
 
     if status_param:
@@ -369,8 +396,19 @@ def leave_request_list_view(request):
     if employee_id:
         qs = qs.filter(employee_id=employee_id)
 
-    serializer = LeaveRequestOutputSerializer(qs, many=True)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    count = qs.count()
+    results = qs[offset : offset + limit]
+
+    serializer = LeaveRequestOutputSerializer(results, many=True)
+    return Response(
+        {
+            "count": count,
+            "next": None,
+            "previous": None,
+            "results": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"])
@@ -667,24 +705,19 @@ def public_holiday_list_create_view(request):
                 year_val = int(year)
                 from datetime import date, timedelta
 
-                from django.db.models import Max
+                from django.db.models import DateField, DurationField, ExpressionWrapper, F
 
                 year_start_date = date(year_val, 1, 1)
                 year_end_date = date(year_val, 12, 31)
 
-                max_days = PublicHoliday.objects.aggregate(max_days=Max("days"))["max_days"] or 1
-
-                # Lọc thô ở database để tăng tốc độ truy vấn
-                qs = qs.filter(
-                    start_date__lte=year_end_date, start_date__gte=year_start_date - timedelta(days=int(max_days))
+                duration_expr = ExpressionWrapper(F("days") * timedelta(days=1), output_field=DurationField())
+                end_date_expr = ExpressionWrapper(
+                    F("start_date") + duration_expr - timedelta(days=1), output_field=DateField()
                 )
 
-                # Lọc chính xác ở Python để độc lập với DB loại nào
-                qs = [
-                    h
-                    for h in qs
-                    if h.start_date <= year_end_date and (h.start_date + timedelta(days=h.days - 1)) >= year_start_date
-                ]
+                qs = qs.annotate(end_date=end_date_expr).filter(
+                    start_date__lte=year_end_date, end_date__gte=year_start_date
+                )
             except ValueError:
                 pass
         serializer = PublicHolidaySerializer(qs, many=True)

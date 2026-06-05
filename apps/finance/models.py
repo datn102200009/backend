@@ -88,10 +88,25 @@ class TechnicalCertification(BaseModel):
 
     cert_id = models.CharField(max_length=100, unique=True)
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="certifications")
+    stock_entry = models.ForeignKey(
+        "inventory.StockEntry",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="certifications",
+        db_index=True,
+        verbose_name="Phiếu nhập kho liên kết",
+    )
     cert_type = models.CharField(max_length=100)
     assessment_fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     issue_date = models.DateField(auto_now_add=True)
+    result = models.CharField(
+        max_length=20,
+        choices=[("PASSED", "Đạt"), ("FAILED", "Không đạt")],
+        default="PASSED",
+        verbose_name="Kết quả kiểm định",
+    )
     remarks = models.TextField(null=True, blank=True)
 
     class Meta:

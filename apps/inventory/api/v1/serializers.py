@@ -23,6 +23,8 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
     source_warehouse_name = serializers.CharField(source="source_warehouse.name", read_only=True)
     target_warehouse_id = serializers.UUIDField(read_only=True, allow_null=True)
     target_warehouse_name = serializers.CharField(source="target_warehouse.name", read_only=True)
+    qc_status = serializers.SerializerMethodField()
+    latest_cert = serializers.SerializerMethodField()
 
     class Meta:
         model = StockEntryDetail
@@ -37,6 +39,8 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "source_warehouse_name",
             "target_warehouse_id",
             "target_warehouse_name",
+            "qc_status",
+            "latest_cert",
         ]
         read_only_fields = [
             "id",
@@ -49,6 +53,36 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "target_warehouse_id",
             "target_warehouse_name",
         ]
+
+    def get_qc_status(self, obj):
+        from apps.finance.models import TechnicalCertification
+
+        cert = (
+            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
+            .order_by("-issue_date", "-id")
+            .first()
+        )
+        if cert:
+            return cert.result
+        return "PENDING"
+
+    def get_latest_cert(self, obj):
+        from apps.finance.models import TechnicalCertification
+
+        cert = (
+            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
+            .order_by("-issue_date", "-id")
+            .first()
+        )
+        if cert:
+            return {
+                "id": str(cert.id),
+                "cert_id": cert.cert_id,
+                "result": cert.result,
+                "remarks": cert.remarks,
+                "issue_date": cert.issue_date.isoformat() if cert.issue_date else None,
+            }
+        return None
 
 
 class StockEntryDetailCreateSerializer(serializers.Serializer):
@@ -73,6 +107,10 @@ class StockEntrySerializer(serializers.ModelSerializer):
     posting_date_formatted = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     purchase_order_id = serializers.UUIDField(read_only=True, allow_null=True)
     sales_order_id = serializers.UUIDField(read_only=True, allow_null=True)
+    vendor_name = serializers.CharField(source="purchase_order.vendor.supplier_name", read_only=True, allow_null=True)
+    shipment_id = serializers.UUIDField(source="shipment.id", read_only=True, allow_null=True)
+    shipment_num = serializers.CharField(source="shipment.shipment_num", read_only=True, allow_null=True)
+    shipment_status = serializers.CharField(source="shipment.status", read_only=True, allow_null=True)
 
     class Meta:
         model = StockEntry
@@ -86,6 +124,10 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "status",
             "purchase_order_id",
             "sales_order_id",
+            "vendor_name",
+            "shipment_id",
+            "shipment_num",
+            "shipment_status",
             "details",
             "created_at",
             "created_at_formatted",
@@ -320,9 +362,11 @@ class BOMSerializer(serializers.ModelSerializer):
 
 class StockEntryUpdateDetailSerializer(serializers.Serializer):
     detail_id = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=15, decimal_places=2, required=False)
     source_warehouse_id = serializers.UUIDField(required=False, allow_null=True)
     target_warehouse_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class StockEntryUpdateSerializer(serializers.Serializer):
+    remarks = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     details = serializers.ListField(child=StockEntryUpdateDetailSerializer(), allow_empty=False)

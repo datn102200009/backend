@@ -58,3 +58,21 @@ class TestCashFlowServices:
         invoice.refresh_from_db()
         assert invoice.paid_amount == Decimal("500.00")
         assert invoice.status == "paid"
+
+    def test_cash_flow_invalid_type(self, user):
+        with pytest.raises(ValidationException, match="Loại thanh toán phải là"):
+            cash_flow_create(
+                user=user,
+                payment_type="invalid_type",
+                amount=Decimal("100.00"),
+                payment_date="2023-10-01",
+            )
+
+    def test_cash_flow_negative_amount(self, user):
+        with pytest.raises(ValidationException, match="Số tiền thanh toán phải lớn hơn 0"):
+            cash_flow_create(
+                user=user,
+                payment_type="pay",
+                amount=Decimal("-100.00"),
+                payment_date="2023-10-01",
+            )

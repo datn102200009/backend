@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.selectors import cash_flow_detail, cash_flow_list
 from apps.finance.services import cash_flow_create
 
@@ -13,6 +14,7 @@ class CashFlowListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_cash_flow")
         transactions = cash_flow_list()
         return Response(CashFlowTransactionSerializer(transactions, many=True).data)
 
@@ -41,5 +43,6 @@ class CashFlowDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_cash_flow")
         transaction = cash_flow_detail(transaction_id=str(pk))
         return Response(CashFlowTransactionSerializer(transaction).data)

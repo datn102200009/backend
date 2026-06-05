@@ -47,11 +47,10 @@ class TestPurchaseOrderServices:
             user=user,
             order_id=str(order.id),
             vendor_id=str(vendor.id),
-            status=PurchaseOrder.Status.PENDING,
             lines=updated_lines,
         )
 
-        assert updated_order.status == PurchaseOrder.Status.PENDING
+        assert updated_order.status == PurchaseOrder.Status.DRAFT
         assert updated_order.total_amount == Decimal("1000.00")
 
     def test_purchase_order_update_invalid_status(self, setup_data):
@@ -67,7 +66,6 @@ class TestPurchaseOrderServices:
                 user=user,
                 order_id=str(order.id),
                 vendor_id=str(vendor.id),
-                status=PurchaseOrder.Status.PENDING,
                 lines=[],
             )
 
@@ -112,7 +110,6 @@ class TestPurchaseOrderServices:
             user=user,
             order_id=str(order.id),
             vendor_id=str(vendor.id),
-            status=PurchaseOrder.Status.DRAFT,
             lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
             advance_paid_amount=Decimal("150.00"),
         )
@@ -131,7 +128,6 @@ class TestPurchaseOrderServices:
                 user=user,
                 order_id=str(order.id),
                 vendor_id=str(vendor.id),
-                status=PurchaseOrder.Status.DRAFT,
                 lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
                 advance_paid_amount=Decimal("700.00"),
             )
@@ -265,6 +261,242 @@ class TestPurchaseOrderServices:
         reversals = txs.filter(category="Hoàn trả thanh toán")
         assert reversals.count() == 2
         assert set(reversals.values_list("amount", flat=True)) == {Decimal("100.00"), Decimal("400.00")}
+
+    def test_purchase_order_cancel_no_goods_refund_deposit(self, setup_data):
+        from apps.finance.models import CashFlowTransaction
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+
+        user, vendor, item = setup_data
+
+        # Create PO with deposit
+        order = purchase_order_create(
+            user=user,
+            vendor_id=str(vendor.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
+            advance_paid_amount=Decimal("100.00"),
+        )
+        purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Cancel with refund_deposit=True
+        purchase_order_cancel(user=user, order_id=str(order.id), refund_deposit=True)
+
+        order.refresh_from_db()
+        assert order.status == PurchaseOrder.Status.CANCELLED
+        assert order.advance_paid_amount == Decimal("0.00")
+
+        # Check that invoice is cancelled and paid_amount is 0
+        invoice = PurchaseInvoice.objects.filter(order=order).first()
+        assert invoice.status == PurchaseInvoice.Status.CANCELLED
+        assert invoice.paid_amount == Decimal("0.00")
+
+        # Check reversing cash flow was created
+        cf_rev = CashFlowTransaction.objects.filter(purchase_order=order, category="Hoàn trả thanh toán").first()
+        assert cf_rev is not None
+        assert cf_rev.amount == Decimal("100.00")
+        assert cf_rev.payment_type == "receive"
+
+    def test_purchase_order_cancel_no_goods_keep_deposit(self, setup_data):
+        from apps.finance.models import CashFlowTransaction
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+
+        user, vendor, item = setup_data
+
+        # Create PO with deposit
+        order = purchase_order_create(
+            user=user,
+            vendor_id=str(vendor.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
+            advance_paid_amount=Decimal("100.00"),
+        )
+        purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Cancel with refund_deposit=False
+        purchase_order_cancel(user=user, order_id=str(order.id), refund_deposit=False)
+
+        order.refresh_from_db()
+        assert order.status == PurchaseOrder.Status.CANCELLED
+        # Keep deposit: advance_paid_amount remains
+        assert order.advance_paid_amount == Decimal("100.00")
+
+        invoice = PurchaseInvoice.objects.filter(order=order).first()
+        assert invoice.status == PurchaseInvoice.Status.CANCELLED
+        # Invoice paid amount should remain since deposit was kept (or wait, invoice is cancelled anyway)
+        assert invoice.paid_amount == Decimal("100.00")
+
+        # Check NO reversing cash flow was created
+        assert not CashFlowTransaction.objects.filter(purchase_order=order, category="Hoàn trả thanh toán").exists()
+
+    def test_purchase_order_cancel_with_goods_keep_goods_diff_positive(self, setup_data):
+        from apps.finance.models import CashFlowTransaction
+        from apps.inventory.models import StockEntry
+        from apps.inventory.services import stock_entry_update, stock_in_approve
+        from apps.inventory.tests.factories import WarehouseFactory
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+
+        user, vendor, item = setup_data
+        warehouse = WarehouseFactory()
+
+        # Create PO: Total 500, Deposit 200
+        order = purchase_order_create(
+            user=user,
+            vendor_id=str(vendor.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
+            advance_paid_amount=Decimal("200.00"),
+        )
+        purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Receive 6 items (received value = 6 * 50 = 300)
+        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
+        stock_entry_update(
+            user=user,
+            stock_entry_id=str(stock_entry.id),
+            details=[
+                {
+                    "detail_id": str(stock_entry.details.first().id),
+                    "target_warehouse_id": str(warehouse.id),
+                    "quantity": Decimal("6.00"),
+                }
+            ],
+        )
+        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+
+        # Re-fetch state: received_value=300, total_paid=200. diff = 300 - 200 = 100 > 0.
+        # Cancel with keep_goods=True
+        purchase_order_cancel(user=user, order_id=str(order.id), keep_goods=True)
+
+        order.refresh_from_db()
+        assert order.status == PurchaseOrder.Status.CANCELLED
+        # Balanced advance_paid_amount becomes equal to received_value (300)
+        assert order.advance_paid_amount == Decimal("300.00")
+
+        # Check offset pay transaction was created
+        cf_diff = CashFlowTransaction.objects.filter(
+            purchase_order=order, category="Thanh toán đối ứng chênh lệch hủy đơn"
+        ).first()
+        assert cf_diff is not None
+        assert cf_diff.amount == Decimal("100.00")
+        assert cf_diff.payment_type == "pay"
+
+        # Check stock entries (original is posted, no new issue reversals)
+        assert order.stock_entries.filter(status="posted").count() == 1
+        assert not order.stock_entries.filter(purpose="issue").exists()
+
+        # Check rates
+        assert order.receipt_fulfillment_rate == Decimal("60.00")
+        assert order.payment_fulfillment_rate == Decimal("60.00")
+
+    def test_purchase_order_cancel_with_goods_keep_goods_diff_negative(self, setup_data):
+        from apps.finance.models import CashFlowTransaction
+        from apps.inventory.models import StockEntry
+        from apps.inventory.services import stock_entry_update, stock_in_approve
+        from apps.inventory.tests.factories import WarehouseFactory
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+
+        user, vendor, item = setup_data
+        warehouse = WarehouseFactory()
+
+        # Create PO: Total 500, Deposit 400
+        order = purchase_order_create(
+            user=user,
+            vendor_id=str(vendor.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
+            advance_paid_amount=Decimal("400.00"),
+        )
+        purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Receive 6 items (received value = 6 * 50 = 300)
+        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
+        stock_entry_update(
+            user=user,
+            stock_entry_id=str(stock_entry.id),
+            details=[
+                {
+                    "detail_id": str(stock_entry.details.first().id),
+                    "target_warehouse_id": str(warehouse.id),
+                    "quantity": Decimal("6.00"),
+                }
+            ],
+        )
+        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+
+        # Re-fetch state: received_value=300, total_paid=400. diff = 300 - 400 = -100 < 0.
+        # Cancel with keep_goods=True
+        purchase_order_cancel(user=user, order_id=str(order.id), keep_goods=True)
+
+        order.refresh_from_db()
+        assert order.status == PurchaseOrder.Status.CANCELLED
+        # Balanced advance_paid_amount becomes equal to received_value (300)
+        assert order.advance_paid_amount == Decimal("300.00")
+
+        # Check offset receive transaction was created
+        cf_diff = CashFlowTransaction.objects.filter(
+            purchase_order=order, category="Hoàn trả đối ứng chênh lệch hủy đơn"
+        ).first()
+        assert cf_diff is not None
+        assert cf_diff.amount == Decimal("100.00")
+        assert cf_diff.payment_type == "receive"
+
+        # Check rates
+        assert order.receipt_fulfillment_rate == Decimal("60.00")
+        assert order.payment_fulfillment_rate == Decimal("60.00")
+
+    def test_purchase_order_cancel_with_goods_reverse_all(self, setup_data):
+        from apps.finance.models import CashFlowTransaction
+        from apps.inventory.models import StockEntry
+        from apps.inventory.services import stock_entry_update, stock_in_approve
+        from apps.inventory.tests.factories import WarehouseFactory
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+
+        user, vendor, item = setup_data
+        warehouse = WarehouseFactory()
+
+        # Create PO: Total 500, Deposit 200
+        order = purchase_order_create(
+            user=user,
+            vendor_id=str(vendor.id),
+            lines=[{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}],
+            advance_paid_amount=Decimal("200.00"),
+        )
+        purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Receive 6 items (received value = 6 * 50 = 300)
+        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
+        stock_entry_update(
+            user=user,
+            stock_entry_id=str(stock_entry.id),
+            details=[
+                {
+                    "detail_id": str(stock_entry.details.first().id),
+                    "target_warehouse_id": str(warehouse.id),
+                    "quantity": Decimal("6.00"),
+                }
+            ],
+        )
+        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+
+        # Cancel with keep_goods=False (Default/Reverse all)
+        purchase_order_cancel(user=user, order_id=str(order.id), keep_goods=False)
+
+        order.refresh_from_db()
+        assert order.status == PurchaseOrder.Status.CANCELLED
+        # All money returned, so advance_paid_amount is 0
+        assert order.advance_paid_amount == Decimal("0.00")
+
+        # Check reversing stock entry of purpose 'issue' is posted
+        rev_stock = StockEntry.objects.filter(purchase_order=order, purpose="issue").first()
+        assert rev_stock is not None
+        assert rev_stock.status == "posted"
+
+        # Check reversing cash flows were created
+        cf_rev = CashFlowTransaction.objects.filter(purchase_order=order, category="Hoàn trả thanh toán").first()
+        assert cf_rev is not None
+        assert cf_rev.amount == Decimal("200.00")
+        assert cf_rev.payment_type == "receive"
 
     def test_purchase_order_cancel_permission_check(self, setup_data, mock_permission_checker):
         from apps.purchasing.services import purchase_order_cancel
