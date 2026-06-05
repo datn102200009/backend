@@ -102,8 +102,9 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_remaining_value(self, obj) -> float:
-        return float(obj.original_value - obj.salvage_value - obj.accumulated_depreciation)
+    def get_remaining_value(self, obj) -> str:
+        value = obj.original_value - obj.salvage_value - obj.accumulated_depreciation
+        return str(value.quantize(Decimal("0.01")))
 
 
 class FixedAssetCreateInputSerializer(serializers.Serializer):

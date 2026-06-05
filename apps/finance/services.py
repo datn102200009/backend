@@ -6,16 +6,22 @@ Never receive request objects, only primitive types or DTOs.
 Always ensure atomic transactions.
 """
 
+import datetime
+import re
 from decimal import Decimal
 from typing import Optional
 
 from django.db import transaction
+from django.db.models import Sum
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.common.services import create_system_log
 from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
+from apps.inventory.models import StockEntryDetail
+from apps.master_data.models import BOM
 
 
 @transaction.atomic
@@ -395,23 +401,12 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
     """
     PermissionChecker.check_permission(user, "finance.run_depreciation")
 
-    # Validate period format YYYY-MM
-    import re
-
     if not re.match(r"^\d{4}-\d{2}$", period):
         raise ValidationException("Định dạng kỳ khấu hao không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM.")
 
     # Check if this period has already been run
     if FixedAssetDepreciationLog.objects.filter(period=period).exists():
         raise ValidationException(f"Kỳ khấu hao '{period}' đã được thực hiện hạch toán trước đó.")
-
-    # Parse period to get dates for UOP query
-    import datetime
-
-    from django.db.models import Sum
-    from django.utils import timezone
-
-    from apps.master_data.models import BOM
 
     year, month = map(int, period.split("-"))
     start_datetime = timezone.make_aware(datetime.datetime(year, month, 1, 0, 0, 0))
@@ -424,78 +419,100 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             microseconds=1
         )
 
-    # Fetch active assets that still need depreciation
-    assets = FixedAsset.objects.select_for_update().filter(
-        is_active=True,
-        remaining_life_months__gt=0,
-    )
+    # Process active assets in chunks using keyset pagination (Batch size: 500)
+    chunk_size = 500
+    last_id = None
 
-    logs = []
-
-    for asset in assets:
-        # Remainder depreciable amount
-        depreciable_value = asset.original_value - asset.salvage_value
-        remaining_value = depreciable_value - asset.accumulated_depreciation
-
-        if remaining_value <= Decimal("0.00"):
-            continue
-
-        depreciation_amount = Decimal("0.00")
-        remarks = ""
-
-        if asset.depreciation_method == "straight_line":
-            depreciation_amount = depreciable_value / Decimal(str(asset.useful_life_months))
-            remarks = f"Khấu hao đường thẳng kỳ {period}. (Hữu ích: {asset.useful_life_months} tháng)"
-
-        elif asset.depreciation_method == "unit_of_production":
-            # 1. Get finished products using this mold via BOM
-            product_ids = asset.boms.filter(is_active=True).values_list("item_id", flat=True)
-
-            if not product_ids:
-                # Mold not linked to any active BOM, skip
-                continue
-
-            # 2. Query actual manufactured receipt quantity in StockEntryDetail
-            from apps.inventory.models import StockEntryDetail
-
-            prod_qty_result = StockEntryDetail.objects.filter(
-                item_id__in=product_ids,
-                target_warehouse__isnull=False,
-                parent__purpose="manufacture",
-                parent__status="posted",
-                parent__posting_date__range=(start_datetime, end_datetime),
-            ).aggregate(total=Sum("quantity"))
-
-            prod_qty = prod_qty_result["total"] or Decimal("0.00")
-
-            if prod_qty <= Decimal("0.00"):
-                continue
-
-            depreciation_amount = prod_qty * (depreciable_value / asset.designed_capacity)
-            remarks = f"Khấu hao sản lượng kỳ {period} (Sản lượng thực tế: {prod_qty:.2f} cái, CS thiết kế: {asset.designed_capacity:.2f} cái)."
-
-        # Cap depreciation amount to remaining value
-        if depreciation_amount > remaining_value:
-            depreciation_amount = remaining_value
-
-        depreciation_amount = depreciation_amount.quantize(Decimal("0.01"))
-
-        if depreciation_amount <= Decimal("0.00"):
-            continue
-
-        # Save log
-        log = FixedAssetDepreciationLog.objects.create(
-            asset=asset,
-            period=period,
-            depreciation_amount=depreciation_amount,
-            remarks=remarks,
+    while True:
+        qs = FixedAsset.objects.filter(
+            is_active=True,
+            remaining_life_months__gt=0,
         )
-        logs.append(log)
+        if last_id:
+            qs = qs.filter(id__gt=last_id)
 
-        # Update FixedAsset
-        asset.accumulated_depreciation += depreciation_amount
-        asset.remaining_life_months = max(0, asset.remaining_life_months - 1)
-        asset.save()
+        # Select for update to lock the rows
+        chunk = list(qs.order_by("id")[:chunk_size].select_for_update())
+        if not chunk:
+            break
+
+        logs_to_create = []
+        assets_to_update = []
+
+        for asset in chunk:
+            last_id = asset.id
+
+            # Remainder depreciable amount
+            depreciable_value = asset.original_value - asset.salvage_value
+            remaining_value = depreciable_value - asset.accumulated_depreciation
+
+            if remaining_value <= Decimal("0.00"):
+                continue
+
+            depreciation_amount = Decimal("0.00")
+            remarks = ""
+
+            if asset.depreciation_method == "straight_line":
+                depreciation_amount = depreciable_value / Decimal(str(asset.useful_life_months))
+                remarks = f"Khấu hao đường thẳng kỳ {period}. (Hữu ích: {asset.useful_life_months} tháng)"
+
+            elif asset.depreciation_method == "unit_of_production":
+                # Get finished products using this mold via BOM
+                product_ids = asset.boms.filter(is_active=True).values_list("item_id", flat=True)
+
+                if not product_ids:
+                    # Mold not linked to any active BOM, skip
+                    continue
+
+                # Query actual manufactured receipt quantity in StockEntryDetail
+                prod_qty_result = StockEntryDetail.objects.filter(
+                    item_id__in=product_ids,
+                    target_warehouse__isnull=False,
+                    parent__purpose="manufacture",
+                    parent__status="posted",
+                    parent__posting_date__range=(start_datetime, end_datetime),
+                ).aggregate(total=Sum("quantity"))
+
+                prod_qty = prod_qty_result["total"] or Decimal("0.00")
+
+                if prod_qty <= Decimal("0.00"):
+                    continue
+
+                depreciation_amount = prod_qty * (depreciable_value / asset.designed_capacity)
+                remarks = f"Khấu hao sản lượng kỳ {period} (Sản lượng thực tế: {prod_qty:.2f} cái, CS thiết kế: {asset.designed_capacity:.2f} cái)."
+
+            # Cap depreciation amount to remaining value
+            if depreciation_amount > remaining_value:
+                depreciation_amount = remaining_value
+
+            depreciation_amount = depreciation_amount.quantize(Decimal("0.01"))
+
+            if depreciation_amount <= Decimal("0.00"):
+                continue
+
+            # Save log to bulk create list
+            log = FixedAssetDepreciationLog(
+                asset=asset,
+                period=period,
+                depreciation_amount=depreciation_amount,
+                remarks=remarks,
+            )
+            logs_to_create.append(log)
+
+            # Update asset properties
+            asset.accumulated_depreciation += depreciation_amount
+            asset.remaining_life_months = max(0, asset.remaining_life_months - 1)
+            assets_to_update.append(asset)
+
+        if logs_to_create:
+            FixedAssetDepreciationLog.objects.bulk_create(logs_to_create)
+        if assets_to_update:
+            FixedAsset.objects.bulk_update(assets_to_update, ["accumulated_depreciation", "remaining_life_months"])
+
+    # Fetch logs from DB using select_related("asset") to prevent downstream N+1
+    logs = list(
+        FixedAssetDepreciationLog.objects.filter(period=period).select_related("asset").order_by("created_at", "id")
+    )
 
     if logs:
         create_system_log(

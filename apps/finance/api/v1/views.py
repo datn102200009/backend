@@ -1,10 +1,12 @@
 from decimal import Decimal
 
+from django.core.paginator import Paginator
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.xlib.exceptions import ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.selectors import (
     cash_flow_detail,
@@ -77,27 +79,30 @@ class FixedAssetListCreateAPIView(APIView):
         PermissionChecker.check_permission(request.user, "finance.view_fixed_asset")
         assets = fixed_asset_list()
 
-        # Simple pagination to satisfy rules_planning.md
-        from django.core.paginator import Paginator
-
-        limit = request.query_params.get("limit", 50)
-        page = request.query_params.get("page", 1)
+        limit_str = request.query_params.get("limit", "50")
+        page_str = request.query_params.get("page", "1")
         try:
-            paginator = Paginator(assets, int(limit))
-            page_obj = paginator.get_page(int(page))
-            data = FixedAssetSerializer(page_obj.object_list, many=True).data
-            return Response(
-                {
-                    "count": paginator.count,
-                    "total_pages": paginator.num_pages,
-                    "current_page": page_obj.number,
-                    "results": data,
-                }
-            )
-        except Exception:
-            return Response(FixedAssetSerializer(assets, many=True).data)
+            limit = int(limit_str)
+            page = int(page_str)
+            if limit <= 0 or page <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValidationException("Tham số limit và page phải là số nguyên dương.")
+
+        paginator = Paginator(assets, limit)
+        page_obj = paginator.get_page(page)
+        data = FixedAssetSerializer(page_obj.object_list, many=True).data
+        return Response(
+            {
+                "count": paginator.count,
+                "total_pages": paginator.num_pages,
+                "current_page": page_obj.number,
+                "results": data,
+            }
+        )
 
     def post(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.create_fixed_asset")
         serializer = FixedAssetCreateInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -125,6 +130,7 @@ class FixedAssetDetailAPIView(APIView):
         return Response(FixedAssetSerializer(asset).data)
 
     def patch(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.update_fixed_asset")
         serializer = FixedAssetUpdateInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -143,6 +149,7 @@ class FixedAssetDetailAPIView(APIView):
         return Response(FixedAssetSerializer(asset).data)
 
     def delete(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.delete_fixed_asset")
         fixed_asset_delete(user=request.user, asset_id=str(pk))
         return Response({"message": "Xóa tài sản cố định thành công"}, status=status.HTTP_200_OK)
 
@@ -151,6 +158,7 @@ class DepreciationRunAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.run_depreciation")
         serializer = RunDepreciationInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -167,22 +175,24 @@ class DepreciationLogListAPIView(APIView):
         asset_id = request.query_params.get("asset_id")
         logs = depreciation_log_list(period=period, asset_id=asset_id)
 
-        # Simple pagination to satisfy rules_planning.md
-        from django.core.paginator import Paginator
-
-        limit = request.query_params.get("limit", 50)
-        page = request.query_params.get("page", 1)
+        limit_str = request.query_params.get("limit", "50")
+        page_str = request.query_params.get("page", "1")
         try:
-            paginator = Paginator(logs, int(limit))
-            page_obj = paginator.get_page(int(page))
-            data = FixedAssetDepreciationLogSerializer(page_obj.object_list, many=True).data
-            return Response(
-                {
-                    "count": paginator.count,
-                    "total_pages": paginator.num_pages,
-                    "current_page": page_obj.number,
-                    "results": data,
-                }
-            )
-        except Exception:
-            return Response(FixedAssetDepreciationLogSerializer(logs, many=True).data)
+            limit = int(limit_str)
+            page = int(page_str)
+            if limit <= 0 or page <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValidationException("Tham số limit và page phải là số nguyên dương.")
+
+        paginator = Paginator(logs, limit)
+        page_obj = paginator.get_page(page)
+        data = FixedAssetDepreciationLogSerializer(page_obj.object_list, many=True).data
+        return Response(
+            {
+                "count": paginator.count,
+                "total_pages": paginator.num_pages,
+                "current_page": page_obj.number,
+                "results": data,
+            }
+        )

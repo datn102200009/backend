@@ -8,6 +8,7 @@ from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepre
 class CashFlowTransactionFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = CashFlowTransaction
+        django_get_or_create = ("name",)
 
     name = factory.Sequence(lambda n: f"CF-TEST-{n:04d}")
     payment_type = fuzzy.FuzzyChoice(["receive", "pay"])
@@ -20,6 +21,7 @@ class CashFlowTransactionFactory(factory.django.DjangoModelFactory):
 class FixedAssetFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = FixedAsset
+        django_get_or_create = ("asset_code",)
 
     asset_code = factory.Sequence(lambda n: f"ASSET-{n:04d}")
     asset_name = factory.Faker("word")

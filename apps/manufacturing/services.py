@@ -19,6 +19,8 @@ from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.master_data.models import BOM, BOMItem, Item, WorkOrder
 
+_UNSET = object()
+
 # ======================== BOM (Định mức vật tư) ========================
 
 
@@ -142,7 +144,7 @@ def bom_update(
     name: Optional[str] = None,
     quantity: Optional[Decimal] = None,
     description: Optional[str] = None,
-    mold_id: Optional[str] = "UNCHANGED",
+    mold_id: Optional[str] = _UNSET,  # type: ignore
     items: Optional[List[Dict[str, Any]]] = None,
 ) -> BOM:
     """
@@ -190,7 +192,7 @@ def bom_update(
     if description is not None:
         bom.description = description
 
-    if mold_id != "UNCHANGED":
+    if mold_id is not _UNSET:
         if mold_id:
             from apps.finance.models import FixedAsset
 
@@ -384,7 +386,13 @@ def work_order_approve(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_approve")
 
-    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
+    work_order = (
+        WorkOrder.objects.select_for_update()
+        .select_related("bom", "source_warehouse", "production_warehouse")
+        .prefetch_related("bom__items")
+        .filter(id=work_order_id)
+        .first()
+    )
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -465,7 +473,13 @@ def work_order_declare_production(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_declare")
 
-    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
+    work_order = (
+        WorkOrder.objects.select_for_update()
+        .select_related("bom", "production_warehouse", "production_item")
+        .prefetch_related("bom__items")
+        .filter(id=work_order_id)
+        .first()
+    )
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -560,7 +574,12 @@ def work_order_complete(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_complete")
 
-    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
+    work_order = (
+        WorkOrder.objects.select_for_update()
+        .select_related("production_item", "production_warehouse", "target_warehouse")
+        .filter(id=work_order_id)
+        .first()
+    )
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
