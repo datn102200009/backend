@@ -39,6 +39,12 @@ def cash_flow_create(
     """
     PermissionChecker.check_permission(user, "finance.create_cash_flow")
 
+    if payment_type not in ["pay", "receive"]:
+        raise ValidationException("Loại thanh toán phải là 'pay' hoặc 'receive'.")
+
+    if amount <= Decimal("0.00"):
+        raise ValidationException("Số tiền thanh toán phải lớn hơn 0.")
+
     # 1. Khởi tạo đối tượng Cash Flow
     import uuid
 

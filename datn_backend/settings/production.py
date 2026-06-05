@@ -16,6 +16,10 @@ if SECRET_KEY == "django-insecure-*i15f-t1dfnzh)4#_y%_+raw*+%@0e$xlpv7o10^%$7%^w
     )
 
 # SECURITY SETTINGS
+# SSL/TLS được đảm nhận bởi Reverse Proxy (ví dụ: Nginx hoặc AWS ALB) nằm ở phía trước.
+# Reverse Proxy sẽ chuyển tiếp request HTTPS và terminate SSL tại đó, rồi gửi request HTTP thông thường vào Django.
+# Do đó SECURE_SSL_REDIRECT được đặt thành False để tránh vòng lặp chuyển hướng vô hạn (infinite redirect loop).
+# SECURE_PROXY_SSL_HEADER giúp Django nhận biết request gốc là HTTPS thông qua Header X-Forwarded-Proto.
 SECURE_SSL_REDIRECT = False
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True

@@ -308,7 +308,10 @@ class TestStockLedgerAPI:
         )
 
         assert response.status_code == 200
-        assert len(response.data) == 2
+        assert "count" in response.data
+        assert "results" in response.data
+        assert response.data["count"] == 2
+        assert len(response.data["results"]) == 2
 
     def test_stock_entry_list_with_filter(self, authenticated_api_client):
         """Test lấy danh sách phiếu stock entry với filter mục đích."""
@@ -322,4 +325,7 @@ class TestStockLedgerAPI:
         )
 
         assert response.status_code == 200
-        assert len(response.data) == 1
+        assert "count" in response.data
+        assert "results" in response.data
+        assert response.data["count"] == 1
+        assert len(response.data["results"]) == 1

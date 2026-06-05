@@ -76,7 +76,6 @@ def sales_order_update(
     user: User,
     order_id: str,
     customer_id: str,
-    status: str,
     lines: List[Dict[str, Any]],
     advance_paid_amount: Decimal = Decimal("0.00"),
 ) -> SalesOrder:
@@ -107,7 +106,7 @@ def sales_order_update(
         raise ValidationException("Số tiền cọc không được lớn hơn tổng giá trị đơn hàng.")
 
     order.customer = customer
-    order.status = status
+    order.status = SalesOrder.Status.DRAFT
     order.advance_paid_amount = advance_paid_amount
 
     # Xóa các line cũ và tạo mới
@@ -189,10 +188,13 @@ def sales_order_update_status(order: SalesOrder) -> None:
         return
 
     # 1. Kiểm tra trạng thái thanh toán
-    invoice = order.invoices.first()
-    is_paid = False
-    if invoice:
-        is_paid = invoice.status == SalesInvoice.Status.PAID
+    invoices = order.invoices.exclude(status="cancelled")
+    if invoices.exists():
+        from django.db.models import Sum
+
+        totals = invoices.aggregate(paid=Sum("paid_amount"))
+        total_paid = totals["paid"] or Decimal("0.00")
+        is_paid = total_paid >= order.total_amount and order.total_amount > 0
     else:
         is_paid = order.advance_paid_amount >= order.total_amount and order.total_amount > 0
 

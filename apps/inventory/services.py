@@ -147,6 +147,15 @@ def stock_in_approve(
 
         purchase_order_update_status(stock_entry.purchase_order)
 
+    # Kích hoạt đối soát 4 bên cho các hóa đơn liên kết với PO
+    if stock_entry.purchase_order:
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import verify_4_way_matching
+
+        invoices = PurchaseInvoice.objects.filter(order=stock_entry.purchase_order)
+        for invoice in invoices:
+            verify_4_way_matching(invoice_id=str(invoice.id))
+
     # Ghi log
     create_system_log(
         user=user,
@@ -271,8 +280,8 @@ def stock_issue_approve(
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_issue_approve")
 
-    # Lấy phiếu
-    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    # Lấy và khóa phiếu kho
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
 
@@ -282,9 +291,16 @@ def stock_issue_approve(
         )
 
     # Ghi sổ cái cho từng chi tiết (âm tính vì là xuất kho)
-    for detail in stock_entry.details.all():
+    # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
+    details = list(stock_entry.details.select_related("item", "source_warehouse").all())
+    details.sort(key=lambda d: d.item_id)
+
+    for detail in details:
         if not detail.source_warehouse:
             raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho xuất.")
+
+        # Khóa dòng sản phẩm (Item) để ngăn race condition trong tính toán tồn kho khả dụng
+        Item.objects.select_for_update().get(id=detail.item_id)
 
         # Kiểm tra tồn kho khả dụng tại thời điểm duyệt
         available_qty = _get_available_stock(detail.item, detail.source_warehouse)
@@ -439,8 +455,8 @@ def stock_transfer_approve(
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_transfer_approve")
 
-    # Lấy phiếu
-    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    # Lấy và khóa phiếu kho
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
 
@@ -449,8 +465,28 @@ def stock_transfer_approve(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
 
+    # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
+    details = list(stock_entry.details.select_related("item", "source_warehouse", "target_warehouse").all())
+    details.sort(key=lambda d: d.item_id)
+
     # Double Transaction: Ghi sổ cái cho cả kho nguồn (âm) và kho đích (dương)
-    for detail in stock_entry.details.all():
+    for detail in details:
+        if not detail.source_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho xuất.")
+        if not detail.target_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho nhập.")
+
+        # Khóa dòng sản phẩm (Item) để ngăn race condition trong tính toán tồn kho khả dụng kho nguồn
+        Item.objects.select_for_update().get(id=detail.item_id)
+
+        # Kiểm tra tồn kho khả dụng tại thời điểm duyệt của kho nguồn
+        available_qty = _get_available_stock(detail.item, detail.source_warehouse)
+        if available_qty < detail.quantity:
+            raise ValidationException(
+                f"Không đủ tồn kho cho sản phẩm '{detail.item.item_code}' tại kho nguồn '{detail.source_warehouse.name}'. "
+                f"Khả dụng: {available_qty}, Yêu cầu: {detail.quantity}"
+            )
+
         # Trừ kho nguồn
         StockLedger.objects.create(
             item=detail.item,
@@ -629,6 +665,9 @@ def stock_entry_cancel(
     """
     Chuyển trạng thái phiếu kho Draft sang Cancelled.
     """
+    # Khóa phiếu kho bằng select_for_update() để chống race condition khi hủy
+    stock_entry = StockEntry.objects.select_for_update().get(id=stock_entry.id)
+
     purpose = stock_entry.purpose
     if purpose == "receipt":
         permission = "inventory.stock_in"

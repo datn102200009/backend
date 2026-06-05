@@ -182,12 +182,19 @@ class TestHrmAPI:
     # =========================================================================
 
     def test_list_attendances(self, mock_check, auth_client):
-        AttendanceFactory.create_batch(2)
+        AttendanceFactory.create_batch(3)
         url = "/api/v1/hrm/attendances/"
         response = auth_client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) >= 2
+        assert "count" in response.data
+        assert "results" in response.data
+        assert response.data["count"] >= 3
+
+        # Test limit and offset pagination
+        response_paginated = auth_client.get(url, {"limit": 2, "offset": 1})
+        assert response_paginated.status_code == status.HTTP_200_OK
+        assert len(response_paginated.data["results"]) == 2
 
     def test_batch_attendance(self, mock_check, auth_client):
         employee1 = EmployeeFactory()
@@ -224,12 +231,19 @@ class TestHrmAPI:
     # =========================================================================
 
     def test_list_leave_requests(self, mock_check, auth_client):
-        LeaveRequestFactory.create_batch(2)
+        LeaveRequestFactory.create_batch(3)
         url = "/api/v1/hrm/leave-requests/"
         response = auth_client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) >= 2
+        assert "count" in response.data
+        assert "results" in response.data
+        assert response.data["count"] >= 3
+
+        # Test limit and offset pagination
+        response_paginated = auth_client.get(url, {"limit": 2, "offset": 1})
+        assert response_paginated.status_code == status.HTTP_200_OK
+        assert len(response_paginated.data["results"]) == 2
 
     def test_create_leave_request(self, mock_check, auth_client):
         employee = EmployeeFactory()
@@ -394,14 +408,14 @@ class TestHrmAPI:
             salary_period="2026-05",
             base_salary=5000000.00,
             net_pay=5000000.00,
-            status="draft",
+            status="approved",
         )
         SalarySlipFactory(
             employee=emp2,
             salary_period="2026-05",
             base_salary=6000000.00,
             net_pay=6000000.00,
-            status="draft",
+            status="approved",
         )
 
         url = "/api/v1/hrm/salary-slips/bulk-confirm-pay/"

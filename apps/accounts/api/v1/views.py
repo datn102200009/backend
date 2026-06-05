@@ -53,3 +53,31 @@ class RoleListAPIView(APIView):
         roles = role_list()
         serializer = RoleSerializer(roles, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def auth_me_view(request):
+    """
+    API Lấy thông tin user hiện tại và danh sách quyền hạn.
+
+    GET /api/v1/accounts/auth/me/
+    """
+    user = request.user
+    permissions = []
+    role_name = None
+    if user.role:
+        role_name = user.role.name
+        permissions = list(user.role.permissions.values_list("permission__code", flat=True))
+
+    return Response(
+        {
+            "id": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "role": role_name,
+            "employee_id": user.employee_id,
+            "permissions": permissions,
+        },
+        status=status.HTTP_200_OK,
+    )

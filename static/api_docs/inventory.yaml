@@ -80,6 +80,26 @@ components:
         target_warehouse_name:
           type: string
           nullable: true
+        qc_status:
+          type: string
+          example: "PENDING"
+        latest_cert:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            cert_id:
+              type: string
+            result:
+              type: string
+            remarks:
+              type: string
+              nullable: true
+            issue_date:
+              type: string
+              format: date
     StockEntry:
       type: object
       properties:
@@ -110,6 +130,19 @@ components:
         sales_order_id:
           type: string
           format: uuid
+          nullable: true
+        vendor_name:
+          type: string
+          nullable: true
+        shipment_id:
+          type: string
+          format: uuid
+          nullable: true
+        shipment_num:
+          type: string
+          nullable: true
+        shipment_status:
+          type: string
           nullable: true
         details:
           type: array

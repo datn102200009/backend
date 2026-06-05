@@ -44,13 +44,14 @@ components:
         vendor_id:
           type: string
           format: uuid
-        status:
-          type: string
-          enum: [draft, pending, completed, cancelled]
         advance_paid_amount:
           type: number
           format: double
           minimum: 0
+        expected_delivery_date:
+          type: string
+          format: date
+          nullable: true
         lines:
           type: array
           minItems: 1
@@ -88,6 +89,9 @@ components:
         line_total:
           type: number
           format: double
+        receipt_fulfillment_rate:
+          type: number
+          format: double
 
     PurchaseOrder:
       type: object
@@ -107,6 +111,16 @@ components:
           type: number
           format: double
         advance_paid_amount:
+          type: number
+          format: double
+        expected_delivery_date:
+          type: string
+          format: date
+          nullable: true
+        receipt_fulfillment_rate:
+          type: number
+          format: double
+        payment_fulfillment_rate:
           type: number
           format: double
         created_at:
@@ -179,6 +193,30 @@ components:
         line_total:
           type: number
           format: double
+        qty_fulfillment_rate:
+          type: number
+          format: double
+          nullable: true
+        qc_status:
+          type: string
+          example: "PENDING"
+        latest_cert:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            cert_id:
+              type: string
+            result:
+              type: string
+            remarks:
+              type: string
+              nullable: true
+            issue_date:
+              type: string
+              format: date
 
     PurchaseInvoice:
       type: object
@@ -203,13 +241,24 @@ components:
           type: string
         status:
           type: string
-          enum: [unpaid, partial, paid, cancelled]
+          enum: [unpaid, partial, paid, blocked_for_payment, cancelled]
         total_amount:
           type: number
           format: double
         paid_amount:
           type: number
           format: double
+        block_reason:
+          type: string
+          nullable: true
+        due_date:
+          type: string
+          format: date
+          nullable: true
+        qty_fulfillment_rate:
+          type: number
+          format: double
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -220,6 +269,244 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PurchaseInvoiceLine'
+
+    PayInvoiceInput:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    LandedCostAllocationInput:
+      type: object
+      required:
+        - shipment_id
+        - total_logistic_fees
+      properties:
+        shipment_id:
+          type: string
+          format: uuid
+        total_logistic_fees:
+          type: number
+          format: double
+          minimum: 0.01
+
+    Shipment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shipment_num:
+          type: string
+        name:
+          type: string
+        total_logistic_fees:
+          type: number
+          format: double
+        status:
+          type: string
+          enum: [draft, arrived, inspected, completed]
+        remarks:
+          type: string
+          nullable: true
+        stock_entries:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              status:
+                type: string
+              purpose:
+                type: string
+        stock_entries_details:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              item_id:
+                type: string
+                format: uuid
+              item_code:
+                type: string
+              item_name:
+                type: string
+              uom_name:
+                type: string
+              quantity:
+                type: number
+              source_warehouse_id:
+                type: string
+                format: uuid
+                nullable: true
+              source_warehouse_name:
+                type: string
+                nullable: true
+              target_warehouse_id:
+                type: string
+                format: uuid
+                nullable: true
+              target_warehouse_name:
+                type: string
+                nullable: true
+              qc_status:
+                type: string
+              latest_cert:
+                type: object
+                nullable: true
+              stock_entry_id:
+                type: string
+                format: uuid
+              stock_entry_name:
+                type: string
+              stock_entry_status:
+                type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ShipmentInput:
+      type: object
+      required:
+        - shipment_num
+        - name
+      properties:
+        shipment_num:
+          type: string
+        name:
+          type: string
+        remarks:
+          type: string
+          nullable: true
+        stock_entry_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    APAging:
+      type: object
+      properties:
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_code:
+          type: string
+        vendor_name:
+          type: string
+        total_unpaid:
+          type: number
+          format: double
+        not_due:
+          type: number
+          format: double
+        overdue_1_30:
+          type: number
+          format: double
+        overdue_above_30:
+          type: number
+          format: double
+
+    TechnicalCertification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        cert_id:
+          type: string
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        stock_entry:
+          type: string
+          format: uuid
+          nullable: true
+        stock_entry_name:
+          type: string
+          nullable: true
+        cert_type:
+          type: string
+        assessment_fee:
+          type: number
+          nullable: true
+        expiry_date:
+          type: string
+          format: date
+          nullable: true
+        issue_date:
+          type: string
+          format: date
+        result:
+          type: string
+          enum: [PASSED, FAILED]
+        remarks:
+          type: string
+          nullable: true
+
+    TechnicalCertificationCreateInput:
+      type: object
+      required:
+        - item_id
+        - stock_entry_id
+        - cert_type
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        stock_entry_id:
+          type: string
+          format: uuid
+        cert_type:
+          type: string
+        assessment_fee:
+          type: number
+          nullable: true
+        expiry_date:
+          type: string
+          format: date
+          nullable: true
+        result:
+          type: string
+          enum: [PASSED, FAILED]
+          default: PASSED
+        remarks:
+          type: string
+          nullable: true
+
+    PurchaseOrderCancelInput:
+      type: object
+      properties:
+        refund_deposit:
+          type: boolean
+          default: true
+          description: "Có nhận lại tiền cọc hay không (khi chưa có hàng nhập kho)"
+        keep_goods:
+          type: boolean
+          default: false
+          description: "Có giữ lại phần hàng đã nhận hay không (khi đã có hàng nhập kho)"
 
   responses:
     UnauthorizedError:
@@ -249,6 +536,64 @@ security:
   - bearerAuth: []
 
 paths:
+  /purchasing/certifications/:
+    get:
+      summary: List QA/QC Certifications
+      description: Returns a list of technical certifications (QC results).
+      tags:
+        - Purchasing QC
+      parameters:
+        - name: item_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: stock_entry_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: A list of certifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TechnicalCertification'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Create QA/QC Certification
+      description: Log QA/QC inspection result for an item in a specific stock entry.
+      tags:
+        - Purchasing QC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TechnicalCertificationCreateInput'
+      responses:
+        '201':
+          description: Certification successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechnicalCertification'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
   /purchasing/orders/:
     get:
       summary: List Purchase Orders
@@ -445,6 +790,12 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseOrderCancelInput'
       responses:
         '200':
           description: Đơn mua hàng đã được hủy thành công.
@@ -507,3 +858,235 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/invoices/{pk}/verify/:
+    post:
+      summary: Verify Invoice (4-Way Matching)
+      description: Thực hiện đối soát 4 bên (Giá mua, Chất lượng, Số lượng thực nhận).
+      tags:
+        - Purchasing Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Kết quả đối soát cập nhật trên Hóa đơn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseInvoice'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/invoices/{pk}/pay/:
+    post:
+      summary: Pay Purchase Invoice
+      description: Tạo phiếu chi dòng tiền thanh toán cho hóa đơn (chặn nếu hóa đơn bị block).
+      tags:
+        - Purchasing Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayInvoiceInput'
+      responses:
+        '200':
+          description: Thanh toán thành công, trả về hóa đơn đã cập nhật.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseInvoice'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/shipments/:
+    get:
+      summary: List Shipments
+      description: Trả về danh sách các lô hàng.
+      tags:
+        - Shipments
+      responses:
+        '200':
+          description: Danh sách lô hàng.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Shipment'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      summary: Create Shipment
+      description: Tạo hồ sơ lô hàng mới và liên kết các phiếu nhập kho.
+      tags:
+        - Shipments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentInput'
+      responses:
+        '201':
+          description: Tạo thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /purchasing/shipments/{pk}/:
+    get:
+      summary: Get Shipment Detail
+      description: Trả về chi tiết của một lô hàng.
+      tags:
+        - Shipments
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Chi tiết lô hàng.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      summary: Update Shipment Status and Remarks
+      description: Cập nhật trạng thái và ghi chú của lô hàng (hỗ trợ chuyển draft -> arrived -> inspected).
+      tags:
+        - Shipments
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [draft, arrived, inspected, completed]
+                remarks:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Cập nhật thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/shipments/allocate/:
+    post:
+      summary: Allocate Landed Cost (Logistic Fees)
+      description: Ghi nhận tổng chi phí logistic và hoàn tất hồ sơ lô hàng.
+      tags:
+        - Shipments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LandedCostAllocationInput'
+      responses:
+        '200':
+          description: Phân bổ thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/reports/ap-aging/:
+    get:
+      summary: AP Aging Report
+      description: Xuất báo cáo tuổi nợ NCC gom nhóm ở database.
+      tags:
+        - Purchasing Reports
+      parameters:
+        - name: supplier_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Bảng báo cáo tuổi nợ.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APAging'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'

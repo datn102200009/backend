@@ -44,9 +44,6 @@ components:
         customer_id:
           type: string
           format: uuid
-        status:
-          type: string
-          enum: [draft, pending, pending_credit_approval, paid_unshipped, shipped_unpaid, completed, cancelled]
         advance_paid_amount:
           type: number
           format: double

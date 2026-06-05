@@ -177,11 +177,13 @@ class TestStockLedgerAPIContract:
         assert response.status_code == 200
 
         # Response structure
-        assert isinstance(response.data, list)
+        assert "count" in response.data
+        assert "results" in response.data
+        assert isinstance(response.data["results"], list)
 
         # Nếu có data
-        if len(response.data) > 0:
-            entry = response.data[0]
+        if len(response.data["results"]) > 0:
+            entry = response.data["results"][0]
             required_fields = ["id", "name", "status", "posting_date"]
             for field in required_fields:
                 assert field in entry, f"Missing field in entry: {field}"

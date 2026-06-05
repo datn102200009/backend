@@ -27,6 +27,7 @@ class SalesOrderListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.view_order")
         orders = sales_order_list()
         return Response(SalesOrderSerializer(orders, many=True).data)
 
@@ -47,6 +48,7 @@ class SalesOrderDetailUpdateDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.view_order")
         order = sales_order_detail(order_id=str(pk))
         return Response(SalesOrderSerializer(order).data)
 
@@ -58,7 +60,6 @@ class SalesOrderDetailUpdateDeleteAPIView(APIView):
             user=request.user,
             order_id=str(pk),
             customer_id=str(serializer.validated_data["customer_id"]),
-            status=serializer.validated_data.get("status", "draft"),
             advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             lines=serializer.validated_data["lines"],
         )
@@ -114,6 +115,7 @@ class SalesInvoiceListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.view_invoice")
         invoices = sales_invoice_list()
         return Response(SalesInvoiceSerializer(invoices, many=True).data)
 
@@ -122,5 +124,6 @@ class SalesInvoiceDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.view_invoice")
         invoice = sales_invoice_detail(invoice_id=str(pk))
         return Response(SalesInvoiceSerializer(invoice).data)
