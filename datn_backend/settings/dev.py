@@ -32,7 +32,12 @@ CACHES = {
 # Email backend for development (console)
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-# Password hashers for faster testing
+# Password hashers: default to secure algorithms, but support MD5PasswordHasher as fallback for legacy dev databases
 PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]

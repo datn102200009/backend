@@ -81,6 +81,19 @@ components:
           type: string
           nullable: true
           example: "Số 1 Đại Cồ Việt, Bách Khoa, Hai Bà Trưng, Hà Nội"
+        credit_limit:
+          type: number
+          format: double
+          example: 100000000.00
+          description: "Hạn mức nợ tối đa cho phép đại lý mua chịu"
+        payment_terms:
+          type: string
+          example: "NET30"
+          description: "Điều khoản thanh toán (ví dụ: NET30, NET45)"
+        is_credit_locked:
+          type: boolean
+          example: false
+          description: "Khóa tín dụng chủ động"
         is_active:
           type: boolean
           example: true
@@ -122,6 +135,19 @@ components:
           type: string
           nullable: true
           example: "Số 1 Đại Cồ Việt, Bách Khoa, Hai Bà Trưng, Hà Nội"
+        credit_limit:
+          type: number
+          format: double
+          example: 100000000.00
+          description: "Hạn mức nợ tối đa cho phép đại lý mua chịu"
+        payment_terms:
+          type: string
+          example: "NET30"
+          description: "Điều khoản thanh toán (ví dụ: NET30, NET45)"
+        is_credit_locked:
+          type: boolean
+          example: false
+          description: "Khóa tín dụng chủ động"
 security:
   - bearerAuth: []
 paths:

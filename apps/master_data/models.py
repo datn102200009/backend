@@ -243,6 +243,14 @@ class BOM(BaseModel):
         help_text="Số lượng thành phẩm tiêu chuẩn cho định mức này",
     )
     description = models.TextField(null=True, blank=True)
+    mold = models.ForeignKey(
+        "finance.FixedAsset",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="boms",
+    )
 
     class Meta:
         db_table = "bom"

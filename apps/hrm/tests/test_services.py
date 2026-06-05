@@ -739,20 +739,20 @@ class TestPayrollAndRewardDisciplineServices:
         emp2 = EmployeeFactory(employee_id="EMP9502", full_name="Emp 2")
         admin = UserFactory(username="admin_payroll")
 
-        # Khởi tạo 2 phiếu lương của kỳ 2026-05 dạng draft
+        # Khởi tạo 2 phiếu lương của kỳ 2026-05 dạng draft (sửa thành approved để test confirm & pay)
         slip1 = SalarySlipFactory(
             employee=emp1,
             salary_period="2026-05",
             base_salary=Decimal("5000000.00"),
             net_pay=Decimal("5000000.00"),
-            status="draft",
+            status="approved",
         )
         slip2 = SalarySlipFactory(
             employee=emp2,
             salary_period="2026-05",
             base_salary=Decimal("6000000.00"),
             net_pay=Decimal("6000000.00"),
-            status="draft",
+            status="approved",
         )
 
         # Phiếu lương của kỳ khác (không bị ảnh hưởng)
@@ -814,21 +814,21 @@ class TestPayrollAndRewardDisciplineServices:
             salary_period="2026-05",
             base_salary=Decimal("5000000.00"),
             net_pay=Decimal("5000000.00"),
-            status="draft",
+            status="approved",
         )
         slip_zero = SalarySlipFactory(
             employee=emp2,
             salary_period="2026-05",
             base_salary=Decimal("0.00"),
             net_pay=Decimal("0.00"),
-            status="draft",
+            status="approved",
         )
         slip_negative = SalarySlipFactory(
             employee=emp3,
             salary_period="2026-05",
             base_salary=Decimal("1000000.00"),
             net_pay=Decimal("-200000.00"),
-            status="draft",
+            status="approved",
         )
 
         # Act

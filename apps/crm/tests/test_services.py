@@ -12,6 +12,8 @@ from apps.sales.models import SalesOrder
 class TestCustomerServices:
     def test_customer_create_success(self):
         user = UserFactory()
+        from decimal import Decimal
+
         customer = customer_create(
             user=user,
             name="CUST-001",
@@ -20,10 +22,16 @@ class TestCustomerServices:
             contact_email="cust1@example.com",
             contact_phone="0987654321",
             address="123 Street",
+            credit_limit=Decimal("500000.00"),
+            payment_terms="NET30",
+            is_credit_locked=True,
         )
         assert customer.id is not None
         assert customer.name == "CUST-001"
         assert customer.customer_name == "Test Customer 1"
+        assert customer.credit_limit == Decimal("500000.00")
+        assert customer.payment_terms == "NET30"
+        assert customer.is_credit_locked is True
         assert Customer.objects.filter(id=customer.id).exists()
 
     def test_customer_create_duplicate_name(self):
@@ -36,6 +44,7 @@ class TestCustomerServices:
     def test_customer_update_success(self):
         user = UserFactory()
         customer = CustomerFactory(name="CUST-001", customer_name="Old Name")
+        from decimal import Decimal
 
         updated = customer_update(
             user=user,
@@ -46,6 +55,9 @@ class TestCustomerServices:
             contact_email="new@example.com",
             contact_phone="0123456789",
             address="456 Avenue",
+            credit_limit=Decimal("1500000.00"),
+            payment_terms="NET45",
+            is_credit_locked=True,
         )
 
         assert updated.name == "CUST-001-NEW"
@@ -54,6 +66,9 @@ class TestCustomerServices:
         assert updated.contact_email == "new@example.com"
         assert updated.contact_phone == "0123456789"
         assert updated.address == "456 Avenue"
+        assert updated.credit_limit == Decimal("1500000.00")
+        assert updated.payment_terms == "NET45"
+        assert updated.is_credit_locked is True
 
     def test_customer_update_not_found(self):
         user = UserFactory()

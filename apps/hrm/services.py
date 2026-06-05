@@ -332,7 +332,7 @@ def contract_terminate(
         PermissionChecker.check_permission(terminator, "hrm.change_employmentcontract")
 
     try:
-        contract = EmploymentContract.objects.get(id=contract_id)
+        contract = EmploymentContract.objects.select_for_update().get(id=contract_id)
     except EmploymentContract.DoesNotExist:
         raise ValidationException("Hợp đồng không tồn tại")
 
@@ -618,9 +618,10 @@ def contract_terminate(
             defaults={
                 "payment_type": "pay",
                 "category": "Chi trả lương nhân viên thôi việc",
+                "payment_method": "bank_transfer",
                 "amount": net_pay,
                 "payment_date": date.today(),
-                "remarks": f"Quyết toán và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+                "remarks": f"Quyết toán thôi việc và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {net_pay:,.2f}đ.",
             },
         )
     elif net_pay < Decimal("0.00"):
@@ -630,9 +631,10 @@ def contract_terminate(
             defaults={
                 "payment_type": "receive",
                 "category": "Thu hồi bồi thường nhân viên thôi việc",
+                "payment_method": "bank_transfer",
                 "amount": abs(net_pay),
                 "payment_date": date.today(),
-                "remarks": f"Quyết toán và thu hồi tiền bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) thôi việc ngày {termination_date}",
+                "remarks": f"Quyết toán thôi việc và thu hồi bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {abs(net_pay):,.2f}đ.",
             },
         )
 
@@ -886,6 +888,14 @@ def attendance_batch_record(
             f"Kỳ lương {salary_period} đã được thanh toán 100%. Không cho phép chỉnh sửa chấm công."
         )
 
+    employee_ids = [rec.get("employee_id") for rec in records if rec.get("employee_id")]
+    employees = {str(emp.id): emp for emp in Employee.objects.filter(id__in=employee_ids)}
+
+    existing_attendances = {
+        str(att.employee_id): att
+        for att in Attendance.objects.select_for_update().filter(date=date, employee_id__in=employee_ids)
+    }
+
     result = []
     for rec in records:
         employee_id = rec.get("employee_id")
@@ -893,28 +903,41 @@ def attendance_batch_record(
         if not employee_id or not status:
             raise ValidationException("Thông tin nhân viên và trạng thái chấm công là bắt buộc")
 
-        try:
-            employee = Employee.objects.get(id=employee_id)
-        except Employee.DoesNotExist:
+        employee = employees.get(str(employee_id))
+        if not employee:
             raise ValidationException(f"Nhân viên ID {employee_id} không tồn tại")
 
         work_hours = Decimal(str(rec.get("work_hours", 8.00)))
         overtime_hours = Decimal(str(rec.get("overtime_hours", 0.00)))
         remarks = rec.get("remarks")
 
-        # Tìm bản ghi chấm công đã tồn tại
-        attendance, created = Attendance.objects.get_or_create(
-            employee=employee,
-            date=date,
-            defaults={
-                "status": status,
-                "work_hours": work_hours,
-                "overtime_hours": overtime_hours,
-                "remarks": remarks,
-            },
-        )
-
-        if not created:
+        attendance = existing_attendances.get(str(employee_id))
+        if not attendance:
+            # Tạo mới nếu chưa tồn tại
+            attendance = Attendance.objects.create(
+                employee=employee,
+                date=date,
+                status=status,
+                work_hours=work_hours,
+                overtime_hours=overtime_hours,
+                remarks=remarks,
+            )
+            # Ghi log create
+            create_system_log(
+                user=creator,
+                action="create",
+                table_name="attendance",
+                record_id=str(attendance.id),
+                new_value={
+                    "employee_id": str(employee.id),
+                    "date": str(date),
+                    "status": status,
+                    "work_hours": str(work_hours),
+                    "overtime_hours": str(overtime_hours),
+                    "remarks": remarks,
+                },
+            )
+        else:
             # Cập nhật nếu đã tồn tại
             old_status = attendance.status
             old_work_hours = attendance.work_hours
@@ -940,22 +963,6 @@ def attendance_batch_record(
                     "remarks": old_remarks,
                 },
                 new_value={
-                    "status": status,
-                    "work_hours": str(work_hours),
-                    "overtime_hours": str(overtime_hours),
-                    "remarks": remarks,
-                },
-            )
-        else:
-            # Ghi log create
-            create_system_log(
-                user=creator,
-                action="create",
-                table_name="attendance",
-                record_id=str(attendance.id),
-                new_value={
-                    "employee_id": str(employee.id),
-                    "date": str(date),
                     "status": status,
                     "work_hours": str(work_hours),
                     "overtime_hours": str(overtime_hours),
@@ -1043,6 +1050,9 @@ def leave_request_approve(
 
     if leave_request.status != "pending":
         raise ValidationException(f"Đơn xin nghỉ phép đã ở trạng thái: {leave_request.status}")
+
+    if leave_request.employee.employment_status != "active":
+        raise ValidationException("Nhân viên xin nghỉ phép phải ở trạng thái đang làm việc (active).")
 
     if not approved_by:
         try:
@@ -1183,13 +1193,26 @@ def reward_record_create(
     if amount is not None:
         amount = Decimal(str(amount))
 
+    salary_slip_id = data.get("salary_slip_id")
+    if salary_slip_id:
+        from apps.finance.models import SalarySlip
+
+        try:
+            slip = SalarySlip.objects.get(id=salary_slip_id)
+        except SalarySlip.DoesNotExist:
+            raise ValidationException("Phiếu lương không tồn tại")
+        if str(slip.employee.id) != str(employee.id):
+            raise ValidationException("Phiếu lương không thuộc về nhân viên này")
+        if slip.status == "paid":
+            raise ValidationException("Không thể gán khen thưởng cho phiếu lương đã chi trả")
+
     reward = RewardRecord.objects.create(
         employee=employee,
         reward_date=data.get("reward_date"),
         reward_type=data.get("reward_type"),
         amount=amount,
         description=data.get("description"),
-        salary_slip_id=data.get("salary_slip_id"),
+        salary_slip_id=salary_slip_id,
     )
 
     create_system_log(
@@ -1231,6 +1254,19 @@ def discipline_record_create(
     if penalty_amount is not None:
         penalty_amount = Decimal(str(penalty_amount))
 
+    salary_slip_id = data.get("salary_slip_id")
+    if salary_slip_id:
+        from apps.finance.models import SalarySlip
+
+        try:
+            slip = SalarySlip.objects.get(id=salary_slip_id)
+        except SalarySlip.DoesNotExist:
+            raise ValidationException("Phiếu lương không tồn tại")
+        if str(slip.employee.id) != str(employee.id):
+            raise ValidationException("Phiếu lương không thuộc về nhân viên này")
+        if slip.status == "paid":
+            raise ValidationException("Không thể gán kỷ luật cho phiếu lương đã chi trả")
+
     discipline = DisciplineRecord.objects.create(
         employee=employee,
         incident_date=data.get("incident_date"),
@@ -1238,7 +1274,7 @@ def discipline_record_create(
         discipline_type=data.get("discipline_type"),
         description=data.get("description"),
         penalty_amount=penalty_amount,
-        salary_slip_id=data.get("salary_slip_id"),
+        salary_slip_id=salary_slip_id,
         file_url=data.get("file_url"),
     )
 
@@ -1343,7 +1379,7 @@ def payroll_initialize_period(
     if SalarySlip.objects.filter(salary_period=salary_period).exists():
         raise ValidationException("Kỳ lương đã được khởi tạo trước đó.")
 
-    active_employees = Employee.objects.filter(employment_status="active")
+    active_employees = Employee.objects.filter(employment_status="active").iterator(chunk_size=100)
     slips = []
 
     for employee in active_employees:
@@ -1494,22 +1530,28 @@ def payroll_calculate_salary(
     )
 
     reward_total = Decimal("0.00")
+    rewards_to_update = []
     for r in rewards:
         reward_total += r.amount or Decimal("0.00")
-        if r.salary_slip != slip:
+        if r.salary_slip_id != slip.id:
             r.salary_slip = slip
-            r.save(update_fields=["salary_slip"])
+            rewards_to_update.append(r)
+    if rewards_to_update:
+        RewardRecord.objects.bulk_update(rewards_to_update, ["salary_slip"])
 
     disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
         Q(salary_slip__isnull=True) | Q(salary_slip=slip)
     )
 
     discipline_total = Decimal("0.00")
+    disciplines_to_update = []
     for d in disciplines:
         discipline_total += d.penalty_amount or Decimal("0.00")
-        if d.salary_slip != slip:
+        if d.salary_slip_id != slip.id:
             d.salary_slip = slip
-            d.save(update_fields=["salary_slip"])
+            disciplines_to_update.append(d)
+    if disciplines_to_update:
+        DisciplineRecord.objects.bulk_update(disciplines_to_update, ["salary_slip"])
 
     allowance_amount = Decimal("0.00")
 
@@ -1545,6 +1587,7 @@ def payroll_calculate_salary(
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
+    slip.status = "approved"
     slip.remarks = remarks
 
     total_days = float(working_days + paid_leave_days)
@@ -1650,9 +1693,7 @@ def payroll_bulk_confirm_and_pay(
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
     # 1. Lấy danh sách các slip chưa paid trong kỳ kèm employee để tránh N+1
-    slips = list(
-        SalarySlip.objects.filter(salary_period=salary_period).exclude(status="paid").select_related("employee")
-    )
+    slips = list(SalarySlip.objects.filter(salary_period=salary_period, status="approved").select_related("employee"))
     if not slips:
         return []
 
@@ -1691,15 +1732,24 @@ def payroll_bulk_confirm_and_pay(
         # Chuẩn bị giao dịch CashFlowTransaction nếu chưa tồn tại
         tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
         if tx_name not in existing_tx_names:
+            try:
+                parts = salary_period.split("-")
+                period_year = parts[0]
+                period_month = parts[1]
+            except Exception:
+                period_year = ""
+                period_month = salary_period
+
             if slip.net_pay > 0:
                 txs_to_create.append(
                     CashFlowTransaction(
                         name=tx_name,
                         payment_type="pay",
                         category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
                         amount=slip.net_pay,
                         payment_date=date.today(),
-                        remarks=f"Chi trả lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period}",
+                        remarks=f"Chi trả lương tháng {period_month}/{period_year} cho nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Thực lĩnh: {slip.net_pay:,.2f}đ. Phương thức: Chuyển khoản.",
                     )
                 )
             elif slip.net_pay < 0:
@@ -1708,9 +1758,10 @@ def payroll_bulk_confirm_and_pay(
                         name=tx_name,
                         payment_type="receive",
                         category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
                         amount=abs(slip.net_pay),
                         payment_date=date.today(),
-                        remarks=f"Thu hồi lương nhân viên {slip.employee.full_name} ({slip.employee.employee_id}) kỳ lương {salary_period} do âm lương",
+                        remarks=f"Thu hồi lương âm tháng {period_month}/{period_year} của nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Số tiền: {abs(slip.net_pay):,.2f}đ.",
                     )
                 )
 

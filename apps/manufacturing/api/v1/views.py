@@ -58,6 +58,7 @@ def bom_create_view(request):
         item_id=str(serializer.validated_data["item_id"]),
         quantity=serializer.validated_data.get("quantity"),
         description=serializer.validated_data.get("description"),
+        mold_id=serializer.validated_data.get("mold_id") and str(serializer.validated_data["mold_id"]),
         items=serializer.validated_data["items"],
     )
 
@@ -81,14 +82,20 @@ def bom_update_view(request, bom_id):
     serializer = BOMUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    bom = bom_update(
-        user=user,
-        bom_id=bom_id,
-        name=serializer.validated_data.get("name"),
-        quantity=serializer.validated_data.get("quantity"),
-        description=serializer.validated_data.get("description"),
-        items=serializer.validated_data.get("items"),
-    )
+    update_kwargs = {
+        "user": user,
+        "bom_id": bom_id,
+        "name": serializer.validated_data.get("name"),
+        "quantity": serializer.validated_data.get("quantity"),
+        "description": serializer.validated_data.get("description"),
+        "items": serializer.validated_data.get("items"),
+    }
+    if "mold_id" in serializer.validated_data:
+        update_kwargs["mold_id"] = (
+            str(serializer.validated_data["mold_id"]) if serializer.validated_data["mold_id"] else None
+        )
+
+    bom = bom_update(**update_kwargs)
 
     result = bom_detail(bom_id=str(bom.id))
     return Response(BOMDetailSerializer(result).data, status=status.HTTP_200_OK)

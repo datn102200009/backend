@@ -20,6 +20,13 @@ class PurchaseOrder(BaseModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     advance_paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã ứng trước")
+    expected_delivery_date = models.DateField(null=True, blank=True, verbose_name="Ngày giao hàng dự kiến")
+    receipt_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ nhận hàng tổng (%)"
+    )
+    payment_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ thanh toán (%)"
+    )
 
     class Meta:
         db_table = "purchase_order"
@@ -36,6 +43,9 @@ class PurchaseOrderLine(BaseModel):
     quantity = models.DecimalField(max_digits=15, decimal_places=2, verbose_name="Số lượng")
     unit_price = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đơn giá")
     line_total = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thành tiền")
+    receipt_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ nhận hàng dòng (%)"
+    )
 
     class Meta:
         db_table = "purchase_order_line"
@@ -46,11 +56,41 @@ class PurchaseOrderLine(BaseModel):
         return f"{self.order.id} - {self.item.item_name}"
 
 
+class Shipment(BaseModel):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Nháp (Đang đi đường)"
+        ARRIVED = "arrived", "Đã cập bến (Chờ QC)"
+        INSPECTED = "inspected", "Đã kiểm định (Chờ nhập kho)"
+        COMPLETED = "completed", "Hoàn tất"
+
+    shipment_num = models.CharField(max_length=100, unique=True, verbose_name="Mã lô hàng")
+    name = models.CharField(max_length=255, verbose_name="Tên lô hàng/Hồ sơ lô hàng")
+    total_logistic_fees = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0.00, verbose_name="Tổng chi phí logistic"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        verbose_name="Trạng thái",
+    )
+    remarks = models.TextField(null=True, blank=True, verbose_name="Ghi chú")
+
+    class Meta:
+        db_table = "shipment"
+        verbose_name = "Shipment"
+        verbose_name_plural = "Shipments"
+
+    def __str__(self):
+        return f"{self.shipment_num} - {self.name}"
+
+
 class PurchaseInvoice(BaseModel):
     class Status(models.TextChoices):
         UNPAID = "unpaid", "Chưa thanh toán"
         PARTIAL = "partial", "Thanh toán một phần"
         PAID = "paid", "Đã thanh toán"
+        BLOCKED_FOR_PAYMENT = "blocked_for_payment", "Bị chặn thanh toán"
         CANCELLED = "cancelled", "Đã hủy"
 
     order = models.ForeignKey(
@@ -75,11 +115,19 @@ class PurchaseInvoice(BaseModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNPAID, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã thanh toán")
+    block_reason = models.TextField(null=True, blank=True, verbose_name="Lý do chặn thanh toán")
+    due_date = models.DateField(null=True, blank=True, verbose_name="Hạn thanh toán")
+    qty_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="Tỷ lệ hoàn thành số lượng tổng (%)"
+    )
 
     class Meta:
         db_table = "purchase_invoice"
         verbose_name = "Purchase Invoice"
         verbose_name_plural = "Purchase Invoices"
+        indexes = [
+            models.Index(fields=["due_date", "status", "vendor"]),
+        ]
 
     def __str__(self):
         return f"Purchase Invoice {self.id} - {self.get_status_display()}"
@@ -93,6 +141,9 @@ class PurchaseInvoiceLine(BaseModel):
     import_tax = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thuế nhập khẩu")
     vat_tax = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thuế VAT")
     line_total = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thành tiền")
+    qty_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="Tỷ lệ hoàn thành số lượng dòng (%)"
+    )
 
     class Meta:
         db_table = "purchase_invoice_line"

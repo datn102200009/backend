@@ -245,3 +245,53 @@ class TestStockInApprove:
             )
 
         assert "Draft" in str(exc_info.value)
+
+    def test_stock_in_approve_backorder_creation(self, warehouse_keeper_user):
+        """Test cơ chế Backorder tự động khi thực nhận nhỏ hơn số lượng đặt hàng."""
+        from apps.inventory.services import stock_entry_update
+        from apps.inventory.tests.factories import SupplierFactory
+        from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
+        from apps.purchasing.services import purchase_order_approve, purchase_order_create
+
+        user = warehouse_keeper_user
+        from apps.accounts.models import RolePermission
+        from apps.inventory.tests.factories import PermissionFactory
+
+        for p in ["purchasing.create_order", "purchasing.approve_order", "purchasing.update_order"]:
+            perm = PermissionFactory(code=p)
+            RolePermission.objects.get_or_create(role=user.role, permission=perm)
+
+        warehouse = WarehouseFactory()
+        item = ItemFactory()
+
+        # 1. Create and approve a purchase order for 10 units
+        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(SupplierFactory().id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Retrieve automatically created draft StockEntry and Invoice
+        stock_entry = order.stock_entries.filter(status="draft").first()
+        invoice = order.invoices.filter(status="unpaid").first()
+
+        # 2. Update stock entry detail quantity to 4.00 (partial delivery)
+        detail = stock_entry.details.first()
+        stock_entry_update(
+            user=user,
+            stock_entry_id=str(stock_entry.id),
+            details=[
+                {"detail_id": str(detail.id), "target_warehouse_id": str(warehouse.id), "quantity": Decimal("4.00")}
+            ],
+        )
+
+        # 3. Approve stock entry (partial receipt of 4 units out of 10)
+        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+
+        stock_entry.refresh_from_db()
+        assert stock_entry.status == "posted"
+
+        # 4. Verify no backorder entities are generated
+        new_draft_se = order.stock_entries.filter(status="draft").first()
+        assert new_draft_se is None
+
+        # Verify that we only have the original invoice and no other new invoices
+        assert order.invoices.count() == 1

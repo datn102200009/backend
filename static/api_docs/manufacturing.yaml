@@ -80,6 +80,16 @@ components:
           nullable: true
         is_active:
           type: boolean
+        mold:
+          type: string
+          format: uuid
+          nullable: true
+        mold_code:
+          type: string
+          nullable: true
+        mold_name:
+          type: string
+          nullable: true
         items_count:
           type: integer
         items:
@@ -109,6 +119,10 @@ components:
         description:
           type: string
           nullable: true
+        mold_id:
+          type: string
+          format: uuid
+          nullable: true
         items:
           type: array
           items:
@@ -125,10 +139,16 @@ components:
     BOMUpdateInput:
       type: object
       properties:
+        name:
+          type: string
         quantity:
           type: number
         description:
           type: string
+          nullable: true
+        mold_id:
+          type: string
+          format: uuid
           nullable: true
         items:
           type: array

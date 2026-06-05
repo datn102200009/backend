@@ -62,7 +62,10 @@ class SalesOrderLineInputSerializer(serializers.Serializer):
 
 class SalesOrderInputSerializer(serializers.Serializer):
     customer_id = serializers.UUIDField()
-    status = serializers.ChoiceField(choices=SalesOrder.Status.choices, required=False)
+    status = serializers.CharField(read_only=True)
+    advance_paid_amount = serializers.DecimalField(
+        max_digits=15, decimal_places=2, required=False, default=0, min_value=0
+    )
     lines = serializers.ListField(child=SalesOrderLineInputSerializer(), allow_empty=False)
 
 

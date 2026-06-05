@@ -45,6 +45,7 @@ def auth_login(*, username: str, password: str) -> dict:
 
     # Tạo JWT token
     refresh = RefreshToken.for_user(user)
+    permissions = list(user.role.permissions.values_list("permission__code", flat=True)) if user.role else []
 
     return {
         "refresh": str(refresh),
@@ -53,4 +54,5 @@ def auth_login(*, username: str, password: str) -> dict:
         "username": user.username,
         "email": user.email,
         "role": user.role.name if user.role else None,
+        "permissions": permissions,
     }

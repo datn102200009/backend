@@ -147,6 +147,15 @@ def stock_in_approve(
 
         purchase_order_update_status(stock_entry.purchase_order)
 
+    # Kích hoạt đối soát 4 bên cho các hóa đơn liên kết với PO
+    if stock_entry.purchase_order:
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.services import verify_4_way_matching
+
+        invoices = PurchaseInvoice.objects.filter(order=stock_entry.purchase_order)
+        for invoice in invoices:
+            verify_4_way_matching(invoice_id=str(invoice.id))
+
     # Ghi log
     create_system_log(
         user=user,
@@ -271,8 +280,8 @@ def stock_issue_approve(
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_issue_approve")
 
-    # Lấy phiếu
-    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    # Lấy và khóa phiếu kho
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
 
@@ -282,9 +291,16 @@ def stock_issue_approve(
         )
 
     # Ghi sổ cái cho từng chi tiết (âm tính vì là xuất kho)
-    for detail in stock_entry.details.all():
+    # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
+    details = list(stock_entry.details.select_related("item", "source_warehouse").all())
+    details.sort(key=lambda d: d.item_id)
+
+    for detail in details:
         if not detail.source_warehouse:
             raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho xuất.")
+
+        # Khóa dòng sản phẩm (Item) để ngăn race condition trong tính toán tồn kho khả dụng
+        Item.objects.select_for_update().get(id=detail.item_id)
 
         # Kiểm tra tồn kho khả dụng tại thời điểm duyệt
         available_qty = _get_available_stock(detail.item, detail.source_warehouse)
@@ -439,8 +455,8 @@ def stock_transfer_approve(
     # Kiểm tra phân quyền
     PermissionChecker.check_permission(user, "inventory.stock_transfer_approve")
 
-    # Lấy phiếu
-    stock_entry = StockEntry.objects.filter(id=stock_entry_id).first()
+    # Lấy và khóa phiếu kho
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
     if not stock_entry:
         raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
 
@@ -449,8 +465,28 @@ def stock_transfer_approve(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
 
+    # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
+    details = list(stock_entry.details.select_related("item", "source_warehouse", "target_warehouse").all())
+    details.sort(key=lambda d: d.item_id)
+
     # Double Transaction: Ghi sổ cái cho cả kho nguồn (âm) và kho đích (dương)
-    for detail in stock_entry.details.all():
+    for detail in details:
+        if not detail.source_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho xuất.")
+        if not detail.target_warehouse:
+            raise ValidationException(f"Dòng sản phẩm '{detail.item.item_code}' chưa được chỉ định kho nhập.")
+
+        # Khóa dòng sản phẩm (Item) để ngăn race condition trong tính toán tồn kho khả dụng kho nguồn
+        Item.objects.select_for_update().get(id=detail.item_id)
+
+        # Kiểm tra tồn kho khả dụng tại thời điểm duyệt của kho nguồn
+        available_qty = _get_available_stock(detail.item, detail.source_warehouse)
+        if available_qty < detail.quantity:
+            raise ValidationException(
+                f"Không đủ tồn kho cho sản phẩm '{detail.item.item_code}' tại kho nguồn '{detail.source_warehouse.name}'. "
+                f"Khả dụng: {available_qty}, Yêu cầu: {detail.quantity}"
+            )
+
         # Trừ kho nguồn
         StockLedger.objects.create(
             item=detail.item,
@@ -618,3 +654,145 @@ def stock_entry_update(
     )
 
     return stock_entry
+
+
+@transaction.atomic
+def stock_entry_cancel(
+    *,
+    user: User,
+    stock_entry: StockEntry,
+) -> StockEntry:
+    """
+    Chuyển trạng thái phiếu kho Draft sang Cancelled.
+    """
+    # Khóa phiếu kho bằng select_for_update() để chống race condition khi hủy
+    stock_entry = StockEntry.objects.select_for_update().get(id=stock_entry.id)
+
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"
+
+    PermissionChecker.check_permission(user, permission)
+
+    if stock_entry.status != "draft":
+        raise ValidationException("Chỉ có thể hủy phiếu kho ở trạng thái Draft.")
+
+    stock_entry.status = "cancelled"
+    stock_entry.save()
+
+    create_system_log(
+        user=user,
+        action="cancel",
+        table_name="stock_entry",
+        record_id=str(stock_entry.id),
+        new_value={"status": "cancelled"},
+    )
+    return stock_entry
+
+
+@transaction.atomic
+def stock_entry_reverse(
+    *,
+    user: User,
+    original_entry: StockEntry,
+    remarks: str,
+) -> StockEntry:
+    """
+    Tạo một phiếu kho đảo ngược (đối ứng) ở trạng thái posted, và ghi sổ cái đối ứng.
+    """
+    purpose = original_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in_approve"
+        reverse_purpose = "issue"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue_approve"
+        reverse_purpose = "receipt"
+    else:
+        permission = "inventory.stock_in_approve"
+        reverse_purpose = "receipt"
+
+    PermissionChecker.check_permission(user, permission)
+
+    if original_entry.status != "posted":
+        raise ValidationException("Chỉ có thể đảo ngược phiếu kho đã ghi sổ (posted).")
+
+    import uuid
+
+    from django.utils import timezone
+
+    reverse_name = f"ST-REV-{reverse_purpose.upper()}-{str(uuid.uuid4())[:8]}"
+    reverse_entry = StockEntry(
+        name=reverse_name,
+        purpose=reverse_purpose,
+        posting_date=timezone.now(),
+        remarks=remarks,
+        status="posted",
+        purchase_order=original_entry.purchase_order,
+        sales_order=original_entry.sales_order,
+    )
+    reverse_entry.save()
+
+    details_to_create = []
+    ledgers_to_create = []
+
+    for detail in original_entry.details.all():
+        if original_entry.purpose == "receipt":
+            source_wh = detail.target_warehouse
+            target_wh = None
+            qty_sign = -1
+            ledger_voucher_type = "Stock Issue (Reversal)"
+        elif original_entry.purpose == "issue":
+            source_wh = None
+            target_wh = detail.source_warehouse
+            qty_sign = 1
+            ledger_voucher_type = "Stock In (Reversal)"
+        else:
+            source_wh = detail.target_warehouse
+            target_wh = detail.source_warehouse
+            qty_sign = -1
+            ledger_voucher_type = "Stock Reversal"
+
+        rev_detail = StockEntryDetail(
+            parent=reverse_entry,
+            item=detail.item,
+            quantity=detail.quantity,
+            source_warehouse=source_wh,
+            target_warehouse=target_wh,
+        )
+        details_to_create.append(rev_detail)
+
+        rev_ledger = StockLedger(
+            item=detail.item,
+            warehouse=source_wh if source_wh else target_wh,
+            posting_date=reverse_entry.posting_date,
+            actual_quantity=qty_sign * detail.quantity,
+            voucher_number=reverse_entry.name,
+            voucher_type=ledger_voucher_type,
+        )
+        ledgers_to_create.append(rev_ledger)
+
+    if details_to_create:
+        StockEntryDetail.objects.bulk_create(details_to_create, batch_size=1000)
+    if ledgers_to_create:
+        StockLedger.objects.bulk_create(ledgers_to_create, batch_size=1000)
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="stock_entry",
+        record_id=str(reverse_entry.id),
+        new_value={
+            "name": reverse_entry.name,
+            "status": reverse_entry.status,
+            "is_reversal": True,
+            "original_entry_id": str(original_entry.id),
+        },
+    )
+
+    return reverse_entry

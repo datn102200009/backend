@@ -25,7 +25,7 @@ def item_list(*, search: Optional[str] = None, status: Optional[str] = None) -> 
     Get a list of items with optional filtering.
     Optimized with select_related for item_group and stock_uom.
     """
-    qs = Item.objects.select_related("item_group", "stock_uom").order_by("-created_at")
+    qs = Item.objects.select_related("item_group", "stock_uom").order_by("-created_at", "id")
 
     if search:
         qs = qs.filter(Q(item_code__icontains=search) | Q(item_name__icontains=search))

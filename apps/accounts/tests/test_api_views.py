@@ -24,6 +24,32 @@ class TestAuthLoginAPI:
         assert "access" in data
         assert "refresh" in data
         assert data["username"] == "api_user"
+        assert "permissions" in data
+        assert isinstance(data["permissions"], list)
+
+    def test_login_endpoint_returns_permissions(self, api_client):
+        # Arrange
+        from apps.accounts.models import Permission, Role, RolePermission
+
+        role = Role.objects.create(name="Tester", description="Tester Role")
+        perm, _ = Permission.objects.get_or_create(
+            code="accounts.test_permission", defaults={"name": "Test Permission"}
+        )
+        RolePermission.objects.create(role=role, permission=perm)
+        user = UserFactory(username="perm_user", password_hash="pass123", role=role)
+
+        # Act
+        response = api_client.post(
+            "/api/v1/accounts/auth/login/",
+            data={"username": "perm_user", "password": "pass123"},
+            format="json",
+        )
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert "permissions" in data
+        assert "accounts.test_permission" in data["permissions"]
 
     def test_login_endpoint_missing_fields(self, api_client):
         # Act
@@ -91,3 +117,29 @@ class TestRoleListAPI:
         role_names = [r["name"] for r in data]
         assert "Manager" in role_names
         assert "Supervisor" in role_names
+
+
+@pytest.mark.django_db
+class TestAuthMeAPI:
+
+    def test_auth_me_unauthenticated(self, api_client):
+        response = api_client.get("/api/v1/accounts/auth/me/")
+        assert response.status_code == 401
+
+    def test_auth_me_success(self, api_client):
+        from apps.accounts.models import Permission, Role, RolePermission
+
+        role = Role.objects.create(name="Tester", description="Tester Role")
+        perm, _ = Permission.objects.get_or_create(
+            code="accounts.test_permission", defaults={"name": "Test Permission"}
+        )
+        RolePermission.objects.create(role=role, permission=perm)
+        user = UserFactory(username="perm_user", role=role)
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get("/api/v1/accounts/auth/me/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "perm_user"
+        assert data["role"] == "Tester"
+        assert "accounts.test_permission" in data["permissions"]

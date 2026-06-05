@@ -276,7 +276,8 @@ def stock_ledger_balance_view(request):
         if not warehouse:
             raise NotFoundException(f"Warehouse với ID {warehouse_id} không tồn tại")
 
-    data = stock_ledger_balance(warehouse)
+    detailed = request.query_params.get("detailed", "false").lower() == "true"
+    data = stock_ledger_balance(warehouse, detailed=detailed)
     return Response(list(data), status=status.HTTP_200_OK)
 
 
@@ -286,7 +287,7 @@ def stock_ledger_balance_view(request):
 @api_view(["GET"])
 def stock_entry_list_view(request):
     """
-    Lấy danh sách phiếu stock entry theo trạng thái.
+    Lấy danh sách phiếu stock entry theo trạng thái, hỗ trợ phân trang.
 
     GET /api/v1/inventory/stock-entry/list/?status=draft&purpose=receipt
     """
@@ -303,8 +304,16 @@ def stock_entry_list_view(request):
     purpose = request.query_params.get("purpose")
 
     entries = stock_entry_list_by_status(status_param, purpose)
-    serializer = StockEntrySerializer(entries, many=True)
 
+    from rest_framework.pagination import LimitOffsetPagination
+
+    paginator = LimitOffsetPagination()
+    page = paginator.paginate_queryset(entries, request)
+    if page is not None:
+        serializer = StockEntrySerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    serializer = StockEntrySerializer(entries, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -344,7 +353,10 @@ def stock_entry_update_view(request, stock_entry_id):
     serializer.is_valid(raise_exception=True)
 
     updated_entry = stock_entry_update(
-        user=user, stock_entry_id=stock_entry_id, details=serializer.validated_data["details"]
+        user=user,
+        stock_entry_id=stock_entry_id,
+        details=serializer.validated_data["details"],
+        remarks=serializer.validated_data.get("remarks"),
     )
 
     return Response(StockEntrySerializer(updated_entry).data, status=status.HTTP_200_OK)

@@ -4,6 +4,8 @@ from .views import (
     SalesInvoiceDetailAPIView,
     SalesInvoiceListAPIView,
     SalesOrderApproveAPIView,
+    SalesOrderApproveCreditBypassAPIView,
+    SalesOrderCancelAPIView,
     SalesOrderDeliverAPIView,
     SalesOrderDetailUpdateDeleteAPIView,
     SalesOrderListCreateAPIView,
@@ -15,6 +17,12 @@ urlpatterns = [
     path("orders/<uuid:pk>/", SalesOrderDetailUpdateDeleteAPIView.as_view(), name="sales-order-detail-update-delete"),
     path("orders/<uuid:pk>/deliver/", SalesOrderDeliverAPIView.as_view(), name="sales-order-deliver"),
     path("orders/<uuid:pk>/approve/", SalesOrderApproveAPIView.as_view(), name="sales-order-approve"),
+    path(
+        "orders/<uuid:pk>/approve-credit-bypass/",
+        SalesOrderApproveCreditBypassAPIView.as_view(),
+        name="sales-order-approve-credit-bypass",
+    ),
+    path("orders/<uuid:pk>/cancel/", SalesOrderCancelAPIView.as_view(), name="sales-order-cancel"),
     # Invoices
     path("invoices/", SalesInvoiceListAPIView.as_view(), name="sales-invoice-list"),
     path("invoices/<uuid:pk>/", SalesInvoiceDetailAPIView.as_view(), name="sales-invoice-detail"),

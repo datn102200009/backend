@@ -47,7 +47,7 @@ def stock_entry_list_by_status(
     if purpose:
         qs = qs.filter(purpose=purpose)
 
-    return qs.order_by("-created_at")
+    return qs.order_by("-created_at", "id")
 
 
 def stock_entry_detail_list(stock_entry_id: str) -> QuerySet:
@@ -97,18 +97,43 @@ def stock_ledger_balance_by_item_warehouse(
 
 def stock_ledger_balance(
     warehouse: Optional[Warehouse] = None,
+    detailed: bool = False,
 ) -> QuerySet:
     """
-    Lấy tồn kho của tất cả items (có thể lọc theo một warehouse cụ thể).
+    Lấy tồn kho của tất cả items (có thể lọc theo một warehouse cụ thể,
+    hoặc trả về phân rã chi tiết theo từng kho khi detailed=True).
 
     Args:
         warehouse: Warehouse object (optional)
+        detailed: Trả về phân rã chi tiết theo từng kho (chỉ áp dụng khi không truyền warehouse)
 
     Returns:
         QuerySet với balance cho từng item (và warehouse)
     """
     from django.db.models import CharField, DecimalField, F, OuterRef, Subquery, Sum, Value
     from django.db.models.functions import Coalesce
+
+    if detailed and not warehouse:
+        return (
+            StockLedger.objects.values("item_id", "warehouse_id")
+            .annotate(
+                total_quantity=Sum("actual_quantity"),
+                item_code=F("item__item_code"),
+                item_name=F("item__item_name"),
+                uom=F("item__stock_uom__name"),
+                warehouse_name=F("warehouse__name"),
+            )
+            .filter(total_quantity__gt=0)
+            .values(
+                "item_id",
+                "item_code",
+                "item_name",
+                "uom",
+                "warehouse_id",
+                "warehouse_name",
+                "total_quantity",
+            )
+        )
 
     ledger_qs = StockLedger.objects.filter(item=OuterRef("pk"))
     if warehouse:
