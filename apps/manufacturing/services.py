@@ -388,13 +388,7 @@ def work_order_approve(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_approve")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("bom", "source_warehouse", "production_warehouse")
-        .prefetch_related("bom__items")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().prefetch_related("bom__items").filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -507,13 +501,7 @@ def work_order_declare_production(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_declare")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("bom", "production_warehouse", "production_item")
-        .prefetch_related("bom__items")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().prefetch_related("bom__items").filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -609,12 +597,7 @@ def work_order_complete(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_complete")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("production_item", "production_warehouse", "target_warehouse")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")

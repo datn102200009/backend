@@ -449,3 +449,39 @@ class TestWorkOrderServices:
         # Do đó, không có phiếu TRF thành phẩm nào của wo_short được tạo ra.
         trf_se = StockEntry.objects.filter(purpose="transfer", work_order=wo_short).first()
         assert trf_se is None
+
+    def test_work_order_approve_with_nullable_fields(self, production_user):
+        """Test work_order_approve runs successfully without select_related on nullable fields."""
+        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        item1 = ItemFactory()
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("1.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho source
+        StockLedgerFactory(
+            item=item1,
+            warehouse=source,
+            actual_quantity=Decimal("10.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            quantity=5,
+            status="pending_approval",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        # Act
+        approved_wo = work_order_approve(user=production_user, work_order_id=str(wo.id))
+
+        # Assert
+        assert approved_wo.status == "in_progress"
+        assert approved_wo.planned_start_date == timezone.now().date()
