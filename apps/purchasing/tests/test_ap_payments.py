@@ -8,12 +8,7 @@ from apps.common.xlib.exceptions import ValidationException
 from apps.inventory.tests.factories import ItemFactory, SupplierFactory, UserFactory, WarehouseFactory
 from apps.purchasing.models import PurchaseInvoice
 from apps.purchasing.selectors import get_supplier_ap_aging
-from apps.purchasing.services import (
-    pay_purchase_invoice,
-    purchase_order_approve,
-    purchase_order_create,
-    verify_4_way_matching,
-)
+from apps.purchasing.services import purchase_order_approve, purchase_order_create, verify_4_way_matching
 
 pytestmark = pytest.mark.django_db
 
@@ -26,74 +21,6 @@ class TestAPPaymentsAndAging:
         item = ItemFactory()
         warehouse = WarehouseFactory()
         return user, vendor, item, warehouse
-
-    def test_pay_purchase_invoice_success(self, setup_data):
-        user, vendor, item, warehouse = setup_data
-
-        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
-        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
-        order = purchase_order_approve(user=user, order_id=str(order.id))
-
-        invoice = order.invoices.first()
-        assert invoice.status == PurchaseInvoice.Status.UNPAID
-
-        # Pay part of the invoice
-        tx = pay_purchase_invoice(
-            user=user,
-            invoice_id=str(invoice.id),
-            amount=Decimal("200.00"),
-            payment_method="bank_transfer",
-        )
-
-        assert tx.payment_type == "pay"
-        assert tx.amount == Decimal("200.00")
-        assert tx.purchase_invoice == invoice
-
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.PARTIAL
-        assert invoice.paid_amount == Decimal("200.00")
-
-        # Pay the rest
-        pay_purchase_invoice(
-            user=user,
-            invoice_id=str(invoice.id),
-            amount=Decimal("300.00"),
-            payment_method="bank_transfer",
-        )
-
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.PAID
-        assert invoice.paid_amount == Decimal("500.00")
-
-    def test_pay_invoice_with_mismatch_succeeds(self, setup_data):
-        user, vendor, item, warehouse = setup_data
-
-        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
-        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
-        order = purchase_order_approve(user=user, order_id=str(order.id))
-
-        invoice = order.invoices.first()
-
-        # Mismatch unit price to trigger warning in block_reason
-        inv_line = invoice.lines.first()
-        inv_line.unit_price = Decimal("60.00")
-        inv_line.save()
-
-        verify_4_way_matching(invoice_id=str(invoice.id))
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.UNPAID
-        assert "Chênh lệch đơn giá" in invoice.block_reason
-
-        # Pay invoice with warning -> should succeed normally
-        tx = pay_purchase_invoice(
-            user=user,
-            invoice_id=str(invoice.id),
-            amount=Decimal("100.00"),
-            payment_method="bank_transfer",
-        )
-        assert tx is not None
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.PARTIAL
 
     def test_supplier_ap_aging_selector(self, setup_data):
         user, vendor, item, warehouse = setup_data

@@ -5,7 +5,6 @@ from .views import (
     LandedCostAllocateAPIView,
     PurchaseInvoiceDetailAPIView,
     PurchaseInvoiceListAPIView,
-    PurchaseInvoicePayAPIView,
     PurchaseInvoiceVerifyAPIView,
     PurchaseOrderApproveAPIView,
     PurchaseOrderCancelAPIView,
@@ -36,7 +35,6 @@ urlpatterns = [
     path("invoices/", PurchaseInvoiceListAPIView.as_view(), name="purchase-invoice-list"),
     path("invoices/<uuid:pk>/", PurchaseInvoiceDetailAPIView.as_view(), name="purchase-invoice-detail"),
     path("invoices/<uuid:pk>/verify/", PurchaseInvoiceVerifyAPIView.as_view(), name="purchase-invoice-verify"),
-    path("invoices/<uuid:pk>/pay/", PurchaseInvoicePayAPIView.as_view(), name="purchase-invoice-pay"),
     # Shipments & Landed Cost
     path("shipments/", ShipmentListCreateAPIView.as_view(), name="shipment-list-create"),
     path("shipments/<uuid:pk>/", ShipmentDetailAPIView.as_view(), name="shipment-detail"),

@@ -117,7 +117,30 @@ class SalesInvoiceListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "sales.view_invoice")
         invoices = sales_invoice_list()
-        return Response(SalesInvoiceSerializer(invoices, many=True).data)
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            if "," in status_filter:
+                status_list = [s.strip() for s in status_filter.split(",")]
+                invoices = invoices.filter(status__in=status_list)
+            else:
+                invoices = invoices.filter(status=status_filter)
+
+        page_param = request.query_params.get("page")
+        limit_param = request.query_params.get("limit")
+
+        if page_param or limit_param:
+            from rest_framework.pagination import PageNumberPagination
+
+            paginator = PageNumberPagination()
+            paginator.page_size = int(limit_param) if limit_param else 10
+            page = paginator.paginate_queryset(invoices, request, view=self)
+            if page is not None:
+                serializer = SalesInvoiceSerializer(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+
+        serializer = SalesInvoiceSerializer(invoices, many=True)
+        return Response(serializer.data)
 
 
 class SalesInvoiceDetailAPIView(APIView):

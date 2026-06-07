@@ -20,8 +20,11 @@ from apps.finance.services import (
     fixed_asset_create,
     fixed_asset_delete,
     fixed_asset_update,
+    pay_purchase_invoice,
     run_fixed_asset_depreciation,
 )
+from apps.purchasing.api.v1.serializers import PayInvoiceInputSerializer, PurchaseInvoiceSerializer
+from apps.purchasing.selectors import purchase_invoice_detail
 
 from .serializers import (
     CashFlowInputSerializer,
@@ -196,3 +199,22 @@ class DepreciationLogListAPIView(APIView):
                 "results": data,
             }
         )
+
+
+class PurchaseInvoicePayAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.pay_invoice")
+        serializer = PayInvoiceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        pay_purchase_invoice(
+            user=request.user,
+            invoice_id=str(pk),
+            amount=serializer.validated_data["amount"],
+            payment_method=serializer.validated_data["payment_method"],
+        )
+
+        invoice = purchase_invoice_detail(invoice_id=str(pk))
+        return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)

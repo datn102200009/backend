@@ -239,6 +239,48 @@ components:
           type: string
           pattern: '^\d{4}-\d{2}$'
 
+    PayInvoiceInput:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    PurchaseInvoice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order:
+          type: string
+          format: uuid
+        vendor:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        status:
+          type: string
+          enum: [unpaid, partial, paid, blocked_for_payment, cancelled]
+        total_amount:
+          type: number
+          format: double
+        paid_amount:
+          type: number
+          format: double
+        due_date:
+          type: string
+          format: date
+          nullable: true
+
   responses:
     UnauthorizedError:
       description: Missing or invalid authentication token.
@@ -581,3 +623,38 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+
+  /finance/invoices/purchase/{pk}/pay/:
+    post:
+      summary: Pay Purchase Invoice (Finance)
+      description: Tạo phiếu chi dòng tiền thanh toán cho hóa đơn mua hàng ngay từ phân hệ tài chính.
+      tags:
+        - Finance Payments
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayInvoiceInput'
+      responses:
+        '200':
+          description: Thanh toán thành công, trả về hóa đơn đã cập nhật.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseInvoice'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

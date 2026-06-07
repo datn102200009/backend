@@ -9,7 +9,7 @@ Always ensure atomic transactions.
 import datetime
 import re
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from django.db import transaction
 from django.db.models import Sum
@@ -535,3 +535,34 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
         )
 
     return logs
+
+
+@transaction.atomic
+def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
+    """
+    Thanh toán hóa đơn mua hàng (Purchase Invoice).
+    """
+    PermissionChecker.check_permission(user, "finance.pay_invoice")
+
+    from apps.purchasing.models import PurchaseInvoice
+
+    invoice = PurchaseInvoice.objects.select_for_update().filter(id=invoice_id).first()
+    if not invoice:
+        raise NotFoundException("Hóa đơn mua hàng không tồn tại.")
+
+    from django.utils import timezone
+
+    payment_date_str = timezone.now().date().isoformat()
+
+    tx = cash_flow_create(
+        user=user,
+        payment_type="pay",
+        amount=amount,
+        payment_date=payment_date_str,
+        category="Thanh toán hóa đơn mua hàng",
+        payment_method=payment_method,
+        purchase_invoice_id=str(invoice.id),
+        remarks=f"Thanh toán cho hóa đơn mua hàng {invoice.id} (NCC: {invoice.vendor.supplier_name}).",
+    )
+
+    return tx

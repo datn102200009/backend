@@ -841,37 +841,6 @@ def record_shipment_logistic_fees(*, user: User, shipment_id: str, total_logisti
 
 
 @transaction.atomic
-def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
-    """
-    Thanh toán hóa đơn mua hàng (Purchase Invoice).
-    """
-    PermissionChecker.check_permission(user, "purchasing.pay_invoice")
-
-    invoice = PurchaseInvoice.objects.select_for_update().filter(id=invoice_id).first()
-    if not invoice:
-        raise NotFoundException("Hóa đơn mua hàng không tồn tại.")
-
-    from django.utils import timezone
-
-    from apps.finance.services import cash_flow_create
-
-    payment_date_str = timezone.now().date().isoformat()
-
-    tx = cash_flow_create(
-        user=user,
-        payment_type="pay",
-        amount=amount,
-        payment_date=payment_date_str,
-        category="Thanh toán hóa đơn mua hàng",
-        payment_method=payment_method,
-        purchase_invoice_id=str(invoice.id),
-        remarks=f"Thanh toán cho hóa đơn mua hàng {invoice.id} (NCC: {invoice.vendor.supplier_name}).",
-    )
-
-    return tx
-
-
-@transaction.atomic
 def technical_certification_create(
     *,
     user: User,

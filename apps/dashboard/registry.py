@@ -107,11 +107,11 @@ WIDGETS_REGISTRY = {
         "quick_links": ["/finance"],
     },
     "finance_unpaid_purchase_invoices": {
-        "permission": "purchasing.pay_invoice",
+        "permission": "finance.pay_invoice",
         "type": "list_summary",
         "size": "1x2",
         "title": "Hóa đơn mua chưa thanh toán",
-        "quick_links": ["/purchasing?tab=invoices&status=unpaid"],
+        "quick_links": ["/finance?tab=ap&status=unpaid"],
     },
     "finance_unpaid_sales_invoices": {
         "permission": "sales.view_invoice",

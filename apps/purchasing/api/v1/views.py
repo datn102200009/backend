@@ -12,7 +12,6 @@ from apps.purchasing.selectors import (
     purchase_order_list,
 )
 from apps.purchasing.services import (
-    pay_purchase_invoice,
     purchase_order_approve,
     purchase_order_cancel,
     purchase_order_create,
@@ -29,7 +28,6 @@ from apps.purchasing.services import (
 from .serializers import (
     APAgingSerializer,
     LandedCostAllocationInputSerializer,
-    PayInvoiceInputSerializer,
     PurchaseInvoiceSerializer,
     PurchaseOrderCancelInputSerializer,
     PurchaseOrderInputSerializer,
@@ -136,7 +134,30 @@ class PurchaseInvoiceListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "purchasing.view_invoice")
         invoices = purchase_invoice_list()
-        return Response(PurchaseInvoiceSerializer(invoices, many=True).data)
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            if "," in status_filter:
+                status_list = [s.strip() for s in status_filter.split(",")]
+                invoices = invoices.filter(status__in=status_list)
+            else:
+                invoices = invoices.filter(status=status_filter)
+
+        page_param = request.query_params.get("page")
+        limit_param = request.query_params.get("limit")
+
+        if page_param or limit_param:
+            from rest_framework.pagination import PageNumberPagination
+
+            paginator = PageNumberPagination()
+            paginator.page_size = int(limit_param) if limit_param else 10
+            page = paginator.paginate_queryset(invoices, request, view=self)
+            if page is not None:
+                serializer = PurchaseInvoiceSerializer(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+
+        serializer = PurchaseInvoiceSerializer(invoices, many=True)
+        return Response(serializer.data)
 
 
 class PurchaseInvoiceDetailAPIView(APIView):
@@ -154,25 +175,6 @@ class PurchaseInvoiceVerifyAPIView(APIView):
     def post(self, request, pk, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "purchasing.verify_matching")
         verify_4_way_matching(invoice_id=str(pk))
-        invoice = purchase_invoice_detail(invoice_id=str(pk))
-        return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
-
-
-class PurchaseInvoicePayAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "purchasing.pay_invoice")
-        serializer = PayInvoiceInputSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        pay_purchase_invoice(
-            user=request.user,
-            invoice_id=str(pk),
-            amount=serializer.validated_data["amount"],
-            payment_method=serializer.validated_data["payment_method"],
-        )
-
         invoice = purchase_invoice_detail(invoice_id=str(pk))
         return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
 

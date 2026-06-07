@@ -7,6 +7,7 @@ from .views import (
     DepreciationRunAPIView,
     FixedAssetDetailAPIView,
     FixedAssetListCreateAPIView,
+    PurchaseInvoicePayAPIView,
 )
 
 urlpatterns = [
@@ -16,4 +17,5 @@ urlpatterns = [
     path("fixed-assets/depreciation/", DepreciationRunAPIView.as_view(), name="depreciation-run"),
     path("fixed-assets/depreciation-logs/", DepreciationLogListAPIView.as_view(), name="depreciation-log-list"),
     path("fixed-assets/<uuid:pk>/", FixedAssetDetailAPIView.as_view(), name="fixed-asset-detail"),
+    path("invoices/purchase/<uuid:pk>/pay/", PurchaseInvoicePayAPIView.as_view(), name="purchase-invoice-pay"),
 ]
