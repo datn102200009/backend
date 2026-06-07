@@ -29,8 +29,8 @@ class Attendance(BaseModel):
         db_table = "attendance"
         verbose_name = "Attendance"
         verbose_name_plural = "Attendances"
-        unique_together = ("employee", "date")
-        indexes = [models.Index(fields=["employee", "date"])]
+        unique_together = (("employee", "date"),)
+        ordering = ["-date"]
 
     def __str__(self):
         return f"{self.employee.employee_id} - {self.date} ({self.get_status_display()})"

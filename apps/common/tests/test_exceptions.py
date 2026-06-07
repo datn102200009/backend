@@ -54,9 +54,14 @@ class TestCustomExceptionHandler:
         assert response.data == {"error": "Lỗi ứng dụng chung"}
 
     def test_unhandled_exception_returns_500(self):
+        from django.conf import settings
+
         exc = RuntimeError("Lỗi nghiêm trọng hệ thống")
         response = custom_exception_handler(exc, {})
         assert isinstance(response, Response)
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response.data["error"] == "Internal server error"
-        assert "Lỗi nghiêm trọng hệ thống" in response.data["detail"]
+        if settings.DEBUG:
+            assert "Lỗi nghiêm trọng hệ thống" in response.data["detail"]
+        else:
+            assert "detail" not in response.data

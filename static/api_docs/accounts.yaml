@@ -92,6 +92,10 @@ components:
           type: string
           nullable: true
           description: Tên role của user
+        full_name:
+          type: string
+          nullable: true
+          description: Họ và tên đầy đủ của user (lấy từ Employee)
         permissions:
           type: array
           items:

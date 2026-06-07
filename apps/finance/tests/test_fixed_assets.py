@@ -183,3 +183,20 @@ class TestFixedAssetServices:
 
         with pytest.raises(ValidationException, match="đã được thực hiện hạch toán trước đó"):
             run_fixed_asset_depreciation(user=user, period="2026-06")
+
+    def test_run_depreciation_lock_conflict(self, user):
+        from unittest.mock import patch
+
+        from django.db import OperationalError
+
+        FixedAssetFactory(
+            original_value=Decimal("1000.00"),
+            useful_life_months=10,
+            remaining_life_months=10,
+        )
+
+        with patch("django.db.models.query.QuerySet.select_for_update") as mock_select:
+            mock_select.side_effect = OperationalError("could not obtain lock")
+
+            with pytest.raises(ValidationException, match="Hệ thống đang xử lý khấu hao, vui lòng thử lại sau."):
+                run_fixed_asset_depreciation(user=user, period="2026-06")

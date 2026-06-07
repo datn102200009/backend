@@ -53,6 +53,7 @@ from apps.hrm.services import (
     employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
+    payroll_approve_salary,
     payroll_bulk_confirm_and_pay,
     payroll_calculate_salary,
     payroll_initialize_period,
@@ -576,6 +577,32 @@ def salary_slip_calculate_view(request, pk):
     )
 
     out_serializer = SalarySlipOutputSerializer(updated_slip)
+    return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def salary_slip_approve_view(request, pk):
+    """
+    Phê duyệt phiếu lương của nhân viên (sau khi tính toán).
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.payroll_approve")
+
+    try:
+        slip = SalarySlip.objects.get(id=pk)
+    except SalarySlip.DoesNotExist:
+        raise NotFoundException("Không tìm thấy phiếu lương")
+
+    approved_slip = payroll_approve_salary(
+        user=user,
+        salary_slip_id=pk,
+    )
+
+    out_serializer = SalarySlipOutputSerializer(approved_slip)
     return Response(out_serializer.data, status=status.HTTP_200_OK)
 
 

@@ -64,7 +64,7 @@ class User(BaseModel):
     username = models.CharField(max_length=150, unique=True)
     email = models.EmailField(unique=True)
     password_hash = models.CharField(max_length=255)
-    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True)
+    role = models.ForeignKey(Role, on_delete=models.PROTECT, null=True, blank=True)
     employee_id = models.CharField(max_length=50, null=True, blank=True, unique=True)
     last_login = models.DateTimeField(null=True, blank=True)
 
@@ -90,7 +90,7 @@ class SystemLog(BaseModel):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="logs")
     action = models.CharField(max_length=50)
     table_name = models.CharField(max_length=100)
-    record_id = models.CharField(max_length=255)
+    record_id = models.CharField(max_length=255, db_index=True)
     old_value = models.JSONField(null=True, blank=True)
     new_value = models.JSONField(null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
