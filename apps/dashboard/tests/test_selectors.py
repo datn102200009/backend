@@ -12,7 +12,6 @@ from apps.dashboard.selectors import (
     get_finance_depreciation_status,
     get_finance_unpaid_purchase_invoices,
     get_finance_unpaid_sales_invoices,
-    get_hrm_employees_without_contract,
     get_hrm_expiring_contracts,
     get_hrm_payroll_lifecycle_status,
     get_hrm_pending_leave_requests,
@@ -63,8 +62,9 @@ class TestDashboardSelectors:
         SalesOrder.objects.create(customer=customer, total_amount=Decimal("500.00"), status=SalesOrder.Status.DRAFT)
 
         res = get_sales_today_revenue()
-        assert res["revenue"] == 400.0
-        assert res["order_count"] == 2
+        assert len(res) == 2
+        assert res[0]["total_amount"] in [150.0, 250.0]
+        assert "customer_name" in res[0]
 
     def test_sales_draft_orders(self):
         customer = CustomerFactory()
@@ -90,7 +90,9 @@ class TestDashboardSelectors:
         PurchaseOrder.objects.create(vendor=supplier, total_amount=Decimal("200.00"), status=PurchaseOrder.Status.DRAFT)
 
         res = get_purchasing_active_po_count()
-        assert res["active_po_count"] == 1
+        assert len(res) == 1
+        assert res[0]["total_amount"] == 100.0
+        assert "supplier_name" in res[0]
 
     def test_purchasing_draft_orders(self):
         supplier = SupplierFactory()
@@ -143,7 +145,9 @@ class TestDashboardSelectors:
     def test_inventory_pending_entry_count(self):
         StockEntry.objects.create(name="SE-DRAFT", purpose="receipt", posting_date=timezone.now(), status="draft")
         res = get_inventory_pending_entry_count()
-        assert res["pending_entry_count"] == 1
+        assert len(res) == 1
+        assert res[0]["name"] == "SE-DRAFT"
+        assert "route_desc" in res[0]
 
     def test_inventory_pending_entries(self):
         uom = UOMFactory()
@@ -182,9 +186,9 @@ class TestDashboardSelectors:
             name="TX-03", payment_type="pay", amount=Decimal("500.00"), payment_date=today
         )
         res = get_finance_cashflow_summary()
-        assert res["receive_total"] == 1500.0
-        assert res["pay_total"] == 500.0
-        assert res["net_cashflow"] == 1000.0
+        assert len(res) == 2
+        assert res[0]["amount"] in [1500.0, 500.0]
+        assert "payment_type" in res[0]
 
     def test_finance_unpaid_purchase_invoices(self):
         supplier = SupplierFactory()
@@ -217,8 +221,9 @@ class TestDashboardSelectors:
             asset=asset, period=timezone.now().strftime("%Y-%m"), depreciation_amount=Decimal("100.00")
         )
         res = get_finance_depreciation_status()
-        assert res["depreciated_assets_count"] == 1
-        assert res["total_depreciation_amount"] == 100.0
+        assert len(res) == 1
+        assert res[0]["asset_code"] == "M-01"
+        assert res[0]["status"] == "đã trích"
 
     def test_hrm_payroll_lifecycle_status(self):
         emp = Employee.objects.create(employee_id="E-01", full_name="Employee 1", employment_status="active")
@@ -232,8 +237,9 @@ class TestDashboardSelectors:
             status="calculated",
         )
         res = get_hrm_payroll_lifecycle_status()
-        assert res["status"] == "Calculated"
-        assert res["net_pay_total"] == 4500.0
+        assert len(res) == 1
+        assert res[0]["employee_name"] == "Employee 1"
+        assert res[0]["net_pay"] == 4500.0
 
     def test_hrm_pending_leave_requests(self):
         emp = Employee.objects.create(employee_id="E-02", full_name="Employee 2", employment_status="active")
@@ -263,19 +269,20 @@ class TestDashboardSelectors:
         assert len(res) == 1
         assert res[0]["employee_name"] == "Employee 3"
 
-    def test_hrm_employees_without_contract(self):
-        # Active employee with no active contract
-        Employee.objects.create(employee_id="E-04", full_name="Employee 4", employment_status="active")
-        res = get_hrm_employees_without_contract()
-        assert len(res) == 1
-        assert res[0]["full_name"] == "Employee 4"
-
     def test_hrm_today_attendance_rate(self):
         emp = Employee.objects.create(employee_id="E-05", full_name="Employee 5", employment_status="active")
+        # Attendance status is working, so they should not show up in absent list
         Attendance.objects.create(employee=emp, date=date.today(), status="working")
         res = get_hrm_today_attendance_rate()
-        assert res["attendance_rate"] == 100.0
-        assert res["present_count"] == 1
+        assert len(res) == 0
+
+        # Now test with another employee who is absent
+        emp_absent = Employee.objects.create(employee_id="E-06", full_name="Employee 6", employment_status="active")
+        Attendance.objects.create(employee=emp_absent, date=date.today(), status="paid_leave")
+        res = get_hrm_today_attendance_rate()
+        assert len(res) == 1
+        assert res[0]["employee_id"] == "E-06"
+        assert res[0]["status"] == "Nghỉ phép"
 
     def test_manufacturing_pending_wo_approval(self):
         item = ItemFactory()
@@ -297,17 +304,31 @@ class TestDashboardSelectors:
 
     def test_manufacturing_pending_declarations(self):
         item = ItemFactory()
+        # Create work orders with planned_end_date.
+        # Nearing delay (2 days left)
         WorkOrder.objects.create(
             name="WO-03",
             production_item=item,
             quantity=10,
             produced_qty=2,
             planned_start_date=date.today(),
+            planned_end_date=date.today() + timedelta(days=2),
+            status="in_progress",
+        )
+        # Far delay (10 days left - should not be included)
+        WorkOrder.objects.create(
+            name="WO-03-FAR",
+            production_item=item,
+            quantity=10,
+            produced_qty=2,
+            planned_start_date=date.today(),
+            planned_end_date=date.today() + timedelta(days=10),
             status="in_progress",
         )
         res = get_manufacturing_pending_declarations()
         assert len(res) == 1
         assert res[0]["name"] == "WO-03"
+        assert res[0]["days_left"] == 2
 
     def test_manufacturing_pending_completion(self):
         item = ItemFactory()

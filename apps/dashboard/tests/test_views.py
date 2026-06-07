@@ -60,7 +60,7 @@ class TestDashboardViews:
 
         # sales_today_revenue should succeed
         assert data["sales_today_revenue"]["success"] is True
-        assert "revenue" in data["sales_today_revenue"]["data"]
+        assert isinstance(data["sales_today_revenue"]["data"], list)
 
         # sales_draft_orders should fail with the mocked error message
         assert data["sales_draft_orders"]["success"] is False
@@ -73,7 +73,7 @@ class TestDashboardViews:
         response = client.get(url)
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
-        assert "revenue" in response.data["data"]
+        assert isinstance(response.data["data"], list)
 
     def test_widget_data_detail_permission_denied(self, authenticated_client_with_perms):
         client, user = authenticated_client_with_perms
@@ -84,3 +84,29 @@ class TestDashboardViews:
         # which propagates to 403 Forbidden via the custom exception handler, or returns success: false depending on setup.
         # Here we verify it is either 403 or 400 or 500 but NOT 200 OK.
         assert response.status_code in [status.HTTP_403_FORBIDDEN, status.HTTP_500_INTERNAL_SERVER_ERROR]
+
+    def test_warehouse_keeper_widgets_rbac(self, api_client, db):
+        # Create a warehouse keeper role and user
+        role = RoleFactory(name="Warehouse Keeper")
+        user = UserFactory(username="keeper", password_hash="testpass", role=role)
+
+        # Give inventory.stock_issue and inventory.stock_in permissions
+        perm_issue, _ = Permission.objects.get_or_create(code="inventory.stock_issue", defaults={"name": "Xuất kho"})
+        perm_in, _ = Permission.objects.get_or_create(code="inventory.stock_in", defaults={"name": "Nhập kho"})
+        RolePermission.objects.get_or_create(role=role, permission=perm_issue)
+        RolePermission.objects.get_or_create(role=role, permission=perm_in)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-metadata-list")
+        response = api_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.data
+        codes = [item["code"] for item in data]
+
+        # Warehouse keeper should see logistics cards
+        assert "sales_pending_fulfillment" in codes
+        assert "purchasing_pending_delivery" in codes
+        # But not sales metadata they are not permitted for
+        assert "sales_today_revenue" not in codes
+        assert "sales_draft_orders" not in codes

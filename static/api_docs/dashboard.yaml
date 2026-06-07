@@ -65,19 +65,14 @@ components:
           type: boolean
         data:
           oneOf:
-            - $ref: '#/components/schemas/SalesTodayRevenueData'
-            - $ref: '#/components/schemas/FinanceCashflowSummaryData'
-            - $ref: '#/components/schemas/HRMAttendanceRateData'
-            - $ref: '#/components/schemas/HRMPayrollStatusData'
-            - $ref: '#/components/schemas/FinanceDepreciationStatusData'
-            - $ref: '#/components/schemas/ActivePOCountData'
-            - $ref: '#/components/schemas/InventoryEntryCountData'
             - type: array
               items:
                 anyOf:
+                  - $ref: '#/components/schemas/SalesTodayRevenueLine'
                   - $ref: '#/components/schemas/SalesDraftOrderLine'
                   - $ref: '#/components/schemas/SalesCreditBypassLine'
                   - $ref: '#/components/schemas/SalesPendingFulfillmentLine'
+                  - $ref: '#/components/schemas/ActivePOCountLine'
                   - $ref: '#/components/schemas/PurchasingDraftOrderLine'
                   - $ref: '#/components/schemas/PurchasingPendingDeliveryLine'
                   - $ref: '#/components/schemas/PurchasingPendingQCLine'
@@ -85,11 +80,14 @@ components:
                   - $ref: '#/components/schemas/PurchasingBlockedInvoiceLine'
                   - $ref: '#/components/schemas/InventoryLowStockLine'
                   - $ref: '#/components/schemas/InventoryPendingEntryLine'
+                  - $ref: '#/components/schemas/FinanceCashflowSummaryLine'
                   - $ref: '#/components/schemas/FinanceUnpaidAPLine'
                   - $ref: '#/components/schemas/FinanceUnpaidARLine'
+                  - $ref: '#/components/schemas/FinanceDepreciationStatusLine'
+                  - $ref: '#/components/schemas/HRMPayrollStatusLine'
                   - $ref: '#/components/schemas/HRMLeaveRequestLine'
                   - $ref: '#/components/schemas/HRMExpiringContractLine'
-                  - $ref: '#/components/schemas/HRMEmployeeNoContractLine'
+                  - $ref: '#/components/schemas/HRMTodayAbsentLine'
                   - $ref: '#/components/schemas/ManufacturingPendingWOApprovalLine'
                   - $ref: '#/components/schemas/ManufacturingActiveWOLine'
                   - $ref: '#/components/schemas/ManufacturingPendingDeclarationLine'
@@ -101,62 +99,81 @@ components:
           type: string
           nullable: true
 
-    # Metric Types Data Schemas
-    SalesTodayRevenueData:
+    # Converted List Types Data Schemas
+    SalesTodayRevenueLine:
       type: object
       properties:
-        revenue:
+        id:
+          type: string
+        customer_name:
+          type: string
+        total_amount:
           type: number
-        order_count:
-          type: integer
-    FinanceCashflowSummaryData:
+        created_at:
+          type: string
+    ActivePOCountLine:
       type: object
       properties:
-        receive_total:
+        id:
+          type: string
+        supplier_name:
+          type: string
+        total_amount:
           type: number
-        pay_total:
-          type: number
-        net_cashflow:
-          type: number
-    HRMAttendanceRateData:
+        created_at:
+          type: string
+    FinanceCashflowSummaryLine:
       type: object
       properties:
-        attendance_rate:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        payment_type:
+          type: string
+        amount:
           type: number
-        present_count:
-          type: integer
-        absent_count:
-          type: integer
-        total_active_employees:
-          type: integer
-    HRMPayrollStatusData:
+        payment_date:
+          type: string
+    FinanceDepreciationStatusLine:
       type: object
       properties:
+        asset_code:
+          type: string
+        asset_name:
+          type: string
+        depreciation_amount:
+          type: number
         status:
+          type: string
+    HRMPayrollStatusLine:
+      type: object
+      properties:
+        id:
+          type: string
+        employee_name:
           type: string
         salary_period:
           type: string
-        net_pay_total:
+        net_pay:
           type: number
-        calculated_slips_count:
-          type: integer
-    FinanceDepreciationStatusData:
+        status:
+          type: string
+    HRMTodayAbsentLine:
       type: object
       properties:
-        depreciated_assets_count:
-          type: integer
-        total_depreciation_amount:
-          type: number
-    ActivePOCountData:
-      type: object
-      properties:
-        active_po_count:
-          type: integer
-    InventoryEntryCountData:
-      type: object
-      properties:
-        pending_entry_count:
-          type: integer
+        id:
+          type: string
+        employee_id:
+          type: string
+        full_name:
+          type: string
+        department:
+          type: string
+        status:
+          type: string
 
     # List Types Data Schemas
     SalesDraftOrderLine:
@@ -361,21 +378,6 @@ components:
           type: string
         created_at:
           type: string
-    HRMEmployeeNoContractLine:
-      type: object
-      properties:
-        id:
-          type: string
-        employee_id:
-          type: string
-        full_name:
-          type: string
-        join_date:
-          type: string
-          nullable: true
-        department:
-          type: string
-          nullable: true
     ManufacturingPendingWOApprovalLine:
       type: object
       properties:
@@ -423,6 +425,13 @@ components:
           type: number
         planned_start_date:
           type: string
+        planned_end_date:
+          type: string
+        status:
+          type: string
+        days_left:
+          type: integer
+          nullable: true
         created_at:
           type: string
     ManufacturingPendingCompletionLine:
