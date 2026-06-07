@@ -43,6 +43,15 @@ def auth_login(*, username: str, password: str) -> dict:
     # user.last_login = timezone.now()
     # user.save(update_fields=["last_login"])
 
+    # Lấy full_name từ Employee nếu có liên kết
+    full_name = ""
+    if user.employee_id:
+        from apps.master_data.models import Employee
+
+        emp = Employee.objects.filter(employee_id=user.employee_id).first()
+        if emp:
+            full_name = emp.full_name
+
     # Tạo JWT token
     refresh = RefreshToken.for_user(user)
     permissions = list(user.role.permissions.values_list("permission__code", flat=True)) if user.role else []
@@ -54,5 +63,6 @@ def auth_login(*, username: str, password: str) -> dict:
         "username": user.username,
         "email": user.email,
         "role": user.role.name if user.role else None,
+        "full_name": full_name,
         "permissions": permissions,
     }

@@ -295,3 +295,23 @@ class TestStockInApprove:
 
         # Verify that we only have the original invoice and no other new invoices
         assert order.invoices.count() == 1
+
+    def test_stock_in_approve_concurrent(self, warehouse_keeper_user, setup_stock_entry):
+        """Test phê duyệt phiếu nhập kho đồng thời (hoặc gọi tuần tự liên tiếp) ném lỗi ValidationException."""
+        user = warehouse_keeper_user
+        stock_entry = setup_stock_entry
+
+        # Phê duyệt lần 1 thành công
+        approved_entry = stock_in_approve(
+            user=user,
+            stock_entry_id=str(stock_entry.id),
+        )
+        assert approved_entry.status == "posted"
+
+        # Phê duyệt lần 2 phải thất bại vì trạng thái không còn là draft
+        with pytest.raises(ValidationException) as exc_info:
+            stock_in_approve(
+                user=user,
+                stock_entry_id=str(stock_entry.id),
+            )
+        assert "Draft" in str(exc_info.value)

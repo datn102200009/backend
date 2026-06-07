@@ -5,7 +5,14 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from apps.inventory.tests.factories import BOMFactory, BOMItemFactory, ItemFactory, WarehouseFactory, WorkOrderFactory
+from apps.inventory.tests.factories import (
+    BOMFactory,
+    BOMItemFactory,
+    ItemFactory,
+    StockLedgerFactory,
+    WarehouseFactory,
+    WorkOrderFactory,
+)
 
 
 @pytest.mark.django_db
@@ -122,10 +129,19 @@ class TestWorkOrderAPIViews:
     def test_work_order_approve(self, api_client, production_user):
         api_client.force_authenticate(user=production_user)
         bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
-        BOMItemFactory(parent=bom, quantity=Decimal("2.0"))
+        bom_item = BOMItemFactory(parent=bom, quantity=Decimal("2.0"))
         source = WarehouseFactory()
         target = WarehouseFactory()
         production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho source
+        StockLedgerFactory(
+            item=bom_item.item,
+            warehouse=source,
+            actual_quantity=Decimal("100.00"),
+            posting_date=timezone.now(),
+        )
+
         wo = WorkOrderFactory(
             bom=bom,
             status="pending_approval",

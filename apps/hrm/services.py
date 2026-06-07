@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -8,7 +9,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.common.services import create_system_log
-from apps.common.xlib.exceptions import ValidationException
+from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.finance.models import SalarySlip
 from apps.hrm.models import (
@@ -22,6 +23,8 @@ from apps.hrm.models import (
     RewardRecord,
 )
 from apps.master_data.models import Employee
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
@@ -1106,67 +1109,105 @@ def leave_request_approve(
 
     start = leave_request.start_date
     end = leave_request.end_date
+
+    # 1. Lấy toàn bộ Attendance hiện tại trong khoảng ngày phép bằng 1 câu truy vấn duy nhất (select_for_update)
+    existing_attendances = {
+        att.date: att
+        for att in Attendance.objects.select_for_update().filter(
+            employee=leave_request.employee, date__gte=start, date__lte=end
+        )
+    }
+
+    atts_to_create = []
+    atts_to_update = []
     current_date = start
 
     while current_date <= end:
-        attendance, created = Attendance.objects.get_or_create(
-            employee=leave_request.employee,
-            date=current_date,
-            defaults={
-                "status": attendance_status,
-                "work_hours": Decimal("0.00"),
-                "overtime_hours": Decimal("0.00"),
-                "remarks": f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}",
-            },
-        )
+        attendance = existing_attendances.get(current_date)
+        if attendance:
+            if attendance.status != attendance_status:
+                # Cảnh báo qua logger nếu ghi đè ngày công thực tế (có work_hours hoặc overtime_hours > 0)
+                if attendance.work_hours > 0 or attendance.overtime_hours > 0:
+                    logger.warning(
+                        f"Overwriting working attendance for employee {leave_request.employee.employee_id} "
+                        f"on {current_date}: work_hours={attendance.work_hours}, overtime_hours={attendance.overtime_hours}"
+                    )
 
-        if not created:
-            old_att_status = attendance.status
-            old_att_work = attendance.work_hours
-            old_att_overtime = attendance.overtime_hours
-            old_att_remarks = attendance.remarks
-
-            attendance.status = attendance_status
-            attendance.work_hours = Decimal("0.00")
-            attendance.overtime_hours = Decimal("0.00")
-            attendance.remarks = f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}"
-            attendance.save()
-
-            create_system_log(
-                user=approved_by,
-                action="update",
-                table_name="attendance",
-                record_id=str(attendance.id),
-                old_value={
-                    "status": old_att_status,
-                    "work_hours": str(old_att_work),
-                    "overtime_hours": str(old_att_overtime),
-                    "remarks": old_att_remarks,
-                },
-                new_value={
-                    "status": attendance_status,
-                    "work_hours": "0.00",
-                    "overtime_hours": "0.00",
+                # Lưu thông tin cũ cho log
+                attendance._old_values = {
+                    "status": attendance.status,
+                    "work_hours": str(attendance.work_hours),
+                    "overtime_hours": str(attendance.overtime_hours),
                     "remarks": attendance.remarks,
-                },
-            )
+                }
+
+                attendance.status = attendance_status
+                attendance.work_hours = Decimal("0.00")
+                attendance.overtime_hours = Decimal("0.00")
+                attendance.remarks = f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}"
+                atts_to_update.append(attendance)
         else:
-            create_system_log(
+            new_att = Attendance(
+                employee=leave_request.employee,
+                date=current_date,
+                status=attendance_status,
+                work_hours=Decimal("0.00"),
+                overtime_hours=Decimal("0.00"),
+                remarks=f"Tự động đồng bộ từ Đơn nghỉ phép ID {leave_request.id}",
+            )
+            atts_to_create.append(new_att)
+
+        current_date += timedelta(days=1)
+
+    # 2. Thực hiện ghi/cập nhật hàng loạt (Bulk Operations)
+    if atts_to_create:
+        created_records = Attendance.objects.bulk_create(atts_to_create)
+
+        # Ghi logs hệ thống hàng loạt cho các bản ghi mới tạo
+        from apps.accounts.models import SystemLog
+
+        new_logs = [
+            SystemLog(
                 user=approved_by,
                 action="create",
                 table_name="attendance",
-                record_id=str(attendance.id),
+                record_id=str(att.id),
                 new_value={
                     "employee_id": str(leave_request.employee.id),
-                    "date": str(current_date),
+                    "date": str(att.date),
                     "status": attendance_status,
                     "work_hours": "0.00",
                     "overtime_hours": "0.00",
-                    "remarks": attendance.remarks,
+                    "remarks": att.remarks,
                 },
             )
+            for att in created_records
+        ]
+        SystemLog.objects.bulk_create(new_logs)
 
-        current_date += timedelta(days=1)
+    if atts_to_update:
+        Attendance.objects.bulk_update(atts_to_update, ["status", "work_hours", "overtime_hours", "remarks"])
+
+        # Ghi logs hệ thống hàng loạt cho các bản ghi được cập nhật
+        from apps.accounts.models import SystemLog
+
+        update_logs = [
+            SystemLog(
+                user=approved_by,
+                action="update",
+                table_name="attendance",
+                record_id=str(att.id),
+                old_value=att._old_values,
+                new_value={
+                    "status": attendance_status,
+                    "work_hours": "0.00",
+                    "overtime_hours": "0.00",
+                    "remarks": att.remarks,
+                },
+            )
+            for att in atts_to_update
+        ]
+        SystemLog.objects.bulk_create(update_logs)
 
     return leave_request
 
@@ -1370,53 +1411,69 @@ def payroll_initialize_period(
 ) -> list[SalarySlip]:
     """
     Khởi tạo hàng loạt bản ghi SalarySlip ở trạng thái draft cho toàn bộ nhân sự đang active trong kỳ lương.
+    Cho phép khởi tạo bổ sung cho nhân sự mới.
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.add_salaryslip")
 
+    from apps.accounts.models import SystemLog
     from apps.finance.models import SalarySlip
 
-    if SalarySlip.objects.filter(salary_period=salary_period).exists():
+    active_employees = list(Employee.objects.filter(employment_status="active"))
+
+    # 1. Lấy danh sách nhân viên đã có phiếu lương trong kỳ (1 query)
+    existing_employee_ids = set(
+        SalarySlip.objects.filter(salary_period=salary_period).values_list("employee_id", flat=True)
+    )
+
+    if existing_employee_ids:
         raise ValidationException("Kỳ lương đã được khởi tạo trước đó.")
 
-    active_employees = Employee.objects.filter(employment_status="active").iterator(chunk_size=100)
-    slips = []
-
+    new_slips = []
     for employee in active_employees:
-        name = f"SALARY-{employee.employee_id}-{salary_period}"
-        slip, created = SalarySlip.objects.get_or_create(
-            employee=employee,
-            salary_period=salary_period,
-            defaults={
-                "name": name,
-                "base_salary": employee.salary_base or Decimal("0.00"),
-                "overtime_amount": Decimal("0.00"),
-                "allowance_amount": Decimal("0.00"),
-                "reward_amount_total": Decimal("0.00"),
-                "discipline_deduction_total": Decimal("0.00"),
-                "union_fee_2pct": Decimal("0.00"),
-                "gross_pay": Decimal("0.00"),
-                "deductions": Decimal("0.00"),
-                "net_pay": Decimal("0.00"),
-                "status": "draft",
-            },
-        )
-        if created:
-            create_system_log(
+        if employee.id not in existing_employee_ids:
+            name = f"SALARY-{employee.employee_id}-{salary_period}"
+            new_slips.append(
+                SalarySlip(
+                    employee=employee,
+                    salary_period=salary_period,
+                    name=name,
+                    base_salary=employee.salary_base or Decimal("0.00"),
+                    overtime_amount=Decimal("0.00"),
+                    allowance_amount=Decimal("0.00"),
+                    reward_amount_total=Decimal("0.00"),
+                    discipline_deduction_total=Decimal("0.00"),
+                    union_fee_2pct=Decimal("0.00"),
+                    gross_pay=Decimal("0.00"),
+                    deductions=Decimal("0.00"),
+                    net_pay=Decimal("0.00"),
+                    status="draft",
+                )
+            )
+
+    if new_slips:
+        # bulk create slips
+        created_slips = SalarySlip.objects.bulk_create(new_slips, ignore_conflicts=True)
+
+        # bulk create logs
+        logs = [
+            SystemLog(
                 user=creator,
                 action="create",
                 table_name="salary_slip",
                 record_id=str(slip.id),
                 new_value={
                     "name": slip.name,
-                    "employee_id": str(employee.id),
+                    "employee_id": str(slip.employee_id),
                     "salary_period": salary_period,
                     "status": "draft",
                 },
             )
-        slips.append(slip)
+            for slip in created_slips
+        ]
+        SystemLog.objects.bulk_create(logs)
 
-    return slips
+    return list(SalarySlip.objects.filter(salary_period=salary_period).select_related("employee"))
 
 
 @transaction.atomic
@@ -1524,10 +1581,15 @@ def payroll_calculate_salary(
 
     from django.db.models import Q
 
-    # 2. Thưởng & Phạt trong kỳ (bao gồm lũy kế chưa thanh toán từ các kỳ trước)
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    # Định nghĩa ngày bắt đầu của kỳ lương
+    period_start_date = date(year, month, 1)
+
+    # 2. Thưởng & Phạt trong kỳ (không gom bù)
+    rewards = RewardRecord.objects.filter(
+        employee=employee,
+        reward_date__gte=period_start_date,
+        reward_date__lte=period_end_date,
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     reward_total = Decimal("0.00")
     rewards_to_update = []
@@ -1539,9 +1601,11 @@ def payroll_calculate_salary(
     if rewards_to_update:
         RewardRecord.objects.bulk_update(rewards_to_update, ["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    disciplines = DisciplineRecord.objects.filter(
+        employee=employee,
+        discipline_date__gte=period_start_date,
+        discipline_date__lte=period_end_date,
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     discipline_total = Decimal("0.00")
     disciplines_to_update = []
@@ -1587,7 +1651,7 @@ def payroll_calculate_salary(
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
-    slip.status = "approved"
+    slip.status = "calculated"
     slip.remarks = remarks
 
     total_days = float(working_days + paid_leave_days)
@@ -1672,6 +1736,46 @@ def payroll_calculate_salary(
             "deductions": str(slip.deductions),
             "net_pay": str(slip.net_pay),
             "remarks": slip.remarks,
+        },
+    )
+
+    return slip
+
+
+@transaction.atomic
+def payroll_approve_salary(
+    *,
+    user: User,
+    salary_slip_id: str,
+) -> SalarySlip:
+    """
+    Phê duyệt phiếu lương sau khi đã tính toán (calculated).
+    Yêu cầu quyền hrm.payroll_approve.
+    """
+    PermissionChecker.check_permission(user, "hrm.payroll_approve")
+
+    slip = SalarySlip.objects.select_for_update().filter(id=salary_slip_id).first()
+    if not slip:
+        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
+
+    if slip.status != "calculated":
+        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'")
+
+    slip.status = "approved"
+    slip.approved_by = user
+    slip.approved_at = timezone.now()
+    slip.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": "calculated"},
+        new_value={
+            "status": "approved",
+            "approved_by_id": str(user.id),
+            "approved_at": str(slip.approved_at),
         },
     )
 

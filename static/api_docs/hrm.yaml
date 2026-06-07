@@ -355,7 +355,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [draft, paid]
+          enum: [draft, calculated, approved, paid]
         remarks:
           type: string
           nullable: true
@@ -1106,7 +1106,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [draft, paid]
+            enum: [draft, calculated, approved, paid]
       responses:
         '200':
           description: Thành công
@@ -1168,6 +1168,33 @@ paths:
       responses:
         '200':
           description: Tính toán thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/salary-slips/{id}/approve/:
+    post:
+      summary: Phê duyệt phiếu lương
+      description: Phê duyệt phiếu lương đã tính toán, chuyển trạng thái từ calculated sang approved. Yêu cầu quyền hrm.payroll_approve.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phê duyệt thành công
           content:
             application/json:
               schema:

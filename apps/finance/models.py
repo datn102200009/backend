@@ -31,12 +31,21 @@ class SalarySlip(BaseModel):
         max_length=20,
         choices=[
             ("draft", "Draft"),
+            ("calculated", "Calculated"),
             ("submitted", "Submitted"),
             ("approved", "Approved"),
             ("paid", "Paid"),
         ],
         default="draft",
     )
+    approved_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_salary_slips",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
     breakdown = models.JSONField(null=True, blank=True)
 
@@ -44,6 +53,9 @@ class SalarySlip(BaseModel):
         db_table = "salary_slip"
         verbose_name = "Salary Slip"
         verbose_name_plural = "Salary Slips"
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "salary_period"], name="unique_salary_slip_per_period")
+        ]
 
     def __str__(self):
         return self.name
@@ -182,6 +194,9 @@ class CashFlowTransaction(BaseModel):
         db_table = "cash_flow_transaction"
         verbose_name = "Cash Flow Transaction"
         verbose_name_plural = "Cash Flow Transactions"
+        indexes = [
+            models.Index(fields=["payment_type", "payment_date"]),
+        ]
 
     def __str__(self):
         return self.name

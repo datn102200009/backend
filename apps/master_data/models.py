@@ -256,6 +256,13 @@ class BOM(BaseModel):
         db_table = "bom"
         verbose_name = "Bill of Materials"
         verbose_name_plural = "Bills of Materials"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item"],
+                condition=models.Q(is_active=True),
+                name="unique_active_bom_per_item",
+            )
+        ]
 
     def __str__(self):
         return self.name

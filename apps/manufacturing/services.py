@@ -382,17 +382,13 @@ def work_order_approve(
     user: User,
     work_order_id: str,
 ) -> WorkOrder:
+    from django.db.models import Sum
+
     from apps.inventory.models import StockEntry, StockEntryDetail, StockLedger
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_approve")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("bom", "source_warehouse", "production_warehouse")
-        .prefetch_related("bom__items")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().prefetch_related("bom__items").filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -400,52 +396,84 @@ def work_order_approve(
     if work_order.status != "pending_approval":
         raise ValidationException("Chỉ có thể phê duyệt lệnh ở trạng thái 'Chờ phê duyệt'")
 
-    stock_entry_name = f"TRF-{work_order.name}-RAW-{int(timezone.now().timestamp())}"
-    stock_entry = StockEntry.objects.create(
-        name=stock_entry_name,
-        purpose="transfer",
-        posting_date=timezone.now(),
-        status="posted",
-        remarks=f"Xuất nguyên liệu cho lệnh sản xuất {work_order.name}",
-    )
+    bom_items = list(work_order.bom.items.select_related("item").all())
+    if not bom_items:
+        raise ValidationException(f"Định mức '{work_order.bom.name}' không có linh kiện nào.")
 
-    details = []
-    ledgers = []
-    for bom_item in work_order.bom.items.all():
+    # 1. Lock Items liên quan (ngăn TOCTOU race condition) sắp xếp theo ID để tránh deadlock
+    item_ids = sorted(list(set(str(bi.item_id) for bi in bom_items)))
+    Item.objects.select_for_update().filter(id__in=item_ids).order_by("id")
+
+    # 2. Tính tồn kho khả dụng (1 query duy nhất)
+    stock_balances = (
+        StockLedger.objects.filter(item_id__in=item_ids, warehouse=work_order.source_warehouse)
+        .values("item_id")
+        .annotate(balance=Sum("actual_quantity"))
+    )
+    balance_map = {str(s["item_id"]): s["balance"] or Decimal("0.00") for s in stock_balances}
+
+    # 3. Validate TOÀN BỘ trước khi ghi BẤT KỲ dòng nào
+    errors = []
+    details_to_create = []
+    ledgers_to_create = []
+
+    stock_entry_name = f"TRF-{work_order.name}-RAW-{int(timezone.now().timestamp())}"
+
+    for bom_item in bom_items:
         required_qty = bom_item.quantity * (Decimal(str(work_order.quantity)) / work_order.bom.quantity)
-        details.append(
+        available = balance_map.get(str(bom_item.item_id), Decimal("0.00"))
+        if available < required_qty:
+            errors.append(f"- {bom_item.item.item_name}: cần {required_qty}, tồn khả dụng {available}")
+
+        details_to_create.append(
             StockEntryDetail(
-                parent=stock_entry,
                 item=bom_item.item,
                 quantity=required_qty,
                 source_warehouse=work_order.source_warehouse,
                 target_warehouse=work_order.production_warehouse,
             )
         )
-        ledgers.append(
+        ledgers_to_create.append(
             StockLedger(
                 item=bom_item.item,
                 warehouse=work_order.source_warehouse,
                 posting_date=timezone.now(),
                 actual_quantity=-required_qty,
-                voucher_number=stock_entry.name,
+                voucher_number=stock_entry_name,
                 voucher_type="Transfer Issue",
             )
         )
-        ledgers.append(
+        ledgers_to_create.append(
             StockLedger(
                 item=bom_item.item,
                 warehouse=work_order.production_warehouse,
                 posting_date=timezone.now(),
                 actual_quantity=required_qty,
-                voucher_number=stock_entry.name,
+                voucher_number=stock_entry_name,
                 voucher_type="Transfer Receipt",
             )
         )
 
-    if details:
-        StockEntryDetail.objects.bulk_create(details)
-        StockLedger.objects.bulk_create(ledgers)
+    if errors:
+        error_msg = "Không đủ tồn kho nguyên liệu:\n" + "\n".join(errors)
+        raise ValidationException(error_msg)
+
+    # 4. Lưu phiếu kho khi đã đủ tồn kho
+    stock_entry = StockEntry.objects.create(
+        name=stock_entry_name,
+        purpose="transfer",
+        posting_date=timezone.now(),
+        status="posted",
+        work_order=work_order,
+        remarks=f"Xuất nguyên liệu cho lệnh sản xuất {work_order.name}",
+    )
+
+    for d in details_to_create:
+        d.parent = stock_entry
+
+    if details_to_create:
+        StockEntryDetail.objects.bulk_create(details_to_create)
+        StockLedger.objects.bulk_create(ledgers_to_create)
 
     work_order.status = "in_progress"
     work_order.planned_start_date = timezone.now().date()
@@ -473,13 +501,7 @@ def work_order_declare_production(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_declare")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("bom", "production_warehouse", "production_item")
-        .prefetch_related("bom__items")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().prefetch_related("bom__items").filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -499,6 +521,7 @@ def work_order_declare_production(
         purpose="manufacture",
         posting_date=timezone.now(),
         status="posted",
+        work_order=work_order,
         remarks=f"Nhập liệu sản xuất cho lệnh {work_order.name}",
     )
 
@@ -574,12 +597,7 @@ def work_order_complete(
 
     PermissionChecker.check_permission(user, "manufacturing.work_order_complete")
 
-    work_order = (
-        WorkOrder.objects.select_for_update()
-        .select_related("production_item", "production_warehouse", "target_warehouse")
-        .filter(id=work_order_id)
-        .first()
-    )
+    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
 
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
@@ -587,9 +605,7 @@ def work_order_complete(
     if work_order.status != "in_progress":
         raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện")
 
-    manufacture_entries = StockEntry.objects.filter(
-        purpose="manufacture", remarks__contains=work_order.name, status="posted"
-    )
+    manufacture_entries = StockEntry.objects.filter(purpose="manufacture", work_order=work_order, status="posted")
 
     total_produced_result = StockEntryDetail.objects.filter(
         parent__in=manufacture_entries,
@@ -609,6 +625,7 @@ def work_order_complete(
             purpose="transfer",
             posting_date=timezone.now(),
             status="posted",
+            work_order=work_order,
             remarks=f"Nhập kho đích thành phẩm từ lệnh {work_order.name}",
         )
         StockEntryDetail.objects.create(
@@ -657,7 +674,7 @@ def work_order_cancel(
     user: User,
     work_order_id: str,
 ) -> WorkOrder:
-    PermissionChecker.check_permission(user, "manufacturing.work_order_approve")
+    PermissionChecker.check_permission(user, "manufacturing.work_order_cancel")
 
     work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
 

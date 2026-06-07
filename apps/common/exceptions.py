@@ -61,10 +61,19 @@ def custom_exception_handler(exc, context):
     # If response is None, it's an unhandled server error
     if response is None:
         logger.exception("Unhandled server error occurred: %s", str(exc))
+        from django.conf import settings
+
+        if settings.DEBUG:
+            return Response(
+                {
+                    "error": "Internal server error",
+                    "detail": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         return Response(
             {
                 "error": "Internal server error",
-                "detail": str(exc),
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

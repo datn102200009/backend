@@ -12,10 +12,7 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Core Settings
-SECRET_KEY = config(
-    "SECRET_KEY",
-    default="django-insecure-*i15f-t1dfnzh)4#_y%_+raw*+%@0e$xlpv7o10^%$7%^w=&@&",
-)
+SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
 
