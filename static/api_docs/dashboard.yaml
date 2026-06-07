@@ -1,0 +1,518 @@
+openapi: 3.0.0
+info:
+  title: DATN ERP System API - Dashboard
+  version: 1.0.0
+  description: API Documentation for the DATN ERP System Backend - Dashboard Module.
+servers:
+  - url: /api/v1
+    description: Local development server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    UnauthorizedError:
+      description: Unauthorized. Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Authentication credentials were not provided."
+    ForbiddenError:
+      description: Forbidden. User lacks necessary permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "You do not have permission to perform this action."
+    NotFoundError:
+      description: Not Found. Widget not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Widget 'invalid_code' not found"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+    WidgetMetadata:
+      type: object
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        size:
+          type: string
+        quick_links:
+          type: array
+          items:
+            type: string
+    WidgetBatchDataResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/SalesTodayRevenueData'
+            - $ref: '#/components/schemas/FinanceCashflowSummaryData'
+            - $ref: '#/components/schemas/HRMAttendanceRateData'
+            - $ref: '#/components/schemas/HRMPayrollStatusData'
+            - $ref: '#/components/schemas/FinanceDepreciationStatusData'
+            - $ref: '#/components/schemas/ActivePOCountData'
+            - $ref: '#/components/schemas/InventoryEntryCountData'
+            - type: array
+              items:
+                anyOf:
+                  - $ref: '#/components/schemas/SalesDraftOrderLine'
+                  - $ref: '#/components/schemas/SalesCreditBypassLine'
+                  - $ref: '#/components/schemas/SalesPendingFulfillmentLine'
+                  - $ref: '#/components/schemas/PurchasingDraftOrderLine'
+                  - $ref: '#/components/schemas/PurchasingPendingDeliveryLine'
+                  - $ref: '#/components/schemas/PurchasingPendingQCLine'
+                  - $ref: '#/components/schemas/PurchasingPendingLogisticLine'
+                  - $ref: '#/components/schemas/PurchasingBlockedInvoiceLine'
+                  - $ref: '#/components/schemas/InventoryLowStockLine'
+                  - $ref: '#/components/schemas/InventoryPendingEntryLine'
+                  - $ref: '#/components/schemas/FinanceUnpaidAPLine'
+                  - $ref: '#/components/schemas/FinanceUnpaidARLine'
+                  - $ref: '#/components/schemas/HRMLeaveRequestLine'
+                  - $ref: '#/components/schemas/HRMExpiringContractLine'
+                  - $ref: '#/components/schemas/HRMEmployeeNoContractLine'
+                  - $ref: '#/components/schemas/ManufacturingPendingWOApprovalLine'
+                  - $ref: '#/components/schemas/ManufacturingActiveWOLine'
+                  - $ref: '#/components/schemas/ManufacturingPendingDeclarationLine'
+                  - $ref: '#/components/schemas/ManufacturingPendingCompletionLine'
+            - type: object
+              additionalProperties: true
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    # Metric Types Data Schemas
+    SalesTodayRevenueData:
+      type: object
+      properties:
+        revenue:
+          type: number
+        order_count:
+          type: integer
+    FinanceCashflowSummaryData:
+      type: object
+      properties:
+        receive_total:
+          type: number
+        pay_total:
+          type: number
+        net_cashflow:
+          type: number
+    HRMAttendanceRateData:
+      type: object
+      properties:
+        attendance_rate:
+          type: number
+        present_count:
+          type: integer
+        absent_count:
+          type: integer
+        total_active_employees:
+          type: integer
+    HRMPayrollStatusData:
+      type: object
+      properties:
+        status:
+          type: string
+        salary_period:
+          type: string
+        net_pay_total:
+          type: number
+        calculated_slips_count:
+          type: integer
+    FinanceDepreciationStatusData:
+      type: object
+      properties:
+        depreciated_assets_count:
+          type: integer
+        total_depreciation_amount:
+          type: number
+    ActivePOCountData:
+      type: object
+      properties:
+        active_po_count:
+          type: integer
+    InventoryEntryCountData:
+      type: object
+      properties:
+        pending_entry_count:
+          type: integer
+
+    # List Types Data Schemas
+    SalesDraftOrderLine:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_name:
+          type: string
+        total_amount:
+          type: number
+        created_at:
+          type: string
+    SalesCreditBypassLine:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_name:
+          type: string
+        total_amount:
+          type: number
+        reason:
+          type: string
+        created_at:
+          type: string
+    SalesPendingFulfillmentLine:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_name:
+          type: string
+        total_amount:
+          type: number
+        created_at:
+          type: string
+    PurchasingDraftOrderLine:
+      type: object
+      properties:
+        id:
+          type: string
+        supplier_name:
+          type: string
+        total_amount:
+          type: number
+        created_at:
+          type: string
+    PurchasingPendingDeliveryLine:
+      type: object
+      properties:
+        id:
+          type: string
+        supplier_name:
+          type: string
+        total_amount:
+          type: number
+        expected_delivery_date:
+          type: string
+          nullable: true
+        receipt_fulfillment_rate:
+          type: number
+        payment_fulfillment_rate:
+          type: number
+        created_at:
+          type: string
+    PurchasingPendingQCLine:
+      type: object
+      properties:
+        id:
+          type: string
+        shipment_num:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+    PurchasingPendingLogisticLine:
+      type: object
+      properties:
+        id:
+          type: string
+        shipment_num:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+    PurchasingBlockedInvoiceLine:
+      type: object
+      properties:
+        id:
+          type: string
+        supplier_name:
+          type: string
+        total_amount:
+          type: number
+        block_reason:
+          type: string
+        created_at:
+          type: string
+    InventoryLowStockLine:
+      type: object
+      properties:
+        item_code:
+          type: string
+        item_name:
+          type: string
+        uom:
+          type: string
+        warehouse_name:
+          type: string
+        balance:
+          type: number
+        days_left:
+          type: number
+          nullable: true
+        status:
+          type: string
+        reason:
+          type: string
+        action_suggest:
+          type: string
+    InventoryPendingEntryLine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        purpose:
+          type: string
+        remarks:
+          type: string
+          nullable: true
+        route_desc:
+          type: string
+        item_count:
+          type: integer
+        posting_date:
+          type: string
+        created_at:
+          type: string
+    FinanceUnpaidAPLine:
+      type: object
+      properties:
+        id:
+          type: string
+        supplier_name:
+          type: string
+        total_amount:
+          type: number
+        remaining_amount:
+          type: number
+        due_date:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+    FinanceUnpaidARLine:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_name:
+          type: string
+        total_amount:
+          type: number
+        remaining_amount:
+          type: number
+        created_at:
+          type: string
+    HRMLeaveRequestLine:
+      type: object
+      properties:
+        id:
+          type: string
+        employee_name:
+          type: string
+        leave_type:
+          type: string
+        start_date:
+          type: string
+        end_date:
+          type: string
+        days:
+          type: number
+        created_at:
+          type: string
+    HRMExpiringContractLine:
+      type: object
+      properties:
+        id:
+          type: string
+        employee_name:
+          type: string
+        contract_no:
+          type: string
+        contract_type:
+          type: string
+        end_date:
+          type: string
+        created_at:
+          type: string
+    HRMEmployeeNoContractLine:
+      type: object
+      properties:
+        id:
+          type: string
+        employee_id:
+          type: string
+        full_name:
+          type: string
+        join_date:
+          type: string
+          nullable: true
+        department:
+          type: string
+          nullable: true
+    ManufacturingPendingWOApprovalLine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        production_item_name:
+          type: string
+        quantity:
+          type: number
+        planned_start_date:
+          type: string
+        created_at:
+          type: string
+    ManufacturingActiveWOLine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        production_item_name:
+          type: string
+        quantity:
+          type: number
+        produced_qty:
+          type: number
+        planned_start_date:
+          type: string
+        created_at:
+          type: string
+    ManufacturingPendingDeclarationLine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        production_item_name:
+          type: string
+        quantity:
+          type: number
+        produced_qty:
+          type: number
+        planned_start_date:
+          type: string
+        created_at:
+          type: string
+    ManufacturingPendingCompletionLine:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        production_item_name:
+          type: string
+        quantity:
+          type: number
+        produced_qty:
+          type: number
+        target_warehouse_name:
+          type: string
+          nullable: true
+        planned_start_date:
+          type: string
+        created_at:
+          type: string
+
+security:
+  - bearerAuth: []
+paths:
+  /dashboard/widgets/:
+    get:
+      summary: Lấy danh sách metadata của các widget được phép
+      description: API Lấy danh sách cấu trúc metadata của các widget mà người dùng hiện tại có quyền xem.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WidgetMetadata'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+  /dashboard/widgets/batch-data/:
+    get:
+      summary: Lấy dữ liệu gộp (batch) cho nhiều widget
+      description: API Lấy dữ liệu cho danh sách widget. Nếu không chỉ định tham số widgets, hệ thống tự động trả về toàn bộ widget được phép.
+      parameters:
+        - name: widgets
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Danh sách mã widget phân cách bằng dấu phẩy
+          example: "sales_today_revenue,sales_draft_orders"
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/WidgetBatchDataResult'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+  /dashboard/widgets/{widget_code}/:
+    get:
+      summary: Lấy dữ liệu chi tiết của một widget
+      description: API Lấy dữ liệu riêng lẻ cho 1 widget cụ thể (phục vụ nút Thử lại).
+      parameters:
+        - name: widget_code
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Mã của widget
+          example: "sales_today_revenue"
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetBatchDataResult'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'

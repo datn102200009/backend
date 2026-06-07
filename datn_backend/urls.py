@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/crm/", include("apps.crm.api.v1.urls")),
     path("api/v1/procurement/", include("apps.procurement.api.v1.urls")),
     path("api/v1/hrm/", include("apps.hrm.api.v1.urls")),
+    path("api/v1/dashboard/", include("apps.dashboard.api.v1.urls")),
 ]
 
 if settings.DEBUG:
