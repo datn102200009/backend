@@ -63,6 +63,9 @@ components:
       properties:
         success:
           type: boolean
+        total_count:
+          type: integer
+          description: Total count of items matching the criteria (which can be more than the 5 items returned).
         data:
           oneOf:
             - type: array

@@ -131,7 +131,7 @@ WIDGETS_REGISTRY = {
         "permission": "finance.view_salaryslip",
         "type": "list_summary",
         "size": "1x2",
-        "title": "Bảng lương nhân sự",
+        "title": "Bảng lương chờ duyệt & thanh toán",
         "quick_links": ["/hrm?tab=salary"],
     },
     "hrm_pending_leave_requests": {

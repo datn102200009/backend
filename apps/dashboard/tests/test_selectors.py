@@ -437,3 +437,15 @@ class TestDashboardSelectors:
 
         # Verified O(1) query count (maximum 4 queries: active warehouses, balances, consumptions, item/uom master data)
         assert len(ctx.captured_queries) <= 5
+
+    def test_selector_total_count_greater_than_five(self):
+        customer = CustomerFactory()
+        # Create 7 draft orders
+        for _ in range(7):
+            SalesOrder.objects.create(customer=customer, total_amount=Decimal("100.00"), status=SalesOrder.Status.DRAFT)
+
+        res = get_sales_draft_orders()
+        # Since it is sliced to [:5], len(res) is 5
+        assert len(res) == 5
+        # res.total_count should be 7
+        assert getattr(res, "total_count", None) == 7

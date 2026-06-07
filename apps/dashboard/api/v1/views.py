@@ -70,7 +70,17 @@ class WidgetBatchDataView(APIView):
             # Isolated execution block to prevent partial failures from crashing other widgets
             try:
                 data = selector_func()
-                response_data[code] = {"success": True, "data": data}
+                total_count = getattr(data, "total_count", None)
+                if total_count is None:
+                    if isinstance(data, list):
+                        total_count = len(data)
+                    elif isinstance(data, dict) and "weeks" in data:
+                        total_count = len(data["weeks"])
+
+                widget_res = {"success": True, "data": data}
+                if total_count is not None:
+                    widget_res["total_count"] = total_count
+                response_data[code] = widget_res
             except Exception as e:
                 response_data[code] = {"success": False, "error": str(e)}
 
@@ -98,6 +108,16 @@ class WidgetDataDetailView(APIView):
         # or handle it gracefully to return a standardized success/failure JSON matching the batch shape.
         try:
             data = selector_func()
-            return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+            total_count = getattr(data, "total_count", None)
+            if total_count is None:
+                if isinstance(data, list):
+                    total_count = len(data)
+                elif isinstance(data, dict) and "weeks" in data:
+                    total_count = len(data["weeks"])
+
+            res_payload = {"success": True, "data": data}
+            if total_count is not None:
+                res_payload["total_count"] = total_count
+            return Response(res_payload, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

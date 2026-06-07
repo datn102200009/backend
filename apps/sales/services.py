@@ -300,7 +300,7 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
     # 2. Tạo Phiếu xuất kho nháp (Draft Stock Entry)
     from apps.inventory.models import StockEntry, StockEntryDetail
 
-    stock_name = f"OUT-SAL-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
+    stock_name = f"OUT-SAL-SO-{str(order.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
     stock_entry = StockEntry.objects.create(
         name=stock_name,
         purpose="issue",
@@ -393,7 +393,7 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
     # Tạo Phiếu xuất kho nháp
     from apps.inventory.models import StockEntry, StockEntryDetail
 
-    stock_name = f"OUT-SAL-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
+    stock_name = f"OUT-SAL-SO-{str(order.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
     stock_entry = StockEntry.objects.create(
         name=stock_name,
         purpose="issue",

@@ -110,3 +110,22 @@ class TestDashboardViews:
         # But not sales metadata they are not permitted for
         assert "sales_today_revenue" not in codes
         assert "sales_draft_orders" not in codes
+
+    def test_widget_batch_and_detail_total_count(self, authenticated_client_with_perms):
+        client, user = authenticated_client_with_perms
+
+        # 1. Batch API test
+        batch_url = reverse("widget-batch-data")
+        response = client.get(batch_url, {"widgets": "sales_today_revenue"})
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert "sales_today_revenue" in data
+        assert "total_count" in data["sales_today_revenue"]
+        assert isinstance(data["sales_today_revenue"]["total_count"], int)
+
+        # 2. Detail API test
+        detail_url = reverse("widget-data-detail", kwargs={"widget_code": "sales_today_revenue"})
+        response = client.get(detail_url)
+        assert response.status_code == status.HTTP_200_OK
+        assert "total_count" in response.data
+        assert isinstance(response.data["total_count"], int)

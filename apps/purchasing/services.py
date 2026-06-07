@@ -316,7 +316,7 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
     # 2. Tạo Phiếu nhập kho nháp (Draft Stock Entry)
     from apps.inventory.models import StockEntry, StockEntryDetail
 
-    stock_name = f"IN-PUR-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
+    stock_name = f"IN-PUR-PO-{str(order.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
     stock_entry = StockEntry.objects.create(
         name=stock_name,
         purpose="receipt",
