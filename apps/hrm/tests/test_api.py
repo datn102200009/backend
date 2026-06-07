@@ -335,6 +335,31 @@ class TestHrmAPI:
         assert float(response.data["base_salary"]) > 0
         assert float(response.data["union_fee_2pct"]) == 260000.00  # 2% of 13m
 
+    def test_approve_salary_slip_success(self, mock_check, auth_client):
+        employee = EmployeeFactory()
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
+
+        url = f"/api/v1/hrm/salary-slips/{slip.id}/approve/"
+        response = auth_client.post(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] == "approved"
+
+        slip.refresh_from_db()
+        assert slip.status == "approved"
+        assert slip.approved_by is not None
+        assert slip.approved_at is not None
+
+    def test_approve_salary_slip_invalid_status(self, mock_check, auth_client):
+        employee = EmployeeFactory()
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
+
+        url = f"/api/v1/hrm/salary-slips/{slip.id}/approve/"
+        response = auth_client.post(url)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'" in response.data["error"]
+
     # =========================================================================
     # REWARDS & DISCIPLINES API TESTS
     # =========================================================================

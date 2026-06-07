@@ -41,3 +41,9 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
+
+# Disable rate limiting for testing/development
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
+    "anon": "1000000/day",
+    "user": "1000000/day",
+}

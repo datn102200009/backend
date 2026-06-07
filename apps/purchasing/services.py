@@ -651,7 +651,7 @@ def verify_4_way_matching(*, invoice_id: str) -> bool:
     total_po_qty = Decimal("0.00")
     total_received_qty = Decimal("0.00")
 
-    invoice_lines = invoice.lines.all()
+    invoice_lines = list(invoice.lines.all())
     for line in invoice_lines:
         item = line.item
         item_id = item.id
@@ -700,7 +700,9 @@ def verify_4_way_matching(*, invoice_id: str) -> bool:
 
         line_rate = line_rate.quantize(Decimal("0.01"))
         line.qty_fulfillment_rate = line_rate
-        line.save()
+
+    if invoice_lines:
+        PurchaseInvoiceLine.objects.bulk_update(invoice_lines, ["qty_fulfillment_rate"])
 
     # d. Kiểm tra thời gian giao hàng trễ hạn
     if po and po.expected_delivery_date:

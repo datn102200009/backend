@@ -423,6 +423,8 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
     chunk_size = 500
     last_id = None
 
+    from django.db import OperationalError, connection
+
     while True:
         qs = FixedAsset.objects.filter(
             is_active=True,
@@ -432,7 +434,16 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             qs = qs.filter(id__gt=last_id)
 
         # Select for update to lock the rows
-        chunk = list(qs.order_by("id")[:chunk_size].select_for_update())
+        try:
+            if connection.vendor == "postgresql":
+                chunk = list(qs.order_by("id")[:chunk_size].select_for_update(nowait=True))
+            else:
+                chunk = list(qs.order_by("id")[:chunk_size].select_for_update())
+        except OperationalError as e:
+            if "could not obtain lock" in str(e).lower() or "lock" in str(e).lower():
+                raise ValidationException("Hệ thống đang xử lý khấu hao, vui lòng thử lại sau.")
+            raise
+
         if not chunk:
             break
 

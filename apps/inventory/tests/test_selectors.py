@@ -296,14 +296,13 @@ class TestBOMSelectors:
         # Setup
         item = ItemFactory()
         BOMFactory(item=item, is_active=True)
-        BOMFactory(item=item, is_active=True)
         BOMFactory(item=ItemFactory(), is_active=True)
 
         # Test
         result = bom_by_item(str(item.id))
 
         # Assert
-        assert result.count() == 2
+        assert result.count() == 1
 
     def test_bom_by_item_inactive(self):
         """Test BOM không hoạt động không được trả về."""

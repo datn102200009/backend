@@ -25,6 +25,7 @@ from apps.hrm.services import (
     employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
+    payroll_approve_salary,
     payroll_calculate_salary,
     payroll_initialize_period,
     reward_record_create,
@@ -925,20 +926,70 @@ class TestPayrollAndRewardDisciplineServices:
         reward_late.refresh_from_db()
         discipline_late.refresh_from_db()
 
-        # Kiểm tra xem các bản ghi thưởng/phạt muộn của tháng 5 đã được gán vào phiếu lương tháng 6 chưa
-        assert reward_late.salary_slip == calculated_slip
-        assert discipline_late.salary_slip == calculated_slip
+        # Kiểm tra xem các bản ghi thưởng/phạt muộn của tháng 5 KHÔNG được gán vào phiếu lương tháng 6
+        assert reward_late.salary_slip is None
+        assert discipline_late.salary_slip is None
 
         # Kiểm tra các giá trị trên phiếu lương tháng 6:
         # Lương thực tế: 10,000,000 * 26 / 26 = 10,000,000
-        # Thưởng: 1,500,000
-        # Khấu trừ/Kỷ luật: 500,000
-        # Thực nhận = 10,000,000 (lương) + 1,500,000 (thưởng) - 500,000 (phạt) = 11,000,000
-        assert calculated_slip.reward_amount_total == Decimal("1500000.00")
-        assert calculated_slip.discipline_deduction_total == Decimal("500000.00")
+        # Thưởng: 0 (vì đã lọc theo start_date tháng 6)
+        # Khấu trừ/Kỷ luật: 0 (vì đã lọc theo start_date tháng 6)
+        # Thực nhận = 10,000,000
+        assert calculated_slip.reward_amount_total == Decimal("0.00")
+        assert calculated_slip.discipline_deduction_total == Decimal("0.00")
         assert calculated_slip.gross_pay == Decimal("10000000.00")
-        assert calculated_slip.deductions == Decimal("500000.00")
-        assert calculated_slip.net_pay == Decimal("11000000.00")
+        assert calculated_slip.deductions == Decimal("0.00")
+        assert calculated_slip.net_pay == Decimal("10000000.00")
+
+    def test_payroll_calculate_salary_with_rewards_within_period(self):
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP9998",
+            salary_base=Decimal("10000000.00"),
+            is_union_member=False,
+            employment_status="active",
+        )
+        admin = UserFactory(username="admin_payroll_within")
+
+        # 1. Tạo Khen thưởng và Kỷ luật có ngày quyết định trong tháng 6 (Kỳ 06)
+        reward_within = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 15),
+            amount=Decimal("1200000.00"),
+            salary_slip=None,
+        )
+        discipline_within = DisciplineRecordFactory(
+            employee=employee,
+            discipline_date=date(2026, 6, 20),
+            penalty_amount=Decimal("300000.00"),
+            salary_slip=None,
+        )
+
+        # 2. Khởi tạo phiếu lương Kỳ 06/2026
+        slip_june = SalarySlipFactory(
+            employee=employee,
+            salary_period="2026-06",
+            base_salary=Decimal("10000000.00"),
+            status="draft",
+        )
+
+        # Act
+        for day in range(1, 27):
+            AttendanceFactory(employee=employee, date=date(2026, 6, day), status="working", work_hours=Decimal("8.00"))
+
+        calculated_slip = payroll_calculate_salary(salary_slip_id=slip_june.id, creator=admin)
+
+        # Assert
+        calculated_slip.refresh_from_db()
+        reward_within.refresh_from_db()
+        discipline_within.refresh_from_db()
+
+        # Thưởng/kỷ luật phát sinh trong kỳ phải được liên kết và tính toán
+        assert reward_within.salary_slip == calculated_slip
+        assert discipline_within.salary_slip == calculated_slip
+        assert calculated_slip.reward_amount_total == Decimal("1200000.00")
+        assert calculated_slip.discipline_deduction_total == Decimal("300000.00")
+        assert calculated_slip.net_pay == Decimal("10900000.00")
 
     def test_contract_terminate_fails_if_previous_payroll_unpaid(self):
         # Arrange
@@ -1461,6 +1512,52 @@ class TestHrmPermissionAndBypass:
         assert attendance.status == "working"
         assert attendance.work_hours == Decimal("8.00")
 
+    def test_leave_request_approve_overwrites_working_attendance_with_warning(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP8811", employment_status="active")
+        approver = UserFactory(username="approver_warning_test")
+
+        # Pre-create a working attendance record
+        from apps.hrm.tests.factories import AttendanceFactory
+
+        AttendanceFactory(
+            employee=employee,
+            date=date(2026, 5, 20),
+            status="working",
+            work_hours=Decimal("8.00"),
+            overtime_hours=Decimal("2.00"),
+            remarks="Giờ làm thực tế",
+        )
+
+        # Create a pending leave request overlapping with that day
+        leave_request = LeaveRequestFactory(
+            employee=employee,
+            leave_type="unpaid",
+            start_date=date(2026, 5, 20),
+            end_date=date(2026, 5, 20),
+            days=Decimal("1.0"),
+            status="pending",
+        )
+
+        # Act
+        with patch("apps.hrm.services.logger") as mock_logger:
+            approved_request = leave_request_approve(
+                leave_request_id=leave_request.id,
+                approved_by_user_id=str(approver.id),
+            )
+
+        # Assert
+        assert approved_request.status == "approved"
+        attendance = Attendance.objects.filter(employee=employee, date=date(2026, 5, 20)).first()
+        assert attendance is not None
+        assert attendance.status == "unpaid_leave"
+        assert attendance.work_hours == Decimal("0.00")
+        assert attendance.overtime_hours == Decimal("0.00")
+
+        # Verify logger warning was called
+        mock_logger.warning.assert_called_once()
+        assert "Overwriting working attendance" in mock_logger.warning.call_args[0][0]
+
 
 @pytest.mark.django_db
 class TestHrmCompensatoryHolidayRules:
@@ -1670,3 +1767,67 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Act & Assert
         with pytest.raises(ProtectedError):
             employee.delete()
+
+
+@pytest.mark.django_db
+class TestPayrollApprovalServices:
+
+    def test_payroll_approve_salary_success(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_1", employment_status="active")
+        approver = UserFactory(username="payroll_approver")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
+
+        # Act
+        approved_slip = payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+
+        # Assert
+        assert approved_slip.status == "approved"
+        assert approved_slip.approved_by == approver
+        assert approved_slip.approved_at is not None
+
+        # Check log
+        log = SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=approver).first()
+        assert log is not None
+        assert log.action == "update"
+        assert log.old_value == {"status": "calculated"}
+        assert log.new_value["status"] == "approved"
+        assert log.new_value["approved_by_id"] == str(approver.id)
+
+    def test_payroll_approve_salary_fails_if_no_permission(self, mock_check_permission):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_2")
+        approver = UserFactory(username="no_permission_approver")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
+
+        # Mock check_permission to raise PermissionException
+        from apps.common.xlib.exceptions import PermissionException
+
+        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.payroll_approve")
+
+        # Act & Assert
+        with pytest.raises(PermissionException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+        assert "không có quyền: hrm.payroll_approve" in str(exc_info.value)
+
+    def test_payroll_approve_salary_fails_if_not_found(self):
+        # Arrange
+        approver = UserFactory(username="payroll_approver_3")
+        from apps.common.xlib.exceptions import NotFoundException
+
+        # Act & Assert
+        with pytest.raises(NotFoundException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id="00000000-0000-0000-0000-000000000000")
+        assert "Phiếu lương với ID 00000000-0000-0000-0000-000000000000 không tồn tại" in str(exc_info.value)
+
+    def test_payroll_approve_salary_fails_if_not_calculated(self):
+        # Arrange
+        employee = EmployeeFactory(employee_id="EMP_APPROVE_4")
+        approver = UserFactory(username="payroll_approver_4")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
+        from apps.common.xlib.exceptions import ValidationException
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as exc_info:
+            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
+        assert "Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'" in str(exc_info.value)

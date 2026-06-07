@@ -40,6 +40,14 @@ class StockEntry(BaseModel):
         related_name="stock_entries",
         verbose_name="Đơn mua hàng",
     )
+    work_order = models.ForeignKey(
+        "master_data.WorkOrder",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="stock_entries",
+        verbose_name="Lệnh sản xuất",
+    )
     sales_order = models.ForeignKey(
         "sales.SalesOrder",
         on_delete=models.SET_NULL,
@@ -93,6 +101,12 @@ class StockEntryDetail(BaseModel):
         db_table = "stock_entry_detail"
         verbose_name = "Stock Entry Detail"
         verbose_name_plural = "Stock Entry Details"
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(quantity__gt=0),
+                name="stock_detail_qty_positive",
+            )
+        ]
 
     def __str__(self):
         return f"{self.parent.name} - {self.item.item_code}"
