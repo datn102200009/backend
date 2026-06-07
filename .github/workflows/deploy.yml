@@ -34,6 +34,7 @@ jobs:
         run: pytest
         env:
           DJANGO_SETTINGS_MODULE: datn_backend.settings.test
+          SECRET_KEY: 'ci-cd-dummy-secret-key-for-testing-purposes-only'
 
   build-and-push:
     needs: quality-and-test
