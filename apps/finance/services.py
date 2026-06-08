@@ -24,6 +24,116 @@ from apps.inventory.models import StockEntryDetail
 from apps.master_data.models import BOM
 
 
+def _apply_cash_flow_effect(tx: CashFlowTransaction, amount: Decimal):
+    from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
+    from apps.purchasing.services import purchase_order_update_status
+    from apps.sales.models import SalesInvoice, SalesOrder
+    from apps.sales.services import sales_order_update_status
+
+    if tx.purchase_order_id:
+        po = PurchaseOrder.objects.select_for_update().filter(id=tx.purchase_order_id).first()
+        if not po:
+            raise NotFoundException("Đơn mua hàng tham chiếu không tồn tại.")
+
+        if po.status == PurchaseOrder.Status.CANCEL_PENDING:
+            po.status = PurchaseOrder.Status.CANCELLED
+            po.save()
+            return
+        elif po.status == PurchaseOrder.Status.CANCELLED:
+            return
+
+        if po.status == PurchaseOrder.Status.COMPLETED:
+            raise ValidationException("Không thể nhận thêm cọc/ứng trước cho đơn hàng đã hoàn tất.")
+
+        if tx.category != "Chi phí vận chuyển lô hàng":
+            if po.advance_paid_amount + amount > po.total_amount:
+                raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn mua hàng.")
+            po.advance_paid_amount += amount
+            po.save()
+
+            # Approved cash flows on PO will automatically credit the linked Purchase Invoice's paid_amount
+            pi = po.invoices.exclude(status=PurchaseInvoice.Status.CANCELLED).first()
+            if pi:
+                if pi.paid_amount + amount > pi.total_amount:
+                    raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
+                pi.paid_amount += amount
+                if pi.paid_amount >= pi.total_amount:
+                    pi.status = PurchaseInvoice.Status.PAID
+                else:
+                    pi.status = PurchaseInvoice.Status.PARTIAL
+                pi.save()
+
+            purchase_order_update_status(po)
+
+    elif tx.sales_order_id:
+        so = SalesOrder.objects.select_for_update().filter(id=tx.sales_order_id).first()
+        if not so:
+            raise NotFoundException("Đơn bán hàng tham chiếu không tồn tại.")
+
+        if so.status == SalesOrder.Status.CANCEL_PENDING:
+            so.status = SalesOrder.Status.CANCELLED
+            so.save()
+            return
+        elif so.status == SalesOrder.Status.CANCELLED:
+            return
+
+        if so.status == SalesOrder.Status.COMPLETED:
+            raise ValidationException("Không thể nhận thêm cọc cho đơn hàng đã hoàn tất.")
+
+        if so.advance_paid_amount + amount > so.total_amount:
+            raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn bán hàng.")
+        so.advance_paid_amount += amount
+        so.save()
+
+        # Approved cash flows on SO will automatically credit the linked Sales Invoice's paid_amount
+        si = so.invoices.exclude(status=SalesInvoice.Status.CANCELLED).first()
+        if si:
+            if si.paid_amount + amount > si.total_amount:
+                raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn bán.")
+            si.paid_amount += amount
+            if si.paid_amount >= si.total_amount:
+                si.status = SalesInvoice.Status.PAID
+            else:
+                si.status = SalesInvoice.Status.PARTIAL
+            si.save()
+
+        sales_order_update_status(so)
+
+    elif tx.purchase_invoice_id:
+        pi = PurchaseInvoice.objects.select_for_update().filter(id=tx.purchase_invoice_id).first()
+        if not pi:
+            raise NotFoundException("Hóa đơn mua hàng tham chiếu không tồn tại.")
+        if pi.status in [PurchaseInvoice.Status.PAID, PurchaseInvoice.Status.CANCELLED]:
+            raise ValidationException("Hóa đơn mua không hợp lệ hoặc đã hoàn tất thanh toán.")
+        if pi.paid_amount + amount > pi.total_amount:
+            raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
+        pi.paid_amount += amount
+        if pi.paid_amount >= pi.total_amount:
+            pi.status = PurchaseInvoice.Status.PAID
+        else:
+            pi.status = PurchaseInvoice.Status.PARTIAL
+        pi.save()
+        if pi.order:
+            purchase_order_update_status(pi.order)
+
+    elif tx.sales_invoice_id:
+        si = SalesInvoice.objects.select_for_update().filter(id=tx.sales_invoice_id).first()
+        if not si:
+            raise NotFoundException("Hóa đơn bán hàng tham chiếu không tồn tại.")
+        if si.status in [SalesInvoice.Status.PAID, SalesInvoice.Status.CANCELLED]:
+            raise ValidationException("Hóa đơn bán không hợp lệ hoặc đã hoàn tất thanh toán.")
+        if si.paid_amount + amount > si.total_amount:
+            raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn bán.")
+        si.paid_amount += amount
+        if si.paid_amount >= si.total_amount:
+            si.status = SalesInvoice.Status.PAID
+        else:
+            si.status = SalesInvoice.Status.PARTIAL
+        si.save()
+        if si.order:
+            sales_order_update_status(si.order)
+
+
 @transaction.atomic
 def cash_flow_create(
     *,
@@ -44,6 +154,11 @@ def cash_flow_create(
     Có thể hoạt động độc lập hoặc tham chiếu tới Đơn hàng / Hóa đơn.
     """
     PermissionChecker.check_permission(user, "finance.create_cash_flow")
+
+    if not any([purchase_order_id, sales_order_id, purchase_invoice_id, sales_invoice_id]):
+        raise ValidationException(
+            "Phiếu dòng tiền bắt buộc phải tham chiếu tới ít nhất một chứng từ (Đơn hàng hoặc Hóa đơn)."
+        )
 
     if payment_type not in ["pay", "receive"]:
         raise ValidationException("Loại thanh toán phải là 'pay' hoặc 'receive'.")
@@ -70,98 +185,52 @@ def cash_flow_create(
     from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
     from apps.sales.models import SalesInvoice, SalesOrder
 
-    # -- Tham chiếu: Purchase Order --
+    # Gán các đối tượng tham chiếu và kiểm tra tính hợp lệ ban đầu
     if purchase_order_id:
-        po = PurchaseOrder.objects.select_for_update().filter(id=purchase_order_id).first()
+        po = PurchaseOrder.objects.filter(id=purchase_order_id).first()
         if not po:
             raise NotFoundException("Đơn mua hàng tham chiếu không tồn tại.")
         if po.status in [PurchaseOrder.Status.COMPLETED, PurchaseOrder.Status.CANCELLED]:
             raise ValidationException("Không thể nhận thêm cọc/ứng trước cho đơn hàng đã hoàn tất hoặc đã hủy.")
-
         if po.advance_paid_amount + amount > po.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn mua hàng.")
-
         transaction_obj.purchase_order = po
-        po.advance_paid_amount += amount
-        po.save()
 
-        # Cập nhật trạng thái Đơn hàng
-        from apps.purchasing.services import purchase_order_update_status
-
-        purchase_order_update_status(po)
-
-    # -- Tham chiếu: Sales Order --
-    if sales_order_id:
-        so = SalesOrder.objects.select_for_update().filter(id=sales_order_id).first()
+    elif sales_order_id:
+        so = SalesOrder.objects.filter(id=sales_order_id).first()
         if not so:
             raise NotFoundException("Đơn bán hàng tham chiếu không tồn tại.")
         if so.status in [SalesOrder.Status.COMPLETED, SalesOrder.Status.CANCELLED]:
             raise ValidationException("Không thể nhận thêm cọc cho đơn hàng đã hoàn tất hoặc đã hủy.")
-
         if so.advance_paid_amount + amount > so.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn bán hàng.")
-
         transaction_obj.sales_order = so
-        so.advance_paid_amount += amount
-        so.save()
 
-        # Cập nhật trạng thái Đơn hàng
-        from apps.sales.services import sales_order_update_status
-
-        sales_order_update_status(so)
-
-    # -- Tham chiếu: Purchase Invoice --
-    if purchase_invoice_id:
-        pi = PurchaseInvoice.objects.select_for_update().filter(id=purchase_invoice_id).first()
+    elif purchase_invoice_id:
+        pi = PurchaseInvoice.objects.filter(id=purchase_invoice_id).first()
         if not pi:
             raise NotFoundException("Hóa đơn mua hàng tham chiếu không tồn tại.")
         if pi.status in [PurchaseInvoice.Status.PAID, PurchaseInvoice.Status.CANCELLED]:
             raise ValidationException("Hóa đơn mua không hợp lệ hoặc đã hoàn tất thanh toán.")
-
         if pi.paid_amount + amount > pi.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
-
         transaction_obj.purchase_invoice = pi
-        pi.paid_amount += amount
-
-        if pi.paid_amount >= pi.total_amount:
-            pi.status = PurchaseInvoice.Status.PAID
-        else:
-            pi.status = PurchaseInvoice.Status.PARTIAL
-        pi.save()
-
-        # Cập nhật trạng thái Đơn hàng gốc liên kết
         if pi.order:
-            from apps.purchasing.services import purchase_order_update_status
+            transaction_obj.purchase_order = pi.order
 
-            purchase_order_update_status(pi.order)
-
-    # -- Tham chiếu: Sales Invoice --
-    if sales_invoice_id:
-        si = SalesInvoice.objects.select_for_update().filter(id=sales_invoice_id).first()
+    elif sales_invoice_id:
+        si = SalesInvoice.objects.filter(id=sales_invoice_id).first()
         if not si:
             raise NotFoundException("Hóa đơn bán hàng tham chiếu không tồn tại.")
         if si.status in [SalesInvoice.Status.PAID, SalesInvoice.Status.CANCELLED]:
             raise ValidationException("Hóa đơn bán không hợp lệ hoặc đã hoàn tất thanh toán.")
-
         if si.paid_amount + amount > si.total_amount:
             raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn bán.")
-
         transaction_obj.sales_invoice = si
-        si.paid_amount += amount
-
-        if si.paid_amount >= si.total_amount:
-            si.status = SalesInvoice.Status.PAID
-        else:
-            si.status = SalesInvoice.Status.PARTIAL
-        si.save()
-
-        # Cập nhật trạng thái Đơn hàng gốc liên kết
         if si.order:
-            from apps.sales.services import sales_order_update_status
+            transaction_obj.sales_order = si.order
 
-            sales_order_update_status(si.order)
-
+    transaction_obj.status = "pending_approval"
     transaction_obj.save()
 
     create_system_log(
@@ -169,10 +238,44 @@ def cash_flow_create(
         action="create",
         table_name="cash_flow_transaction",
         record_id=str(transaction_obj.id),
-        new_value={"type": payment_type, "amount": str(amount)},
+        new_value={"type": payment_type, "amount": str(amount), "status": transaction_obj.status},
     )
 
     return transaction_obj
+
+
+@transaction.atomic
+def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
+    """
+    Phê duyệt Phiếu chi dòng tiền (CFO/Admin).
+    Chuyển trạng thái sang posted và thực hiện cập nhật công nợ/ứng trước.
+    """
+    PermissionChecker.check_permission(user, "finance.approve_cash_flow")
+
+    tx = CashFlowTransaction.objects.select_for_update().filter(id=tx_id).first()
+    if not tx:
+        raise NotFoundException("Phiếu chi dòng tiền không tồn tại.")
+
+    if tx.status != "pending_approval":
+        raise ValidationException("Chỉ có thể phê duyệt phiếu chi ở trạng thái Chờ duyệt.")
+
+    # Kích hoạt cập nhật công nợ/ứng trước của Hóa đơn/Đơn hàng liên quan
+    _apply_cash_flow_effect(tx, tx.amount)
+
+    tx.status = "posted"
+    tx.approved_by = user
+    tx.approved_at = timezone.now()
+    tx.save()
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="cash_flow_transaction",
+        record_id=str(tx.id),
+        new_value={"status": tx.status, "approved_by": str(user.id)},
+    )
+
+    return tx
 
 
 @transaction.atomic

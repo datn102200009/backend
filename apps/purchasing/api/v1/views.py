@@ -107,6 +107,7 @@ class PurchaseOrderApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "purchasing.update_order")
         order = purchase_order_approve(user=request.user, order_id=str(pk))
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_200_OK)
 

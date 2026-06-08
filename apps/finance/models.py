@@ -189,6 +189,25 @@ class CashFlowTransaction(BaseModel):
     amount = models.DecimalField(max_digits=15, decimal_places=2)
     payment_date = models.DateField()
     remarks = models.TextField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("draft", "Draft"),
+            ("pending_approval", "Pending Approval"),
+            ("posted", "Posted"),
+            ("rejected", "Rejected"),
+        ],
+        default="pending_approval",
+        db_index=True,
+    )
+    approved_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_cash_flows",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "cash_flow_transaction"
@@ -196,6 +215,9 @@ class CashFlowTransaction(BaseModel):
         verbose_name_plural = "Cash Flow Transactions"
         indexes = [
             models.Index(fields=["payment_type", "payment_date"]),
+            models.Index(fields=["status", "payment_date"]),
+            models.Index(fields=["purchase_order", "status"]),
+            models.Index(fields=["sales_order", "status"]),
         ]
 
     def __str__(self):

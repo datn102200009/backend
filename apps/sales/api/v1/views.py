@@ -90,6 +90,7 @@ class SalesOrderApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.update_order")
         order = sales_order_approve(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
@@ -98,6 +99,7 @@ class SalesOrderApproveCreditBypassAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.approve_credit_bypass")
         order = approve_credit_bypass(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 

@@ -21,13 +21,20 @@ class TestCashFlowServices:
     def test_cash_flow_purchase_order_deposit(self, user):
         po = PurchaseOrderFactory(total_amount=Decimal("1000.00"), advance_paid_amount=0)
 
-        cash_flow_create(
+        tx = cash_flow_create(
             user=user,
             payment_type="pay",
             amount=Decimal("200.00"),
             payment_date="2023-10-01",
             purchase_order_id=str(po.id),
         )
+
+        po.refresh_from_db()
+        assert po.advance_paid_amount == 0  # not updated yet since status is pending_approval
+
+        from apps.finance.services import cash_flow_approve
+
+        cash_flow_approve(user=user, tx_id=str(tx.id))
 
         po.refresh_from_db()
         assert po.advance_paid_amount == Decimal("200.00")
@@ -47,7 +54,7 @@ class TestCashFlowServices:
     def test_cash_flow_sales_invoice_settlement(self, user):
         invoice = SalesInvoiceFactory(total_amount=Decimal("500.00"), paid_amount=0)
 
-        cash_flow_create(
+        tx = cash_flow_create(
             user=user,
             payment_type="receive",
             amount=Decimal("500.00"),
@@ -55,24 +62,32 @@ class TestCashFlowServices:
             sales_invoice_id=str(invoice.id),
         )
 
+        from apps.finance.services import cash_flow_approve
+
+        cash_flow_approve(user=user, tx_id=str(tx.id))
+
         invoice.refresh_from_db()
         assert invoice.paid_amount == Decimal("500.00")
         assert invoice.status == "paid"
 
     def test_cash_flow_invalid_type(self, user):
+        invoice = SalesInvoiceFactory(total_amount=Decimal("500.00"), paid_amount=0)
         with pytest.raises(ValidationException, match="Loại thanh toán phải là"):
             cash_flow_create(
                 user=user,
                 payment_type="invalid_type",
                 amount=Decimal("100.00"),
                 payment_date="2023-10-01",
+                sales_invoice_id=str(invoice.id),
             )
 
     def test_cash_flow_negative_amount(self, user):
+        invoice = SalesInvoiceFactory(total_amount=Decimal("500.00"), paid_amount=0)
         with pytest.raises(ValidationException, match="Số tiền thanh toán phải lớn hơn 0"):
             cash_flow_create(
                 user=user,
                 payment_type="pay",
                 amount=Decimal("-100.00"),
                 payment_date="2023-10-01",
+                sales_invoice_id=str(invoice.id),
             )

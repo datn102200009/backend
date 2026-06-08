@@ -94,6 +94,20 @@ components:
           type: string
           format: uuid
           nullable: true
+        status:
+          type: string
+          enum: [draft, pending_approval, posted, rejected]
+        approved_by:
+          type: string
+          format: uuid
+          nullable: true
+        approved_by_username:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -312,18 +326,45 @@ paths:
   /finance/cash-flows/:
     get:
       summary: List Cash Flows
-      description: Returns a list of cash flow transactions.
+      description: Returns a paginated list of cash flow transactions.
       tags:
         - Cash Flows
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
-          description: A list of cash flows.
+          description: A paginated list of cash flows.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CashFlowTransaction'
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  total_pages:
+                    type: integer
+                  current_page:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CashFlowTransaction'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
@@ -376,6 +417,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CashFlowTransaction'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/cash-flows/{pk}/approve/:
+    post:
+      summary: Approve Cash Flow Transaction
+      description: Approves a cash flow transaction, which triggers the actual debt/advance updates on linked orders or invoices.
+      tags:
+        - Cash Flows
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cash flow transaction successfully approved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowTransaction'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':

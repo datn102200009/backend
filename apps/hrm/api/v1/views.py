@@ -30,6 +30,7 @@ from apps.hrm.api.v1.serializers import (
     EmployeeUpdateInputSerializer,
     EmployeeUpdateSalaryTitleInputSerializer,
     EmploymentContractOutputSerializer,
+    EmploymentHistoryOutputSerializer,
     LeaveRequestApproveInputSerializer,
     LeaveRequestCreateInputSerializer,
     LeaveRequestOutputSerializer,
@@ -41,16 +42,26 @@ from apps.hrm.api.v1.serializers import (
     SalarySlipInitializeInputSerializer,
     SalarySlipOutputSerializer,
 )
-from apps.hrm.models import Attendance, DisciplineRecord, EmploymentContract, LeaveRequest, PublicHoliday, RewardRecord
+from apps.hrm.models import (
+    Attendance,
+    DisciplineRecord,
+    EmploymentContract,
+    EmploymentHistory,
+    LeaveRequest,
+    PublicHoliday,
+    RewardRecord,
+)
 from apps.hrm.selectors import employee_get_detail_with_relations
 from apps.hrm.services import (
     attendance_batch_record,
     contract_create_or_renew,
     contract_terminate,
+    discipline_record_approve,
     discipline_record_create,
     employee_create_with_user,
     employee_update,
     employee_update_salary_or_title,
+    employment_history_approve,
     leave_request_approve,
     leave_request_create,
     payroll_approve_salary,
@@ -60,6 +71,7 @@ from apps.hrm.services import (
     public_holiday_create,
     public_holiday_delete,
     public_holiday_update,
+    reward_record_approve,
     reward_record_create,
 )
 from apps.master_data.models import Employee
@@ -210,15 +222,15 @@ def employee_update_salary_title_view(request, pk):
     serializer = EmployeeUpdateSalaryTitleInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    updated_employee = employee_update_salary_or_title(
+    history = employee_update_salary_or_title(
         employee_id=pk,
         change_data=serializer.validated_data,
         approved_by_user_id=str(user.id),
         approved_by=user,
     )
 
-    out_serializer = EmployeeOutputSerializer(updated_employee)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
+    out_serializer = EmploymentHistoryOutputSerializer(history)
+    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
 
 
 # =============================================================================
@@ -812,3 +824,99 @@ def public_holiday_detail_update_delete_view(request, pk):
             deleter=user,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["GET"])
+def employment_history_list_view(request):
+    """
+    Xem danh sách đề xuất nhân sự (lịch sử công tác).
+    Hỗ trợ lọc theo status và employee_id, kèm phân trang limit/offset.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.view_employee")
+
+    status_param = request.query_params.get("status")
+    employee_id = request.query_params.get("employee_id")
+
+    try:
+        limit = int(request.query_params.get("limit", 20))
+        offset = int(request.query_params.get("offset", 0))
+        limit = min(limit, 100)
+    except ValueError:
+        limit = 20
+        offset = 0
+
+    qs = (
+        EmploymentHistory.objects.all()
+        .select_related("employee", "approved_by")
+        .order_by("-effective_date", "-created_at")
+    )
+
+    if status_param:
+        qs = qs.filter(status=status_param)
+    if employee_id:
+        qs = qs.filter(employee_id=employee_id)
+
+    count = qs.count()
+    results = qs[offset : offset + limit]
+    total_pages = (count + limit - 1) // limit if limit > 0 else 1
+
+    serializer = EmploymentHistoryOutputSerializer(results, many=True)
+    return Response(
+        {
+            "count": count,
+            "total_pages": total_pages,
+            "next": None,
+            "previous": None,
+            "results": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def employment_history_approve_view(request, pk):
+    """
+    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_employee")
+    history = employment_history_approve(user=user, history_id=pk)
+    return Response(EmploymentHistoryOutputSerializer(history).data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def reward_approve_view(request, pk):
+    """
+    Phê duyệt khen thưởng.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_rewardrecord")
+    reward = reward_record_approve(user=user, reward_id=pk)
+    return Response(RewardRecordOutputSerializer(reward).data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def discipline_approve_view(request, pk):
+    """
+    Phê duyệt kỷ luật.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
+    discipline = discipline_record_approve(user=user, discipline_id=pk)
+    return Response(DisciplineRecordOutputSerializer(discipline).data, status=status.HTTP_200_OK)

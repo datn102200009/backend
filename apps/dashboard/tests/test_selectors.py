@@ -171,7 +171,11 @@ class TestDashboardSelectors:
 
     def test_finance_cashflow_chart(self):
         CashFlowTransaction.objects.create(
-            name="TX-01", payment_type="receive", amount=Decimal("1000.00"), payment_date=timezone.now().date()
+            name="TX-01",
+            payment_type="receive",
+            amount=Decimal("1000.00"),
+            payment_date=timezone.now().date(),
+            status="posted",
         )
         res = get_finance_cashflow_chart()
         assert "weeks" in res
@@ -180,10 +184,10 @@ class TestDashboardSelectors:
     def test_finance_cashflow_summary(self):
         today = timezone.now().date()
         CashFlowTransaction.objects.create(
-            name="TX-02", payment_type="receive", amount=Decimal("1500.00"), payment_date=today
+            name="TX-02", payment_type="receive", amount=Decimal("1500.00"), payment_date=today, status="posted"
         )
         CashFlowTransaction.objects.create(
-            name="TX-03", payment_type="pay", amount=Decimal("500.00"), payment_date=today
+            name="TX-03", payment_type="pay", amount=Decimal("500.00"), payment_date=today, status="posted"
         )
         res = get_finance_cashflow_summary()
         assert len(res) == 2

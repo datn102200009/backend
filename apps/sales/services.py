@@ -278,10 +278,13 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
 
     # 1. Chuyển trạng thái đơn hàng sang PENDING
     order.status = SalesOrder.Status.PENDING
+
+    orig_advance_paid_amount = order.advance_paid_amount
+    order.advance_paid_amount = Decimal("0.00")
     order.save()
 
     # Tự động ghi nhận dòng tiền cọc (Thu tiền cọc) nếu có cọc và chưa có dòng tiền cọc
-    if order.advance_paid_amount > 0:
+    if orig_advance_paid_amount > 0:
         if not order.cash_flows.filter(payment_type="receive").exists():
             from apps.finance.models import CashFlowTransaction
 
@@ -291,10 +294,11 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
                 payment_type="receive",
                 category="Đặt cọc đơn hàng",
                 payment_method="bank_transfer",
-                amount=order.advance_paid_amount,
+                amount=orig_advance_paid_amount,
                 payment_date=order.updated_at.date(),
                 sales_order=order,
-                remarks=f"Tự động thu tiền cọc từ đơn bán hàng {order.id} (Khách hàng: {order.customer.customer_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {order.advance_paid_amount:,.2f}đ).",
+                status="pending_approval",
+                remarks=f"Tự động thu tiền cọc từ đơn bán hàng {order.id} (Khách hàng: {order.customer.customer_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {orig_advance_paid_amount:,.2f}đ).",
             )
 
     # 2. Tạo Phiếu xuất kho nháp (Draft Stock Entry)
@@ -315,20 +319,13 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
         )
 
     # 3. Tạo Hóa đơn bán hàng (Sales Invoice)
-    if order.advance_paid_amount >= order.total_amount and order.total_amount > 0:
-        invoice_status = SalesInvoice.Status.PAID
-    elif order.advance_paid_amount > 0:
-        invoice_status = SalesInvoice.Status.PARTIAL
-    else:
-        invoice_status = SalesInvoice.Status.UNPAID
-
     invoice = SalesInvoice.objects.create(
         order=order,
         stock_entry=stock_entry,
         customer=order.customer,
-        status=invoice_status,
+        status=SalesInvoice.Status.UNPAID,
         total_amount=order.total_amount,
-        paid_amount=order.advance_paid_amount,
+        paid_amount=Decimal("0.00"),
     )
     for line in order.lines.all():
         SalesInvoiceLine.objects.create(
@@ -371,10 +368,13 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
 
     # Bỏ qua kiểm tra tín dụng, duyệt trực tiếp:
     order.status = SalesOrder.Status.PENDING
+
+    orig_advance_paid_amount = order.advance_paid_amount
+    order.advance_paid_amount = Decimal("0.00")
     order.save()
 
     # Tự động ghi nhận dòng tiền cọc (Thu tiền cọc) nếu có cọc và chưa có dòng tiền cọc
-    if order.advance_paid_amount > 0:
+    if orig_advance_paid_amount > 0:
         if not order.cash_flows.filter(payment_type="receive").exists():
             from apps.finance.models import CashFlowTransaction
 
@@ -384,10 +384,11 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
                 payment_type="receive",
                 category="Đặt cọc đơn hàng",
                 payment_method="bank_transfer",
-                amount=order.advance_paid_amount,
+                amount=orig_advance_paid_amount,
                 payment_date=order.updated_at.date(),
                 sales_order=order,
-                remarks=f"Tự động thu tiền cọc từ đơn bán hàng {order.id} (Khách hàng: {order.customer.customer_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {order.advance_paid_amount:,.2f}đ).",
+                status="pending_approval",
+                remarks=f"Tự động thu tiền cọc từ đơn bán hàng {order.id} (Khách hàng: {order.customer.customer_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {orig_advance_paid_amount:,.2f}đ).",
             )
 
     # Tạo Phiếu xuất kho nháp
@@ -408,20 +409,13 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
         )
 
     # Tạo Hóa đơn bán hàng
-    if order.advance_paid_amount >= order.total_amount and order.total_amount > 0:
-        invoice_status = SalesInvoice.Status.PAID
-    elif order.advance_paid_amount > 0:
-        invoice_status = SalesInvoice.Status.PARTIAL
-    else:
-        invoice_status = SalesInvoice.Status.UNPAID
-
     invoice = SalesInvoice.objects.create(
         order=order,
         stock_entry=stock_entry,
         customer=order.customer,
-        status=invoice_status,
+        status=SalesInvoice.Status.UNPAID,
         total_amount=order.total_amount,
-        paid_amount=order.advance_paid_amount,
+        paid_amount=Decimal("0.00"),
     )
     for line in order.lines.all():
         SalesInvoiceLine.objects.create(
@@ -475,6 +469,8 @@ def sales_order_cancel(*, user: User, order_id: str) -> SalesOrder:
     from apps.inventory.models import StockEntry
     from apps.inventory.services import stock_entry_cancel, stock_entry_reverse
 
+    created_cfs = []
+
     # 1. Xử lý các StockEntry liên kết
     stock_entries = StockEntry.objects.select_for_update().filter(sales_order=order)
     for entry in stock_entries.iterator(chunk_size=1000):
@@ -493,7 +489,8 @@ def sales_order_cancel(*, user: User, order_id: str) -> SalesOrder:
         if tx.category == "Hoàn trả thanh toán":
             continue
         remarks_rev = f"Hoàn trả thu tiền tự động do hủy đơn bán {order.id} (Đối ứng cho giao dịch đặt cọc/thanh toán gốc {tx.name}, Số tiền hoàn: {tx.amount:,.2f}đ)."
-        cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+        rev_tx = cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+        created_cfs.append(rev_tx)
 
     # 3. Cập nhật các Hóa đơn liên kết
     invoices = order.invoices.select_for_update()
@@ -503,7 +500,10 @@ def sales_order_cancel(*, user: User, order_id: str) -> SalesOrder:
         invoice.save()
 
     # 4. Cập nhật Đơn hàng
-    order.status = SalesOrder.Status.CANCELLED
+    if created_cfs:
+        order.status = SalesOrder.Status.CANCEL_PENDING
+    else:
+        order.status = SalesOrder.Status.CANCELLED
     order.advance_paid_amount = Decimal("0.00")
     order.save()
 

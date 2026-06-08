@@ -30,7 +30,7 @@ def format_num(val):
 
 # 1. sales_today_revenue (Đơn bán hàng hôm nay)
 def get_sales_today_revenue():
-    today = timezone.now().date()
+    today = timezone.localdate()
     orders_qs = (
         SalesOrder.objects.filter(created_at__date=today)
         .exclude(status__in=[SalesOrder.Status.DRAFT, SalesOrder.Status.CANCELLED])
@@ -473,9 +473,9 @@ def get_inventory_pending_entries():
 def get_finance_cashflow_chart():
     from apps.finance.models import CashFlowTransaction
 
-    start_date = timezone.now().date() - timedelta(days=28)
+    start_date = timezone.localdate() - timedelta(days=28)
     txs = (
-        CashFlowTransaction.objects.filter(payment_date__gte=start_date)
+        CashFlowTransaction.objects.filter(payment_date__gte=start_date, status="posted")
         .annotate(week=TruncWeek("payment_date"))
         .values("week", "payment_type")
         .annotate(total=Sum("amount"))
@@ -506,11 +506,11 @@ def get_finance_cashflow_chart():
 def get_finance_cashflow_summary():
     from apps.finance.models import CashFlowTransaction
 
-    today = timezone.now().date()
+    today = timezone.localdate()
     start_of_month = today.replace(day=1)
-    txs_qs = CashFlowTransaction.objects.filter(payment_date__gte=start_of_month, payment_date__lte=today).order_by(
-        "-payment_date", "-created_at"
-    )
+    txs_qs = CashFlowTransaction.objects.filter(
+        payment_date__gte=start_of_month, payment_date__lte=today, status="posted"
+    ).order_by("-payment_date", "-created_at")
     total_count = txs_qs.count()
     results = [
         {
@@ -665,7 +665,7 @@ def get_hrm_pending_leave_requests():
 
 # 21. hrm_expiring_contracts
 def get_hrm_expiring_contracts():
-    today = timezone.now().date()
+    today = timezone.localdate()
     thirty_days_later = today + timedelta(days=30)
     contracts_qs = (
         EmploymentContract.objects.filter(status="active", end_date__gte=today, end_date__lte=thirty_days_later)
@@ -689,7 +689,7 @@ def get_hrm_expiring_contracts():
 
 # 23. hrm_today_attendance_rate (Nhân viên vắng mặt hôm nay)
 def get_hrm_today_attendance_rate():
-    today = timezone.now().date()
+    today = timezone.localdate()
     working_employee_ids = Attendance.objects.filter(date=today, status="working").values_list("employee_id", flat=True)
 
     # Lấy tối đa 5 nhân sự không đi làm (vắng mặt hoặc nghỉ phép)
@@ -767,7 +767,7 @@ def get_manufacturing_active_wos():
 
 # 26. manufacturing_pending_declarations (Lệnh sản xuất sắp trễ hạn)
 def get_manufacturing_pending_declarations():
-    today = timezone.now().date()
+    today = timezone.localdate()
     three_days_later = today + timedelta(days=3)
 
     # Lấy các lệnh sản xuất chưa hoàn thành và có hạn sắp đến hoặc đã qua

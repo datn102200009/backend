@@ -37,7 +37,15 @@ urlpatterns = [
     path("salary-slips/<uuid:pk>/approve/", views.salary_slip_approve_view, name="salary_slip_approve"),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
+    path("rewards/<uuid:pk>/approve/", views.reward_approve_view, name="reward_approve"),
     path("disciplines/", views.discipline_list_create_view, name="discipline_list_create"),
+    path("disciplines/<uuid:pk>/approve/", views.discipline_approve_view, name="discipline_approve"),
+    path("employment-histories/", views.employment_history_list_view, name="employment_history_list"),
+    path(
+        "employment-histories/<uuid:pk>/approve/",
+        views.employment_history_approve_view,
+        name="employment_history_approve",
+    ),
     # Public Holidays
     path("public-holidays/", views.public_holiday_list_create_view, name="public_holiday_list_create"),
     path(
