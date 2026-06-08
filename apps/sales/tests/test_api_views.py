@@ -49,3 +49,14 @@ class TestSalesAPIViews:
         response = authenticated_client.post(url)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.data == {"error": "Không có quyền"}
+
+    def test_get_invoices_list_paginated(self, authenticated_client):
+        from apps.sales.tests.factories import SalesInvoiceFactory
+
+        SalesInvoiceFactory.create_batch(3)
+        url = reverse("sales-invoice-list")
+        response = authenticated_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert "count" in response.data
+        assert "results" in response.data
+        assert len(response.data["results"]) == 3

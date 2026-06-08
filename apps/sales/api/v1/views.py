@@ -128,18 +128,17 @@ class SalesInvoiceListAPIView(APIView):
             else:
                 invoices = invoices.filter(status=status_filter)
 
-        page_param = request.query_params.get("page")
+        # Luôn bắt buộc phân trang để tối ưu hiệu năng khi dữ liệu lớn
+        from rest_framework.pagination import PageNumberPagination
+
+        paginator = PageNumberPagination()
         limit_param = request.query_params.get("limit")
+        paginator.page_size = int(limit_param) if limit_param else 10
 
-        if page_param or limit_param:
-            from rest_framework.pagination import PageNumberPagination
-
-            paginator = PageNumberPagination()
-            paginator.page_size = int(limit_param) if limit_param else 10
-            page = paginator.paginate_queryset(invoices, request, view=self)
-            if page is not None:
-                serializer = SalesInvoiceSerializer(page, many=True)
-                return paginator.get_paginated_response(serializer.data)
+        page = paginator.paginate_queryset(invoices, request, view=self)
+        if page is not None:
+            serializer = SalesInvoiceSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
 
         serializer = SalesInvoiceSerializer(invoices, many=True)
         return Response(serializer.data)
