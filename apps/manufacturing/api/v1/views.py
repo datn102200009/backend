@@ -49,6 +49,8 @@ def bom_create_view(request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
+    PermissionChecker.check_permission(user, "manufacturing.bom_create")
+
     serializer = BOMCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
@@ -78,6 +80,8 @@ def bom_update_view(request, bom_id):
             {"error": "User không được xác thực"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
+    PermissionChecker.check_permission(user, "manufacturing.bom_update")
 
     serializer = BOMUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -112,6 +116,8 @@ def bom_delete_view(request, bom_id):
             {"error": "User không được xác thực"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
+    PermissionChecker.check_permission(user, "manufacturing.bom_delete")
 
     bom_delete(user=user, bom_id=bom_id)
 
@@ -202,6 +208,8 @@ def work_order_create_view(request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
+    PermissionChecker.check_permission(user, "manufacturing.work_order_create")
+
     serializer = WorkOrderCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
@@ -234,6 +242,8 @@ def work_order_approve_view(request, work_order_id):
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
+    PermissionChecker.check_permission(user, "manufacturing.work_order_approve")
+
     work_order = work_order_approve(
         user=user,
         work_order_id=work_order_id,
@@ -254,6 +264,8 @@ def work_order_declare_production_view(request, work_order_id):
             {"error": "User không được xác thực"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
+    PermissionChecker.check_permission(user, "manufacturing.work_order_declare")
 
     serializer = WorkOrderDeclareProductionSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -279,6 +291,8 @@ def work_order_complete_view(request, work_order_id):
             {"error": "User không được xác thực"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
+    PermissionChecker.check_permission(user, "manufacturing.work_order_complete")
 
     serializer = WorkOrderCompleteSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -348,6 +362,8 @@ def work_order_cancel_view(request, work_order_id):
             {"error": "User không được xác thực"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
+    PermissionChecker.check_permission(user, "manufacturing.work_order_cancel")
 
     serializer = WorkOrderCancelSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)

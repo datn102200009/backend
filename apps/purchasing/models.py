@@ -12,6 +12,7 @@ class PurchaseOrder(BaseModel):
         PAID_UNSHIPPED = "paid_unshipped", "Đã thanh toán, chưa nhận hàng"
         SHIPPED_UNPAID = "shipped_unpaid", "Đã nhận hàng, chưa thanh toán"
         COMPLETED = "completed", "Hoàn tất"
+        CANCEL_PENDING = "cancel_pending", "Chờ duyệt hủy"
         CANCELLED = "cancelled", "Đã hủy"
 
     vendor = models.ForeignKey(

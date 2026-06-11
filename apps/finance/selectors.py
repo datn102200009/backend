@@ -10,13 +10,16 @@ from django.db.models import QuerySet
 from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
 
 
-def cash_flow_list() -> QuerySet:
+def cash_flow_list(*, status: str = None) -> QuerySet:
     """
     Returns a queryset of CashFlowTransaction, optimized with select_related.
     """
-    return CashFlowTransaction.objects.select_related(
+    qs = CashFlowTransaction.objects.select_related(
         "purchase_order", "sales_order", "purchase_invoice", "sales_invoice"
-    ).order_by("-payment_date", "-created_at", "id")
+    )
+    if status:
+        qs = qs.filter(status=status)
+    return qs.order_by("-payment_date", "-created_at", "id")
 
 
 def cash_flow_detail(*, transaction_id: str) -> CashFlowTransaction:

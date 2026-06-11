@@ -294,10 +294,13 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
 
     # 1. Chuyển trạng thái đơn hàng sang PENDING
     order.status = PurchaseOrder.Status.PENDING
+
+    orig_advance_paid_amount = order.advance_paid_amount
+    order.advance_paid_amount = Decimal("0.00")
     order.save()
 
     # Tự động ghi nhận dòng tiền cọc (Chi tiền cọc) nếu có cọc và chưa có dòng tiền cọc
-    if order.advance_paid_amount > 0:
+    if orig_advance_paid_amount > 0:
         if not order.cash_flows.filter(payment_type="pay").exists():
             from apps.finance.models import CashFlowTransaction
 
@@ -307,16 +310,17 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
                 payment_type="pay",
                 category="Đặt cọc đơn hàng",
                 payment_method="bank_transfer",
-                amount=order.advance_paid_amount,
+                amount=orig_advance_paid_amount,
                 payment_date=order.updated_at.date(),
                 purchase_order=order,
-                remarks=f"Tự động chi tiền cọc cho đơn mua hàng {order.id} (Nhà cung cấp: {order.vendor.supplier_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {order.advance_paid_amount:,.2f}đ).",
+                status="pending_approval",
+                remarks=f"Tự động chi tiền cọc cho đơn mua hàng {order.id} (Nhà cung cấp: {order.vendor.supplier_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {orig_advance_paid_amount:,.2f}đ).",
             )
 
     # 2. Tạo Phiếu nhập kho nháp (Draft Stock Entry)
     from apps.inventory.models import StockEntry, StockEntryDetail
 
-    stock_name = f"IN-PUR-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
+    stock_name = f"IN-PUR-PO-{str(order.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
     stock_entry = StockEntry.objects.create(
         name=stock_name,
         purpose="receipt",
@@ -331,20 +335,13 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
         )
 
     # 3. Tạo Hóa đơn mua hàng (Purchase Invoice)
-    if order.advance_paid_amount >= order.total_amount and order.total_amount > 0:
-        invoice_status = PurchaseInvoice.Status.PAID
-    elif order.advance_paid_amount > 0:
-        invoice_status = PurchaseInvoice.Status.PARTIAL
-    else:
-        invoice_status = PurchaseInvoice.Status.UNPAID
-
     invoice = PurchaseInvoice.objects.create(
         order=order,
         stock_entry=stock_entry,
         vendor=order.vendor,
-        status=invoice_status,
+        status=PurchaseInvoice.Status.UNPAID,
         total_amount=order.total_amount,
-        paid_amount=order.advance_paid_amount,
+        paid_amount=Decimal("0.00"),
     )
     for line in order.lines.all():
         PurchaseInvoiceLine.objects.create(
@@ -410,6 +407,7 @@ def purchase_order_cancel(
 
     # Kiểm tra xem đã có bất kỳ phiếu nhập kho nào đã post (hàng đã nhập thực tế) hay chưa
     has_received_goods = order.stock_entries.filter(status="posted").exists()
+    created_cfs = []
 
     if not has_received_goods:
         # --- CASE 1: Chưa có hàng nhập kho ---
@@ -430,7 +428,8 @@ def purchase_order_cancel(
                 if tx.category == "Hoàn trả thanh toán":
                     continue
                 remarks_rev = f"Hoàn trả chi tiền tự động do hủy đơn mua {order.id} (Đối ứng cho giao dịch đặt cọc/thanh toán gốc {tx.name}, Số tiền hoàn: {tx.amount:,.2f}đ)."
-                cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+                rev_tx = cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+                created_cfs.append(rev_tx)
 
             # Cập nhật số tiền đặt cọc về 0
             order.advance_paid_amount = Decimal("0.00")
@@ -505,7 +504,7 @@ def purchase_order_cancel(
 
                 payment_name = f"CF-PAY-DIFF-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
 
-                CashFlowTransaction.objects.create(
+                diff_tx = CashFlowTransaction.objects.create(
                     name=payment_name,
                     payment_type="pay",
                     category="Thanh toán đối ứng chênh lệch hủy đơn",
@@ -513,8 +512,10 @@ def purchase_order_cancel(
                     amount=diff,
                     payment_date=timezone.now().date(),
                     purchase_order=order,
+                    status="pending_approval",
                     remarks=f"Tự động chi tiền chênh lệch khi hủy đơn mua {order.id} và giữ lại hàng (Giá trị hàng: {received_value:,.2f}đ, Đã thanh toán: {total_paid:,.2f}đ, Chênh lệch cần chi: {diff:,.2f}đ).",
                 )
+                created_cfs.append(diff_tx)
             elif diff < 0:
                 # Giá trị hàng nhận nhỏ hơn số tiền đã trả -> tạo phiếu THU (receive) để thu hồi tiền chênh lệch từ nhà cung cấp
                 import uuid
@@ -523,7 +524,7 @@ def purchase_order_cancel(
 
                 payment_name = f"CF-REC-DIFF-{str(order.id)[:8]}-{str(uuid.uuid4())[:4]}"
 
-                CashFlowTransaction.objects.create(
+                diff_tx = CashFlowTransaction.objects.create(
                     name=payment_name,
                     payment_type="receive",
                     category="Hoàn trả đối ứng chênh lệch hủy đơn",
@@ -531,8 +532,10 @@ def purchase_order_cancel(
                     amount=abs(diff),
                     payment_date=timezone.now().date(),
                     purchase_order=order,
+                    status="pending_approval",
                     remarks=f"Tự động thu tiền chênh lệch khi hủy đơn mua {order.id} và giữ lại hàng (Giá trị hàng: {received_value:,.2f}đ, Đã thanh toán: {total_paid:,.2f}đ, Chênh lệch cần thu: {abs(diff):,.2f}đ).",
                 )
+                created_cfs.append(diff_tx)
 
             # Cập nhật advance_paid_amount trên PO để phục vụ cập nhật trạng thái tạm thời
             order.status = PurchaseOrder.Status.PENDING
@@ -578,7 +581,8 @@ def purchase_order_cancel(
                 if tx.category == "Hoàn trả thanh toán":
                     continue
                 remarks_rev = f"Hoàn trả chi tiền tự động do hủy đơn mua {order.id} (Đối ứng cho giao dịch đặt cọc/thanh toán gốc {tx.name}, Số tiền hoàn: {tx.amount:,.2f}đ)."
-                cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+                rev_tx = cash_flow_reverse(user=user, original_tx=tx, remarks=remarks_rev)
+                created_cfs.append(rev_tx)
 
             # c. Hủy các Hóa đơn liên kết
             invoices = order.invoices.select_for_update()
@@ -590,8 +594,11 @@ def purchase_order_cancel(
             # d. Reset tiền cọc trên PO
             order.advance_paid_amount = Decimal("0.00")
 
-    # 5. Cập nhật Đơn hàng sang CANCELLED
-    order.status = PurchaseOrder.Status.CANCELLED
+    # 5. Cập nhật Đơn hàng sang CANCEL_PENDING hoặc CANCELLED
+    if created_cfs:
+        order.status = PurchaseOrder.Status.CANCEL_PENDING
+    else:
+        order.status = PurchaseOrder.Status.CANCELLED
     order.save()
 
     create_system_log(
@@ -838,37 +845,6 @@ def record_shipment_logistic_fees(*, user: User, shipment_id: str, total_logisti
     )
 
     return shipment
-
-
-@transaction.atomic
-def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
-    """
-    Thanh toán hóa đơn mua hàng (Purchase Invoice).
-    """
-    PermissionChecker.check_permission(user, "purchasing.pay_invoice")
-
-    invoice = PurchaseInvoice.objects.select_for_update().filter(id=invoice_id).first()
-    if not invoice:
-        raise NotFoundException("Hóa đơn mua hàng không tồn tại.")
-
-    from django.utils import timezone
-
-    from apps.finance.services import cash_flow_create
-
-    payment_date_str = timezone.now().date().isoformat()
-
-    tx = cash_flow_create(
-        user=user,
-        payment_type="pay",
-        amount=amount,
-        payment_date=payment_date_str,
-        category="Thanh toán hóa đơn mua hàng",
-        payment_method=payment_method,
-        purchase_invoice_id=str(invoice.id),
-        remarks=f"Thanh toán cho hóa đơn mua hàng {invoice.id} (NCC: {invoice.vendor.supplier_name}).",
-    )
-
-    return tx
 
 
 @transaction.atomic

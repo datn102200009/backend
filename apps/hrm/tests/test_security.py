@@ -93,13 +93,22 @@ class TestHRMSecurity:
         assert "hrm.change_employee" in str(exc_info.value)
 
         authorized_user = create_user_with_permission("hrm.change_employee")
-        updated_emp = employee_update_salary_or_title(
+        history = employee_update_salary_or_title(
             employee_id=employee.id,
             change_data=change_data,
             approved_by_user_id=str(authorized_user.id),
             approved_by=authorized_user,
         )
-        assert updated_emp.salary_base == Decimal("13000000.00")
+        assert history.new_salary_base == Decimal("13000000.00")
+        assert history.status == "pending_approval"
+
+        # Approve proposal
+        from apps.hrm.services import employment_history_approve
+
+        employment_history_approve(user=authorized_user, history_id=str(history.id))
+
+        employee.refresh_from_db()
+        assert employee.salary_base == Decimal("13000000.00")
 
     def test_reward_record_create_permission(self):
         unauthorized_user = UserFactory()

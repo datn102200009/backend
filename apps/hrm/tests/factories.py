@@ -123,6 +123,7 @@ class RewardRecordFactory(factory.django.DjangoModelFactory):
     reward_type = "performance_bonus"
     amount = Decimal("1000000.00")
     description = "Thành tích xuất sắc tháng"
+    status = "approved"
 
 
 class DisciplineRecordFactory(factory.django.DjangoModelFactory):
@@ -137,3 +138,4 @@ class DisciplineRecordFactory(factory.django.DjangoModelFactory):
     discipline_type = "warning"
     penalty_amount = Decimal("500000.00")
     description = "Đi muộn nhiều lần"
+    status = "approved"

@@ -128,7 +128,15 @@ class TestHrmAPI:
 
         response = auth_client.post(url, data, format="json")
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_201_CREATED
+        employee.refresh_from_db()
+        assert employee.salary_base == 10000000.00
+
+        history_id = response.data["id"]
+        approve_url = f"/api/v1/hrm/employment-histories/{history_id}/approve/"
+        approve_response = auth_client.post(approve_url)
+        assert approve_response.status_code == status.HTTP_200_OK
+
         employee.refresh_from_db()
         assert employee.salary_base == 12500000.00
 

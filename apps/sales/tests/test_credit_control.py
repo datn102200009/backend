@@ -56,6 +56,13 @@ class TestCreditControl:
         with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
             sales_order_approve(user=user, order_id=str(order2.id))
 
+        from apps.finance.models import CashFlowTransaction
+        from apps.finance.services import cash_flow_approve
+
+        cf_dep = CashFlowTransaction.objects.filter(sales_order=order2, payment_type="receive").first()
+        assert cf_dep is not None
+        cash_flow_approve(user=user, tx_id=str(cf_dep.id))
+
         # Hóa đơn 2: total_amount = 300, paid_amount = 100 -> nợ = 200
         # Tổng nợ hiện tại = 200 + 200 = 400
         assert get_customer_current_debt(str(customer.id)) == Decimal("400.00")
@@ -250,6 +257,14 @@ class TestCreditControl:
         order_full_advance.save()
         with patch("apps.common.xlib.permissions.PermissionChecker.check_permission"):
             sales_order_approve(user=user, order_id=str(order_full_advance.id))
+
+        from apps.finance.models import CashFlowTransaction
+        from apps.finance.services import cash_flow_approve
+
+        cf_dep = CashFlowTransaction.objects.filter(sales_order=order_full_advance, payment_type="receive").first()
+        assert cf_dep is not None
+        cash_flow_approve(user=user, tx_id=str(cf_dep.id))
+
         order_full_advance.refresh_from_db()
         assert order_full_advance.status == SalesOrder.Status.PAID_UNSHIPPED
 

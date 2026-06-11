@@ -477,9 +477,9 @@ def contract_terminate(
     last_day = calendar.monthrange(year, month)[1]
     period_end_date = date(year, month, last_day)
 
-    rewards = RewardRecord.objects.filter(employee=employee, reward_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    rewards = RewardRecord.objects.filter(
+        employee=employee, reward_date__lte=period_end_date, status="approved"
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
     reward_total = Decimal("0.00")
     for r in rewards:
         reward_total += r.amount or Decimal("0.00")
@@ -487,9 +487,9 @@ def contract_terminate(
             r.salary_slip = slip
             r.save(update_fields=["salary_slip"])
 
-    disciplines = DisciplineRecord.objects.filter(employee=employee, discipline_date__lte=period_end_date).filter(
-        Q(salary_slip__isnull=True) | Q(salary_slip=slip)
-    )
+    disciplines = DisciplineRecord.objects.filter(
+        employee=employee, discipline_date__lte=period_end_date, status="approved"
+    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
     discipline_total = Decimal("0.00")
     for d in disciplines:
         discipline_total += d.penalty_amount or Decimal("0.00")
@@ -747,11 +747,11 @@ def employee_update_salary_or_title(
     *,
     employee_id: str,
     change_data: Dict[str, Any],
-    approved_by_user_id: str,
+    approved_by_user_id: str,  # This acts as the proposing user now
     approved_by: Optional[User] = None,
-) -> Employee:
+) -> EmploymentHistory:
     """
-    Cập nhật lương cơ bản, chức danh hoặc phòng ban của nhân viên và tự động ghi nhận vào EmploymentHistory.
+    Tạo đề xuất thay đổi lương cơ bản, chức danh hoặc phòng ban của nhân viên ở trạng thái Chờ duyệt.
     """
     try:
         employee = Employee.objects.get(id=employee_id)
@@ -762,7 +762,7 @@ def employee_update_salary_or_title(
         try:
             approved_by = User.objects.get(id=approved_by_user_id)
         except User.DoesNotExist:
-            raise ValidationException("Người phê duyệt không tồn tại")
+            raise ValidationException("Người đề xuất không tồn tại")
 
     PermissionChecker.check_permission(approved_by, "hrm.change_employee")
 
@@ -784,32 +784,100 @@ def employee_update_salary_or_title(
     new_title = change_data.get("new_title")
     new_department = change_data.get("new_department")
 
-    # Thực hiện cập nhật
+    # Kiểm tra tính hợp lệ ban đầu của các trường mới theo change_type
     if change_type == "salary_change":
         if new_salary_base is None:
             raise ValidationException("Lương cơ bản mới là bắt buộc cho thay đổi lương")
-        employee.salary_base = Decimal(str(new_salary_base))
     elif change_type == "title_change":
         if not new_title:
             raise ValidationException("Chức danh mới là bắt buộc cho thay đổi chức danh")
-        employee.position_title = new_title
     elif change_type == "department_transfer":
         if not new_department:
             raise ValidationException("Phòng ban mới là bắt buộc cho điều chuyển phòng ban")
-        employee.department = new_department
-    elif change_type == "other":
-        if new_salary_base is not None:
-            employee.salary_base = Decimal(str(new_salary_base))
-        if new_title is not None:
-            employee.position_title = new_title
-        if new_department is not None:
-            employee.department = new_department
-    else:
+    elif change_type != "other":
         raise ValidationException(f"Loại thay đổi không hợp lệ: {change_type}")
+
+    # Tạo bản ghi EmploymentHistory ở trạng thái pending_approval (chưa áp dụng lên Employee)
+    history = EmploymentHistory.objects.create(
+        employee=employee,
+        change_type=change_type,
+        old_salary_base=old_salary_base,
+        new_salary_base=Decimal(str(new_salary_base)) if new_salary_base is not None else None,
+        old_title=old_title,
+        new_title=new_title,
+        old_department=old_department,
+        new_department=new_department,
+        effective_date=effective_date,
+        approved_by=None,
+        approved_at=None,
+        status="pending_approval",
+        reason=change_data.get("reason"),
+    )
+
+    # Ghi log tạo đề xuất cho EmploymentHistory
+    history_log_data = {
+        "change_type": history.change_type,
+        "old_salary_base": str(history.old_salary_base) if history.old_salary_base is not None else None,
+        "new_salary_base": str(history.new_salary_base) if history.new_salary_base is not None else None,
+        "old_title": history.old_title,
+        "new_title": history.new_title,
+        "old_department": history.old_department,
+        "new_department": history.new_department,
+        "effective_date": str(history.effective_date),
+        "status": history.status,
+        "reason": history.reason,
+    }
+    create_system_log(
+        user=approved_by,
+        action="create",
+        table_name="employment_history",
+        record_id=str(history.id),
+        new_value=history_log_data,
+    )
+
+    return history
+
+
+@transaction.atomic
+def employment_history_approve(*, user: User, history_id: str) -> EmploymentHistory:
+    """
+    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
+    Áp dụng các thay đổi từ EmploymentHistory lên hồ sơ Employee.
+    """
+    PermissionChecker.check_permission(user, "hrm.change_employee")
+
+    history = EmploymentHistory.objects.select_for_update().filter(id=history_id).first()
+    if not history:
+        raise NotFoundException("Đề xuất thay đổi nhân sự không tồn tại.")
+
+    if history.status != "pending_approval":
+        raise ValidationException("Đề xuất thay đổi nhân sự này đã được xử lý.")
+
+    employee = Employee.objects.select_for_update().get(id=history.employee_id)
+
+    # Lưu giá trị cũ thực tế của Employee tại thời điểm duyệt
+    old_salary_base = employee.salary_base
+    old_title = employee.position_title
+    old_department = employee.department
+
+    # Cập nhật thông tin mới sang hồ sơ nhân viên
+    if history.change_type == "salary_change":
+        employee.salary_base = history.new_salary_base
+    elif history.change_type == "title_change":
+        employee.position_title = history.new_title
+    elif history.change_type == "department_transfer":
+        employee.department = history.new_department
+    elif history.change_type == "other":
+        if history.new_salary_base is not None:
+            employee.salary_base = history.new_salary_base
+        if history.new_title is not None:
+            employee.position_title = history.new_title
+        if history.new_department is not None:
+            employee.department = history.new_department
 
     employee.save()
 
-    # Ghi nhận log employee update trước
+    # Ghi log cập nhật cho Employee
     employee_old = {}
     employee_new = {}
     if old_salary_base != employee.salary_base:
@@ -824,7 +892,7 @@ def employee_update_salary_or_title(
 
     if employee_new:
         create_system_log(
-            user=approved_by,
+            user=user,
             action="update",
             table_name="employee",
             record_id=str(employee.id),
@@ -832,42 +900,22 @@ def employee_update_salary_or_title(
             new_value=employee_new,
         )
 
-    # 2. Tạo bản ghi EmploymentHistory
-    history = EmploymentHistory.objects.create(
-        employee=employee,
-        change_type=change_type,
-        old_salary_base=old_salary_base,
-        new_salary_base=employee.salary_base,
-        old_title=old_title,
-        new_title=employee.position_title,
-        old_department=old_department,
-        new_department=employee.department,
-        effective_date=effective_date,
-        approved_by=approved_by,
-        reason=change_data.get("reason"),
-    )
+    # Cập nhật trạng thái EmploymentHistory
+    history.status = "approved"
+    history.approved_by = user
+    history.approved_at = timezone.now()
+    history.save()
 
-    # 3. Ghi log cho EmploymentHistory
-    history_log_data = {
-        "change_type": history.change_type,
-        "old_salary_base": str(history.old_salary_base) if history.old_salary_base is not None else None,
-        "new_salary_base": str(history.new_salary_base) if history.new_salary_base is not None else None,
-        "old_title": history.old_title,
-        "new_title": history.new_title,
-        "old_department": history.old_department,
-        "new_department": history.new_department,
-        "effective_date": str(history.effective_date),
-        "reason": history.reason,
-    }
+    # Ghi log duyệt cho EmploymentHistory
     create_system_log(
-        user=approved_by,
-        action="create",
+        user=user,
+        action="approve",
         table_name="employment_history",
         record_id=str(history.id),
-        new_value=history_log_data,
+        new_value={"status": history.status, "approved_by": str(user.id)},
     )
 
-    return employee
+    return history
 
 
 @transaction.atomic
@@ -1254,6 +1302,7 @@ def reward_record_create(
         amount=amount,
         description=data.get("description"),
         salary_slip_id=salary_slip_id,
+        status="pending_approval",
     )
 
     create_system_log(
@@ -1317,6 +1366,7 @@ def discipline_record_create(
         penalty_amount=penalty_amount,
         salary_slip_id=salary_slip_id,
         file_url=data.get("file_url"),
+        status="pending_approval",
     )
 
     create_system_log(
@@ -1589,6 +1639,7 @@ def payroll_calculate_salary(
         employee=employee,
         reward_date__gte=period_start_date,
         reward_date__lte=period_end_date,
+        status="approved",
     ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     reward_total = Decimal("0.00")
@@ -1605,6 +1656,7 @@ def payroll_calculate_salary(
         employee=employee,
         discipline_date__gte=period_start_date,
         discipline_date__lte=period_end_date,
+        status="approved",
     ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
 
     discipline_total = Decimal("0.00")
@@ -1782,46 +1834,29 @@ def payroll_approve_salary(
     return slip
 
 
-@transaction.atomic
-def payroll_bulk_confirm_and_pay(
-    *,
-    salary_period: str,
+def _process_payroll_chunk(
+    chunk: list[SalarySlip],
     payment_method: str,
-    creator: Optional[User] = None,
-) -> list[SalarySlip]:
-    """
-    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
-    Tối ưu hóa bulk operations để giảm số truy cập DB từ O(N) xuống O(1).
-    """
-    if creator:
-        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
-
-    # 1. Lấy danh sách các slip chưa paid trong kỳ kèm employee để tránh N+1
-    slips = list(SalarySlip.objects.filter(salary_period=salary_period, status="approved").select_related("employee"))
-    if not slips:
-        return []
-
+    creator: Optional[User],
+    slips_to_update: list[SalarySlip],
+    txs_to_create: list[Any],
+    logs_to_create: list[Any],
+    salary_period: str,
+):
     from apps.accounts.models import SystemLog
     from apps.finance.models import CashFlowTransaction
 
-    # 2. Lấy danh sách các giao dịch CashFlowTransaction đã tồn tại cho các nhân viên này trong kỳ
-    tx_names = [f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}" for slip in slips]
+    tx_names = [f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}" for slip in chunk]
     existing_tx_names = set(CashFlowTransaction.objects.filter(name__in=tx_names).values_list("name", flat=True))
 
-    slips_to_update = []
-    txs_to_create = []
-    logs_to_create = []
-
-    for slip in slips:
+    for slip in chunk:
         old_status = slip.status
         old_method = slip.payment_method
 
-        # Cập nhật thông tin trên bộ nhớ
         slip.status = "paid"
         slip.payment_method = payment_method
         slips_to_update.append(slip)
 
-        # Tạo log thay đổi trạng thái và payment_method của SalarySlip
         logs_to_create.append(
             SystemLog(
                 user=creator,
@@ -1833,7 +1868,6 @@ def payroll_bulk_confirm_and_pay(
             )
         )
 
-        # Chuẩn bị giao dịch CashFlowTransaction nếu chưa tồn tại
         tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
         if tx_name not in existing_tx_names:
             try:
@@ -1854,6 +1888,7 @@ def payroll_bulk_confirm_and_pay(
                         amount=slip.net_pay,
                         payment_date=date.today(),
                         remarks=f"Chi trả lương tháng {period_month}/{period_year} cho nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Thực lĩnh: {slip.net_pay:,.2f}đ. Phương thức: Chuyển khoản.",
+                        status="posted",
                     )
                 )
             elif slip.net_pay < 0:
@@ -1866,38 +1901,92 @@ def payroll_bulk_confirm_and_pay(
                         amount=abs(slip.net_pay),
                         payment_date=date.today(),
                         remarks=f"Thu hồi lương âm tháng {period_month}/{period_year} của nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Số tiền: {abs(slip.net_pay):,.2f}đ.",
+                        status="posted",
                     )
                 )
 
-    # 3. Thực thi bulk update các phiếu lương
-    SalarySlip.objects.bulk_update(slips_to_update, fields=["status", "payment_method"])
 
-    # 4. Thực thi bulk create các giao dịch dòng tiền
-    if txs_to_create:
-        created_txs = CashFlowTransaction.objects.bulk_create(txs_to_create)
-        # Tạo log cho các giao dịch dòng tiền mới được tạo
-        for tx in created_txs:
-            logs_to_create.append(
-                SystemLog(
-                    user=creator,
-                    action="create",
-                    table_name="cash_flow_transaction",
-                    record_id=str(tx.id),
-                    new_value={
-                        "name": tx.name,
-                        "payment_type": tx.payment_type,
-                        "category": tx.category,
-                        "amount": str(tx.amount),
-                        "payment_date": str(tx.payment_date),
-                    },
-                )
+@transaction.atomic
+def payroll_bulk_confirm_and_pay(
+    *,
+    salary_period: str,
+    payment_method: str,
+    creator: Optional[User] = None,
+) -> list[SalarySlip]:
+    """
+    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
+    Tối ưu hóa bulk operations để giảm số truy cập DB từ O(N) xuống O(1).
+    Sử dụng .iterator(chunk_size=1000) để tối ưu hóa dữ liệu lớn.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    slips_qs = SalarySlip.objects.filter(salary_period=salary_period, status="approved").select_related("employee")
+
+    slips_to_update = []
+    txs_to_create = []
+    logs_to_create = []
+
+    # Process slips in chunks of 1000 using iterator
+    chunk_size = 1000
+    chunk = []
+    for slip in slips_qs.iterator(chunk_size=chunk_size):
+        chunk.append(slip)
+        if len(chunk) >= chunk_size:
+            _process_payroll_chunk(
+                chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
             )
+            chunk = []
+    if chunk:
+        _process_payroll_chunk(
+            chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
+        )
 
-    # 5. Thực thi bulk create tất cả log hệ thống
+    if not slips_to_update:
+        return []
+
+    # 3. Thực thi bulk update các phiếu lương theo chunks 1000
+    for i in range(0, len(slips_to_update), 1000):
+        SalarySlip.objects.bulk_update(slips_to_update[i : i + 1000], fields=["status", "payment_method"])
+
+    # 4. Thực thi bulk create các giao dịch dòng tiền theo chunks 1000
+    from apps.finance.models import CashFlowTransaction
+
+    if txs_to_create:
+        created_txs = []
+        for i in range(0, len(txs_to_create), 1000):
+            created_chunk = CashFlowTransaction.objects.bulk_create(txs_to_create[i : i + 1000])
+            created_txs.extend(created_chunk)
+
+        from apps.accounts.models import SystemLog
+
+        # Tạo log cho các giao dịch dòng tiền mới được tạo
+        tx_logs = [
+            SystemLog(
+                user=creator,
+                action="create",
+                table_name="cash_flow_transaction",
+                record_id=str(tx.id),
+                new_value={
+                    "name": tx.name,
+                    "payment_type": tx.payment_type,
+                    "category": tx.category,
+                    "amount": str(tx.amount),
+                    "payment_date": str(tx.payment_date),
+                },
+            )
+            for tx in created_txs
+        ]
+        logs_to_create.extend(tx_logs)
+
+    # 5. Thực thi bulk create tất cả log hệ thống theo chunks 1000
+    from apps.accounts.models import SystemLog
+
     if logs_to_create:
-        SystemLog.objects.bulk_create(logs_to_create)
+        for i in range(0, len(logs_to_create), 1000):
+            SystemLog.objects.bulk_create(logs_to_create[i : i + 1000])
 
-    return slips
+    return slips_to_update
 
 
 @transaction.atomic
@@ -2046,3 +2135,63 @@ def public_holiday_delete(
         old_value=old_value,
         new_value={},
     )
+
+
+@transaction.atomic
+def reward_record_approve(*, user: User, reward_id: str) -> RewardRecord:
+    """
+    Phê duyệt quyết định khen thưởng của nhân viên.
+    """
+    PermissionChecker.check_permission(user, "hrm.change_rewardrecord")
+
+    reward = RewardRecord.objects.select_for_update().filter(id=reward_id).first()
+    if not reward:
+        raise NotFoundException("Quyết định khen thưởng không tồn tại.")
+
+    if reward.status != "pending_approval":
+        raise ValidationException("Quyết định khen thưởng này đã được xử lý.")
+
+    reward.status = "approved"
+    reward.approved_by = user
+    reward.approved_at = timezone.now()
+    reward.save()
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="reward_record",
+        record_id=str(reward.id),
+        new_value={"status": reward.status, "approved_by_id": str(user.id)},
+    )
+
+    return reward
+
+
+@transaction.atomic
+def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRecord:
+    """
+    Phê duyệt quyết định kỷ luật của nhân viên.
+    """
+    PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
+
+    discipline = DisciplineRecord.objects.select_for_update().filter(id=discipline_id).first()
+    if not discipline:
+        raise NotFoundException("Quyết định kỷ luật không tồn tại.")
+
+    if discipline.status != "pending_approval":
+        raise ValidationException("Quyết định kỷ luật này đã được xử lý.")
+
+    discipline.status = "approved"
+    discipline.approved_by = user
+    discipline.approved_at = timezone.now()
+    discipline.save()
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="discipline_record",
+        record_id=str(discipline.id),
+        new_value={"status": discipline.status, "approved_by_id": str(user.id)},
+    )
+
+    return discipline

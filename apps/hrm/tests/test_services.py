@@ -296,29 +296,43 @@ class TestEmploymentHistoryServices:
         }
 
         # Act
-        updated_employee = employee_update_salary_or_title(
+        history = employee_update_salary_or_title(
             employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
         )
 
-        # Assert
-        updated_employee.refresh_from_db()
-        assert updated_employee.salary_base == Decimal("13000000.00")
+        # Assert before approval
+        employee.refresh_from_db()
+        assert employee.salary_base == Decimal("10000000.00")
 
-        # Verify EmploymentHistory was created
-        history = EmploymentHistory.objects.filter(employee=employee).first()
-        assert history is not None
+        # Approve the proposal
+        from apps.hrm.services import employment_history_approve
+
+        employment_history_approve(user=admin, history_id=str(history.id))
+
+        employee.refresh_from_db()
+        assert employee.salary_base == Decimal("13000000.00")
+
+        # Verify EmploymentHistory details
+        history.refresh_from_db()
         assert history.change_type == "salary_change"
         assert history.old_salary_base == Decimal("10000000.00")
         assert history.new_salary_base == Decimal("13000000.00")
         assert history.effective_date == date(2026, 6, 1)
-        assert history.approved_by == admin
         assert history.reason == "Điều chỉnh lương cơ bản theo hiệu suất"
 
         # Verify SystemLog was written
-        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        log = SystemLog.objects.filter(
+            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
+        ).first()
         assert log is not None
         assert log.action == "create"
         assert Decimal(str(log.new_value["new_salary_base"])) == Decimal("13000000.00")
+
+        # Verify approval SystemLog
+        approve_log = SystemLog.objects.filter(
+            table_name="employment_history", record_id=str(history.id), user=admin, action="approve"
+        ).first()
+        assert approve_log is not None
 
     def test_update_title_creates_history_and_logs(self):
         # Arrange
@@ -332,24 +346,33 @@ class TestEmploymentHistoryServices:
         }
 
         # Act
-        updated_employee = employee_update_salary_or_title(
+        history = employee_update_salary_or_title(
             employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
         )
 
-        # Assert
-        updated_employee.refresh_from_db()
-        assert updated_employee.position_title == "Senior Developer"
+        # Assert before approval
+        employee.refresh_from_db()
+        assert employee.position_title == "Junior Developer"
+
+        # Approve the proposal
+        from apps.hrm.services import employment_history_approve
+
+        employment_history_approve(user=admin, history_id=str(history.id))
+
+        employee.refresh_from_db()
+        assert employee.position_title == "Senior Developer"
 
         # Verify EmploymentHistory
-        history = EmploymentHistory.objects.filter(employee=employee).first()
-        assert history is not None
+        history.refresh_from_db()
         assert history.change_type == "title_change"
         assert history.old_title == "Junior Developer"
         assert history.new_title == "Senior Developer"
         assert history.effective_date == date(2026, 6, 1)
 
         # Verify SystemLog
-        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        log = SystemLog.objects.filter(
+            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
+        ).first()
         assert log is not None
 
     def test_update_department_creates_history_and_logs(self):
@@ -364,23 +387,32 @@ class TestEmploymentHistoryServices:
         }
 
         # Act
-        updated_employee = employee_update_salary_or_title(
+        history = employee_update_salary_or_title(
             employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
         )
 
-        # Assert
-        updated_employee.refresh_from_db()
-        assert updated_employee.department == "R&D"
+        # Assert before approval
+        employee.refresh_from_db()
+        assert employee.department == "IT"
+
+        # Approve the proposal
+        from apps.hrm.services import employment_history_approve
+
+        employment_history_approve(user=admin, history_id=str(history.id))
+
+        employee.refresh_from_db()
+        assert employee.department == "R&D"
 
         # Verify EmploymentHistory
-        history = EmploymentHistory.objects.filter(employee=employee).first()
-        assert history is not None
+        history.refresh_from_db()
         assert history.change_type == "department_transfer"
         assert history.old_department == "IT"
         assert history.new_department == "R&D"
 
         # Verify SystemLog
-        log = SystemLog.objects.filter(table_name="employment_history", record_id=str(history.id), user=admin).first()
+        log = SystemLog.objects.filter(
+            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
+        ).first()
         assert log is not None
 
 
@@ -1176,7 +1208,7 @@ class TestHrmPermissionAndBypass:
                 change_data=change_data,
                 approved_by_user_id="00000000-0000-0000-0000-000000000000",
             )
-        assert "Người phê duyệt không tồn tại" in str(exc_info.value)
+        assert "Người đề xuất không tồn tại" in str(exc_info.value)
 
     def test_employee_update_salary_or_title_fails_if_no_permission(self, mock_check_permission):
         # Arrange

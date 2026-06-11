@@ -199,6 +199,15 @@ components:
         id:
           type: string
           format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+          nullable: true
+        employee_name:
+          type: string
+          nullable: true
         change_type:
           type: string
           enum: [salary_change, title_change, department_transfer, other]
@@ -226,11 +235,16 @@ components:
         approved_by_id:
           type: string
           format: uuid
+          nullable: true
         approved_by_username:
           type: string
+          nullable: true
         reason:
           type: string
           nullable: true
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected]
         created_at:
           type: string
           format: date-time
@@ -419,6 +433,13 @@ components:
           type: string
           format: uuid
           nullable: true
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected]
+        approved_by_id:
+          type: string
+          format: uuid
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -455,6 +476,13 @@ components:
           nullable: true
         file_url:
           type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected]
+        approved_by_id:
+          type: string
+          format: uuid
           nullable: true
         created_at:
           type: string
@@ -744,6 +772,91 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+  /hrm/employment-histories/:
+    get:
+      summary: Lấy danh sách lịch sử công tác / đề xuất thay đổi nhân sự
+      description: Lấy danh sách lịch sử thay đổi thông tin nhân sự (lương, chức danh, phòng ban), hỗ trợ lọc trạng thái, employee_id và phân trang.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected]
+          description: Lọc theo trạng thái phê duyệt.
+        - name: employee_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Lọc theo ID nhân viên.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  total_pages:
+                    type: integer
+                  next:
+                    type: string
+                    nullable: true
+                  previous:
+                    type: string
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EmploymentHistory'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/employment-histories/{id}/approve/:
+    post:
+      summary: Phê duyệt đề xuất thay đổi nhân sự
+      description: Phê duyệt đề xuất thay đổi nhân sự (lương, chức danh, phòng ban), áp dụng các thay đổi mới vào hồ sơ nhân viên.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phê duyệt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmploymentHistory'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/contracts/:
     post:
       summary: Tạo mới hoặc gia hạn hợp đồng lao động
@@ -892,9 +1005,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Attendance'
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Attendance'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
@@ -1286,6 +1404,33 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /hrm/rewards/{id}/approve/:
+    post:
+      summary: Phê duyệt khen thưởng
+      description: Phê duyệt bản ghi khen thưởng cho nhân viên để được cộng vào tính lương.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phê duyệt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/disciplines/:
     get:
       summary: Lấy danh sách kỷ luật
@@ -1370,6 +1515,33 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/disciplines/{id}/approve/:
+    post:
+      summary: Phê duyệt kỷ luật
+      description: Phê duyệt bản ghi kỷ luật của nhân viên để khấu trừ vào tính lương.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phê duyệt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisciplineRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /hrm/salary-slips/bulk-confirm-pay/:
     post:

@@ -6,6 +6,8 @@ from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepre
 
 
 class CashFlowTransactionSerializer(serializers.ModelSerializer):
+    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+
     class Meta:
         model = CashFlowTransaction
         fields = [
@@ -21,10 +23,23 @@ class CashFlowTransactionSerializer(serializers.ModelSerializer):
             "sales_order",
             "purchase_invoice",
             "sales_invoice",
+            "status",
+            "approved_by",
+            "approved_by_username",
+            "approved_at",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "name", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "name",
+            "status",
+            "approved_by",
+            "approved_by_username",
+            "approved_at",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class CashFlowInputSerializer(serializers.Serializer):

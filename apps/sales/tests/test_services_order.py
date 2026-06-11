@@ -178,6 +178,7 @@ class TestSalesOrderServices:
 
     def test_sales_order_cancel(self, setup_data):
         from apps.finance.models import CashFlowTransaction
+        from apps.finance.services import cash_flow_approve
         from apps.inventory.models import StockEntry
         from apps.inventory.services import stock_entry_update, stock_issue_approve
         from apps.sales.models import SalesInvoice
@@ -202,6 +203,10 @@ class TestSalesOrderServices:
         stock_entry = StockEntry.objects.filter(sales_order=order, status="draft").first()
         assert stock_entry is not None
 
+        # Approve deposit cash flow to credit SO and invoice
+        cf_dep = CashFlowTransaction.objects.filter(sales_order=order, payment_type="receive").first()
+        cash_flow_approve(user=user, tx_id=str(cf_dep.id))
+
         # 3. Complete the stock entry (posted)
         # Update source warehouse first
         stock_entry_update(
@@ -223,7 +228,7 @@ class TestSalesOrderServices:
 
         from apps.finance.services import cash_flow_create
 
-        cash_flow_create(
+        tx = cash_flow_create(
             user=user,
             payment_type="receive",
             amount=Decimal("400.00"),
@@ -231,6 +236,7 @@ class TestSalesOrderServices:
             sales_invoice_id=str(invoice.id),
             category="Thanh toán hóa đơn",
         )
+        cash_flow_approve(user=user, tx_id=str(tx.id))
 
         # Re-fetch order and invoice to verify states
         order.refresh_from_db()
@@ -238,8 +244,17 @@ class TestSalesOrderServices:
         assert order.status == SalesOrder.Status.COMPLETED
         assert invoice.status == SalesInvoice.Status.PAID
 
-        # 5. Cancel order
+        # 5. Cancel order -> transitions to CANCEL_PENDING due to existing cash flows
         sales_order_cancel(user=user, order_id=str(order.id))
+
+        order.refresh_from_db()
+        assert order.status == SalesOrder.Status.CANCEL_PENDING
+
+        # Approve reversal cash flows to finalize cancellation
+        reversals = CashFlowTransaction.objects.filter(sales_order=order, category="Hoàn trả thanh toán")
+        assert reversals.count() == 2
+        for r_cf in reversals:
+            cash_flow_approve(user=user, tx_id=str(r_cf.id))
 
         # 6. Verify cancellation effects
         order.refresh_from_db()

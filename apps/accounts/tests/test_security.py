@@ -47,3 +47,19 @@ class TestCustomJWTAuthentication:
 
         # Assert
         assert response.status_code == 401
+
+
+@pytest.mark.django_db
+class TestAdminMigrationPermissions:
+
+    def test_admin_has_missing_permissions(self):
+        from apps.accounts.models import Role, RolePermission
+
+        admin_role = Role.objects.filter(name="Admin").first()
+        assert admin_role is not None
+
+        expected_codes = ["finance.approve_cash_flow", "hrm.change_rewardrecord", "hrm.change_disciplinerecord"]
+
+        assigned_codes = RolePermission.objects.filter(role=admin_role).values_list("permission__code", flat=True)
+        for code in expected_codes:
+            assert code in assigned_codes

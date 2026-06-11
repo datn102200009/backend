@@ -90,6 +90,7 @@ class SalesOrderApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.update_order")
         order = sales_order_approve(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
@@ -98,6 +99,7 @@ class SalesOrderApproveCreditBypassAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "sales.approve_credit_bypass")
         order = approve_credit_bypass(user=request.user, order_id=str(pk))
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
@@ -117,7 +119,29 @@ class SalesInvoiceListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "sales.view_invoice")
         invoices = sales_invoice_list()
-        return Response(SalesInvoiceSerializer(invoices, many=True).data)
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            if "," in status_filter:
+                status_list = [s.strip() for s in status_filter.split(",")]
+                invoices = invoices.filter(status__in=status_list)
+            else:
+                invoices = invoices.filter(status=status_filter)
+
+        # Luôn bắt buộc phân trang để tối ưu hiệu năng khi dữ liệu lớn
+        from rest_framework.pagination import PageNumberPagination
+
+        paginator = PageNumberPagination()
+        limit_param = request.query_params.get("limit")
+        paginator.page_size = int(limit_param) if limit_param else 10
+
+        page = paginator.paginate_queryset(invoices, request, view=self)
+        if page is not None:
+            serializer = SalesInvoiceSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = SalesInvoiceSerializer(invoices, many=True)
+        return Response(serializer.data)
 
 
 class SalesInvoiceDetailAPIView(APIView):
