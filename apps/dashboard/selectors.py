@@ -23,6 +23,7 @@ class DashboardList(list):
 def format_num(val):
     if val is None:
         return "0"
+    val = Decimal(str(val)) if not isinstance(val, Decimal) else val
     if val % 1 == 0:
         return str(int(val))
     return f"{float(val):.1f}"
@@ -42,7 +43,7 @@ def get_sales_today_revenue():
         {
             "id": str(o.id),
             "customer_name": o.customer.customer_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -60,7 +61,7 @@ def get_sales_draft_orders():
         {
             "id": str(o.id),
             "customer_name": o.customer.customer_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -85,7 +86,7 @@ def get_sales_pending_credit_bypass():
             {
                 "id": str(o.id),
                 "customer_name": o.customer.customer_name,
-                "total_amount": float(o.total_amount),
+                "total_amount": str(o.total_amount),
                 "reason": reason,
                 "created_at": o.created_at.isoformat(),
             }
@@ -103,7 +104,7 @@ def get_sales_pending_fulfillment():
         {
             "id": str(o.id),
             "customer_name": o.customer.customer_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -129,7 +130,7 @@ def get_purchasing_active_po_count():
         {
             "id": str(o.id),
             "supplier_name": o.vendor.supplier_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -147,7 +148,7 @@ def get_purchasing_draft_orders():
         {
             "id": str(o.id),
             "supplier_name": o.vendor.supplier_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -172,10 +173,10 @@ def get_purchasing_pending_delivery():
         {
             "id": str(o.id),
             "supplier_name": o.vendor.supplier_name,
-            "total_amount": float(o.total_amount),
+            "total_amount": str(o.total_amount),
             "expected_delivery_date": o.expected_delivery_date.isoformat() if o.expected_delivery_date else None,
-            "receipt_fulfillment_rate": float(o.receipt_fulfillment_rate),
-            "payment_fulfillment_rate": float(o.payment_fulfillment_rate),
+            "receipt_fulfillment_rate": str(o.receipt_fulfillment_rate),
+            "payment_fulfillment_rate": str(o.payment_fulfillment_rate),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -230,7 +231,7 @@ def get_purchasing_blocked_invoices():
         {
             "id": str(i.id),
             "supplier_name": i.vendor.supplier_name,
-            "total_amount": float(i.total_amount),
+            "total_amount": str(i.total_amount),
             "block_reason": i.block_reason,
             "created_at": i.created_at.isoformat(),
         }
@@ -386,7 +387,7 @@ def get_warehouse_low_stock_alerts():
                     "item_name": item.item_name,
                     "uom": item.stock_uom.name if item.stock_uom else "",
                     "warehouse_name": warehouse.name,
-                    "balance": float(balance),
+                    "balance": str(balance),
                     "days_left": days_left,
                     "status": status,
                     "reason": alert_reason,
@@ -518,7 +519,7 @@ def get_finance_cashflow_summary():
             "name": t.name,
             "category": t.category or "Khác",
             "payment_type": t.payment_type,
-            "amount": float(t.amount),
+            "amount": str(t.amount),
             "payment_date": t.payment_date.isoformat(),
         }
         for t in txs_qs[:5]
@@ -538,8 +539,8 @@ def get_finance_unpaid_purchase_invoices():
         {
             "id": str(i.id),
             "supplier_name": i.vendor.supplier_name,
-            "total_amount": float(i.total_amount),
-            "remaining_amount": float(i.total_amount - i.paid_amount),
+            "total_amount": str(i.total_amount),
+            "remaining_amount": str(i.total_amount - i.paid_amount),
             "due_date": i.due_date.isoformat() if i.due_date else None,
             "created_at": i.created_at.isoformat(),
         }
@@ -560,8 +561,8 @@ def get_finance_unpaid_sales_invoices():
         {
             "id": str(i.id),
             "customer_name": i.customer.customer_name,
-            "total_amount": float(i.total_amount),
-            "remaining_amount": float(i.total_amount - i.paid_amount),
+            "total_amount": str(i.total_amount),
+            "remaining_amount": str(i.total_amount - i.paid_amount),
             "created_at": i.created_at.isoformat(),
         }
         for i in invoices_qs[:5]
@@ -585,7 +586,7 @@ def get_finance_depreciation_status():
             {
                 "asset_code": log.asset.asset_code,
                 "asset_name": log.asset.asset_name,
-                "depreciation_amount": float(log.depreciation_amount),
+                "depreciation_amount": str(log.depreciation_amount),
                 "status": "đã trích",
             }
             for log in depreciated_logs_qs[:5]
@@ -606,7 +607,7 @@ def get_finance_depreciation_status():
             {
                 "asset_code": asset.asset_code,
                 "asset_name": asset.asset_name,
-                "depreciation_amount": float(dep_amount),
+                "depreciation_amount": str(dep_amount),
                 "status": "chờ trích",
             }
         )
@@ -636,7 +637,7 @@ def get_hrm_payroll_lifecycle_status():
             "id": str(s.id),
             "employee_name": s.employee.full_name,
             "salary_period": s.salary_period,
-            "net_pay": float(s.net_pay),
+            "net_pay": str(s.net_pay),
             "status": status_translation.get(s.status, s.get_status_display()),
         }
         for s in slips_qs[:5]
@@ -655,7 +656,7 @@ def get_hrm_pending_leave_requests():
             "leave_type": r.get_leave_type_display(),
             "start_date": r.start_date.isoformat(),
             "end_date": r.end_date.isoformat(),
-            "days": float(r.days),
+            "days": str(r.days),
             "created_at": r.created_at.isoformat(),
         }
         for r in requests_qs[:5]
@@ -737,7 +738,7 @@ def get_manufacturing_pending_wo_approval():
             "id": str(o.id),
             "name": o.name,
             "production_item_name": o.production_item.item_name,
-            "quantity": float(o.quantity),
+            "quantity": str(o.quantity),
             "planned_start_date": o.planned_start_date.isoformat(),
             "created_at": o.created_at.isoformat(),
         }
@@ -755,8 +756,8 @@ def get_manufacturing_active_wos():
             "id": str(o.id),
             "name": o.name,
             "production_item_name": o.production_item.item_name,
-            "quantity": float(o.quantity),
-            "produced_qty": float(o.produced_qty),
+            "quantity": str(o.quantity),
+            "produced_qty": str(o.produced_qty),
             "planned_start_date": o.planned_start_date.isoformat(),
             "created_at": o.created_at.isoformat(),
         }
@@ -790,8 +791,8 @@ def get_manufacturing_pending_declarations():
                 "id": str(o.id),
                 "name": o.name,
                 "production_item_name": o.production_item.item_name,
-                "quantity": float(o.quantity),
-                "produced_qty": float(o.produced_qty),
+                "quantity": str(o.quantity),
+                "produced_qty": str(o.produced_qty),
                 "planned_start_date": o.planned_start_date.isoformat(),
                 "planned_end_date": o.planned_end_date.isoformat(),
                 "status": o.status,
@@ -815,8 +816,8 @@ def get_manufacturing_pending_completion():
             "id": str(o.id),
             "name": o.name,
             "production_item_name": o.production_item.item_name,
-            "quantity": float(o.quantity),
-            "produced_qty": float(o.produced_qty),
+            "quantity": str(o.quantity),
+            "produced_qty": str(o.produced_qty),
             "target_warehouse_name": o.target_warehouse.name if o.target_warehouse else None,
             "planned_start_date": o.planned_start_date.isoformat(),
             "created_at": o.created_at.isoformat(),

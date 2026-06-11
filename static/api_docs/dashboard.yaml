@@ -111,7 +111,7 @@ components:
         customer_name:
           type: string
         total_amount:
-          type: number
+          type: string
         created_at:
           type: string
     ActivePOCountLine:
@@ -122,7 +122,7 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: number
+          type: string
         created_at:
           type: string
     FinanceCashflowSummaryLine:
@@ -137,7 +137,7 @@ components:
         payment_type:
           type: string
         amount:
-          type: number
+          type: string
         payment_date:
           type: string
     FinanceDepreciationStatusLine:
@@ -148,7 +148,7 @@ components:
         asset_name:
           type: string
         depreciation_amount:
-          type: number
+          type: string
         status:
           type: string
     HRMPayrollStatusLine:
@@ -161,7 +161,7 @@ components:
         salary_period:
           type: string
         net_pay:
-          type: number
+          type: string
         status:
           type: string
     HRMTodayAbsentLine:
@@ -187,7 +187,7 @@ components:
         customer_name:
           type: string
         total_amount:
-          type: number
+          type: string
         created_at:
           type: string
     SalesCreditBypassLine:
@@ -198,7 +198,7 @@ components:
         customer_name:
           type: string
         total_amount:
-          type: number
+          type: string
         reason:
           type: string
         created_at:
@@ -211,7 +211,7 @@ components:
         customer_name:
           type: string
         total_amount:
-          type: number
+          type: string
         created_at:
           type: string
     PurchasingDraftOrderLine:
@@ -222,7 +222,7 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: number
+          type: string
         created_at:
           type: string
     PurchasingPendingDeliveryLine:
@@ -233,14 +233,14 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: number
+          type: string
         expected_delivery_date:
           type: string
           nullable: true
         receipt_fulfillment_rate:
-          type: number
+          type: string
         payment_fulfillment_rate:
-          type: number
+          type: string
         created_at:
           type: string
     PurchasingPendingQCLine:
@@ -273,7 +273,7 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: number
+          type: string
         block_reason:
           type: string
         created_at:
@@ -290,7 +290,7 @@ components:
         warehouse_name:
           type: string
         balance:
-          type: number
+          type: string
         days_left:
           type: number
           nullable: true
@@ -328,9 +328,9 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: number
+          type: string
         remaining_amount:
-          type: number
+          type: string
         due_date:
           type: string
           nullable: true
@@ -344,9 +344,9 @@ components:
         customer_name:
           type: string
         total_amount:
-          type: number
+          type: string
         remaining_amount:
-          type: number
+          type: string
         created_at:
           type: string
     HRMLeaveRequestLine:
@@ -363,7 +363,7 @@ components:
         end_date:
           type: string
         days:
-          type: number
+          type: string
         created_at:
           type: string
     HRMExpiringContractLine:
@@ -391,7 +391,7 @@ components:
         production_item_name:
           type: string
         quantity:
-          type: number
+          type: string
         planned_start_date:
           type: string
         created_at:
@@ -406,9 +406,9 @@ components:
         production_item_name:
           type: string
         quantity:
-          type: number
+          type: string
         produced_qty:
-          type: number
+          type: string
         planned_start_date:
           type: string
         created_at:
@@ -423,9 +423,9 @@ components:
         production_item_name:
           type: string
         quantity:
-          type: number
+          type: string
         produced_qty:
-          type: number
+          type: string
         planned_start_date:
           type: string
         planned_end_date:
@@ -447,9 +447,9 @@ components:
         production_item_name:
           type: string
         quantity:
-          type: number
+          type: string
         produced_qty:
-          type: number
+          type: string
         target_warehouse_name:
           type: string
           nullable: true

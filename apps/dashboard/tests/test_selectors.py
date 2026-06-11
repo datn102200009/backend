@@ -7,6 +7,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.dashboard.selectors import (
+    format_num,
     get_finance_cashflow_chart,
     get_finance_cashflow_summary,
     get_finance_depreciation_status,
@@ -63,7 +64,8 @@ class TestDashboardSelectors:
 
         res = get_sales_today_revenue()
         assert len(res) == 2
-        assert res[0]["total_amount"] in [150.0, 250.0]
+        assert res[0]["total_amount"] in ["150.00", "250.00"]
+        assert isinstance(res[0]["total_amount"], str)
         assert "customer_name" in res[0]
 
     def test_sales_draft_orders(self):
@@ -72,7 +74,8 @@ class TestDashboardSelectors:
 
         res = get_sales_draft_orders()
         assert len(res) == 1
-        assert res[0]["total_amount"] == 100.0
+        assert res[0]["total_amount"] == "100.00"
+        assert isinstance(res[0]["total_amount"], str)
 
     def test_sales_pending_fulfillment(self):
         customer = CustomerFactory()
@@ -80,7 +83,8 @@ class TestDashboardSelectors:
 
         res = get_sales_pending_fulfillment()
         assert len(res) == 1
-        assert res[0]["total_amount"] == 150.0
+        assert res[0]["total_amount"] == "150.00"
+        assert isinstance(res[0]["total_amount"], str)
 
     def test_purchasing_active_po_count(self):
         supplier = SupplierFactory()
@@ -91,7 +95,8 @@ class TestDashboardSelectors:
 
         res = get_purchasing_active_po_count()
         assert len(res) == 1
-        assert res[0]["total_amount"] == 100.0
+        assert res[0]["total_amount"] == "100.00"
+        assert isinstance(res[0]["total_amount"], str)
         assert "supplier_name" in res[0]
 
     def test_purchasing_draft_orders(self):
@@ -100,7 +105,8 @@ class TestDashboardSelectors:
 
         res = get_purchasing_draft_orders()
         assert len(res) == 1
-        assert res[0]["total_amount"] == 150.0
+        assert res[0]["total_amount"] == "150.00"
+        assert isinstance(res[0]["total_amount"], str)
 
     def test_purchasing_pending_delivery(self):
         supplier = SupplierFactory()
@@ -114,9 +120,10 @@ class TestDashboardSelectors:
 
         res = get_purchasing_pending_delivery()
         assert len(res) == 1
-        assert res[0]["total_amount"] == 150.0
-        assert res[0]["receipt_fulfillment_rate"] == 85.0
-        assert res[0]["payment_fulfillment_rate"] == 60.0
+        assert res[0]["total_amount"] == "150.00"
+        assert isinstance(res[0]["total_amount"], str)
+        assert res[0]["receipt_fulfillment_rate"] == "85.00"
+        assert res[0]["payment_fulfillment_rate"] == "60.00"
 
     def test_purchasing_pending_qc(self):
         Shipment.objects.create(shipment_num="SHIP-01", name="Lô hàng 1", status=Shipment.Status.ARRIVED)
@@ -191,7 +198,8 @@ class TestDashboardSelectors:
         )
         res = get_finance_cashflow_summary()
         assert len(res) == 2
-        assert res[0]["amount"] in [1500.0, 500.0]
+        assert res[0]["amount"] in ["1500.00", "500.00"]
+        assert isinstance(res[0]["amount"], str)
         assert "payment_type" in res[0]
 
     def test_finance_unpaid_purchase_invoices(self):
@@ -201,7 +209,8 @@ class TestDashboardSelectors:
         )
         res = get_finance_unpaid_purchase_invoices()
         assert len(res) == 1
-        assert res[0]["remaining_amount"] == 200.0
+        assert res[0]["remaining_amount"] == "200.00"
+        assert isinstance(res[0]["remaining_amount"], str)
 
     def test_finance_unpaid_sales_invoices(self):
         customer = CustomerFactory()
@@ -210,7 +219,8 @@ class TestDashboardSelectors:
         )
         res = get_finance_unpaid_sales_invoices()
         assert len(res) == 1
-        assert res[0]["remaining_amount"] == 300.0
+        assert res[0]["remaining_amount"] == "300.00"
+        assert isinstance(res[0]["remaining_amount"], str)
 
     def test_finance_depreciation_status(self):
         asset = FixedAsset.objects.create(
@@ -227,6 +237,7 @@ class TestDashboardSelectors:
         res = get_finance_depreciation_status()
         assert len(res) == 1
         assert res[0]["asset_code"] == "M-01"
+        assert isinstance(res[0]["depreciation_amount"], str)
         assert res[0]["status"] == "đã trích"
 
     def test_hrm_payroll_lifecycle_status(self):
@@ -243,7 +254,8 @@ class TestDashboardSelectors:
         res = get_hrm_payroll_lifecycle_status()
         assert len(res) == 1
         assert res[0]["employee_name"] == "Employee 1"
-        assert res[0]["net_pay"] == 4500.0
+        assert res[0]["net_pay"] == "4500.00"
+        assert isinstance(res[0]["net_pay"], str)
 
     def test_hrm_pending_leave_requests(self):
         emp = Employee.objects.create(employee_id="E-02", full_name="Employee 2", employment_status="active")
@@ -296,6 +308,7 @@ class TestDashboardSelectors:
         res = get_manufacturing_pending_wo_approval()
         assert len(res) == 1
         assert res[0]["name"] == "WO-01"
+        assert isinstance(res[0]["quantity"], str)
 
     def test_manufacturing_active_wos(self):
         item = ItemFactory()
@@ -417,7 +430,8 @@ class TestDashboardSelectors:
         # Verify item_pcs critical alert (due to UOM fallback < 200, no ADC)
         alert_pcs = [a for a in alerts if a["item_code"] == "COMP-PCS"][0]
         assert alert_pcs["status"] == "critical"
-        assert alert_pcs["balance"] == 50.0
+        assert float(alert_pcs["balance"]) == 50.0
+        assert isinstance(alert_pcs["balance"], str)
 
     def test_inventory_low_stock_query_efficiency(self):
         # 1. Setup active warehouses
@@ -453,3 +467,20 @@ class TestDashboardSelectors:
         assert len(res) == 5
         # res.total_count should be 7
         assert getattr(res, "total_count", None) == 7
+
+
+class TestFormatNum:
+    def test_format_num_none(self):
+        assert format_num(None) == "0"
+
+    def test_format_num_integer_float(self):
+        assert format_num(100.0) == "100"
+        assert format_num(Decimal("200")) == "200"
+
+    def test_format_num_decimal_float(self):
+        assert format_num(Decimal("123.50")) == "123.5"
+        assert format_num(5.0) == "5"
+
+    def test_format_num_decimal_string_input(self):
+        assert format_num("42.30") == "42.3"
+        assert format_num("10") == "10"
