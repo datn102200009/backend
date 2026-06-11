@@ -22,7 +22,8 @@ class TestFinanceAPIViews:
         url = reverse("cash-flow-list-create")
         response = authenticated_client.get(url)
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 2
+        assert response.data["count"] == 2
+        assert len(response.data["results"]) == 2
         mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.view_cash_flow")
 
     def test_get_cash_flow_detail(self, mock_permission_checker, authenticated_client):

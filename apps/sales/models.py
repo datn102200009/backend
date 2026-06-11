@@ -13,6 +13,7 @@ class SalesOrder(BaseModel):
         PAID_UNSHIPPED = "paid_unshipped", "Đã nhận tiền, chưa giao hàng"
         SHIPPED_UNPAID = "shipped_unpaid", "Đã giao hàng, chưa thanh toán"
         COMPLETED = "completed", "Hoàn tất"
+        CANCEL_PENDING = "cancel_pending", "Chờ duyệt hủy"
         CANCELLED = "cancelled", "Đã hủy"
 
     customer = models.ForeignKey(

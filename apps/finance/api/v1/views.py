@@ -16,12 +16,16 @@ from apps.finance.selectors import (
     fixed_asset_list,
 )
 from apps.finance.services import (
+    cash_flow_approve,
     cash_flow_create,
     fixed_asset_create,
     fixed_asset_delete,
     fixed_asset_update,
+    pay_purchase_invoice,
     run_fixed_asset_depreciation,
 )
+from apps.purchasing.api.v1.serializers import PayInvoiceInputSerializer, PurchaseInvoiceSerializer
+from apps.purchasing.selectors import purchase_invoice_detail
 
 from .serializers import (
     CashFlowInputSerializer,
@@ -39,8 +43,32 @@ class CashFlowListCreateAPIView(APIView):
 
     def get(self, request, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "finance.view_cash_flow")
-        transactions = cash_flow_list()
-        return Response(CashFlowTransactionSerializer(transactions, many=True).data)
+
+        limit_str = request.query_params.get("limit", "20")
+        page_str = request.query_params.get("page", "1")
+        status_param = request.query_params.get("status")
+
+        try:
+            limit = int(limit_str)
+            page = int(page_str)
+            if limit <= 0 or page <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValidationException("Tham số limit và page phải là số nguyên dương.")
+
+        transactions = cash_flow_list(status=status_param)
+
+        paginator = Paginator(transactions, limit)
+        page_obj = paginator.get_page(page)
+        data = CashFlowTransactionSerializer(page_obj.object_list, many=True).data
+        return Response(
+            {
+                "count": paginator.count,
+                "total_pages": paginator.num_pages,
+                "current_page": page_obj.number,
+                "results": data,
+            }
+        )
 
     def post(self, request, *args, **kwargs):
         serializer = CashFlowInputSerializer(data=request.data)
@@ -196,3 +224,31 @@ class DepreciationLogListAPIView(APIView):
                 "results": data,
             }
         )
+
+
+class PurchaseInvoicePayAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.pay_invoice")
+        serializer = PayInvoiceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        pay_purchase_invoice(
+            user=request.user,
+            invoice_id=str(pk),
+            amount=serializer.validated_data["amount"],
+            payment_method=serializer.validated_data["payment_method"],
+        )
+
+        invoice = purchase_invoice_detail(invoice_id=str(pk))
+        return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
+
+
+class CashFlowApproveAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.approve_cash_flow")
+        tx = cash_flow_approve(user=request.user, tx_id=str(pk))
+        return Response(CashFlowTransactionSerializer(tx).data, status=status.HTTP_200_OK)

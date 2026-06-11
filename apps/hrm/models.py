@@ -166,13 +166,27 @@ class EmploymentHistory(BaseModel):
     approved_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, related_name="approved_histories", null=True, blank=True
     )
+    approved_at = models.DateTimeField(null=True, blank=True)
     reason = models.TextField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending_approval", "Pending Approval"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ],
+        default="pending_approval",
+        db_index=True,
+    )
 
     class Meta:
         db_table = "employment_history"
         verbose_name = "Employment History"
         verbose_name_plural = "Employment Histories"
         ordering = ["-effective_date", "-created_at"]
+        indexes = [
+            models.Index(fields=["status", "effective_date"]),
+        ]
 
     def __str__(self):
         return f"{self.employee.full_name} - {self.get_change_type_display()} ({self.effective_date})"
@@ -198,12 +212,29 @@ class RewardRecord(BaseModel):
     salary_slip = models.ForeignKey(
         SalarySlip, on_delete=models.SET_NULL, null=True, blank=True, related_name="rewards"
     )
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending_approval", "Pending Approval"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ],
+        default="pending_approval",
+        db_index=True,
+    )
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="approved_rewards", null=True, blank=True
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "reward_record"
         verbose_name = "Reward Record"
         verbose_name_plural = "Reward Records"
         ordering = ["-reward_date"]
+        indexes = [
+            models.Index(fields=["status", "reward_date"]),
+        ]
 
     def __str__(self):
         return f"Reward {self.employee.full_name} - {self.get_reward_type_display()} ({self.reward_date})"
@@ -232,12 +263,29 @@ class DisciplineRecord(BaseModel):
         SalarySlip, on_delete=models.SET_NULL, null=True, blank=True, related_name="disciplines"
     )
     file_url = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending_approval", "Pending Approval"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ],
+        default="pending_approval",
+        db_index=True,
+    )
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="approved_disciplines", null=True, blank=True
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "discipline_record"
         verbose_name = "Discipline Record"
         verbose_name_plural = "Discipline Records"
         ordering = ["-discipline_date"]
+        indexes = [
+            models.Index(fields=["status", "discipline_date"]),
+        ]
 
     def __str__(self):
         return f"Discipline {self.employee.full_name} - {self.get_discipline_type_display()} ({self.discipline_date})"

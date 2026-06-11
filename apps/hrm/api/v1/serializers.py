@@ -73,12 +73,17 @@ class EmploymentHistoryOutputSerializer(serializers.ModelSerializer):
     Serializer for EmploymentHistory output.
     """
 
+    employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
     approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
 
     class Meta:
         model = EmploymentHistory
         fields = [
             "id",
+            "employee_id",
+            "employee_code",
+            "employee_name",
             "change_type",
             "old_salary_base",
             "new_salary_base",
@@ -90,6 +95,7 @@ class EmploymentHistoryOutputSerializer(serializers.ModelSerializer):
             "approved_by_id",
             "approved_by_username",
             "reason",
+            "status",
             "created_at",
         ]
 
@@ -114,6 +120,8 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
             "amount",
             "description",
             "salary_slip_id",
+            "status",
+            "approved_by_id",
             "created_at",
         ]
 
@@ -140,6 +148,8 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
             "penalty_amount",
             "salary_slip_id",
             "file_url",
+            "status",
+            "approved_by_id",
             "created_at",
         ]
 
