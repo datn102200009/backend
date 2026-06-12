@@ -4,51 +4,8 @@ from django.db import migrations
 
 
 def seed_metadata(apps, schema_editor):
-    UOM = apps.get_model("master_data", "UOM")
-    ItemGroup = apps.get_model("master_data", "ItemGroup")
-    Warehouse = apps.get_model("master_data", "Warehouse")
-    ModeOfPayment = apps.get_model("master_data", "ModeOfPayment")
-
-    # 1. Setup UOMs
-    uoms = ["Cái", "Hộp", "Kg", "Lít", "Mét", "Thùng", "Chiếc", "Bộ", "Cuộn", "Tấm"]
-    for name in uoms:
-        UOM.objects.get_or_create(name=name)
-
-    # 2. Setup Item Groups
-    root_group, _ = ItemGroup.objects.get_or_create(name="Tất cả", defaults={"is_group": True})
-
-    item_groups = [
-        {"name": "Thành phẩm", "is_group": False},
-        {"name": "Bán thành phẩm", "is_group": False},
-        {"name": "Nguyên vật liệu", "is_group": False},
-        {"name": "Dịch vụ", "is_group": False},
-    ]
-
-    for group in item_groups:
-        ItemGroup.objects.get_or_create(
-            name=group["name"], defaults={"is_group": group["is_group"], "parent": root_group}
-        )
-
-    # 3. Setup Warehouses
-    warehouses = [
-        {"name": "Kho Nguyên Vật Liệu", "is_group": False},
-        {"name": "Kho Thành Phẩm", "is_group": False},
-        {"name": "Kho Bán Thành Phẩm", "is_group": False},
-        {"name": "Kho Hàng Lỗi", "is_group": False},
-    ]
-
-    for wh in warehouses:
-        Warehouse.objects.get_or_create(name=wh["name"], defaults={"is_group": wh["is_group"]})
-
-    # 4. Setup Mode of Payments
-    payment_modes = [
-        {"name": "Tiền mặt", "type": "cash"},
-        {"name": "Chuyển khoản", "type": "bank_transfer"},
-        {"name": "Thẻ tín dụng", "type": "credit_card"},
-    ]
-
-    for mode in payment_modes:
-        ModeOfPayment.objects.get_or_create(name=mode["name"], defaults={"type": mode["type"]})
+    # Seed data đã chuyển sang setup-data/setup_local_data.py
+    pass
 
 
 def reverse_seed(apps, schema_editor):
