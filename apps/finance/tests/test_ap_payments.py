@@ -9,7 +9,7 @@ from apps.common.xlib.exceptions import PermissionException
 from apps.finance.services import pay_purchase_invoice
 from apps.inventory.tests.factories import ItemFactory, SupplierFactory, UserFactory, WarehouseFactory
 from apps.purchasing.models import PurchaseInvoice
-from apps.purchasing.services import purchase_order_approve, purchase_order_create, verify_4_way_matching
+from apps.purchasing.services import purchase_order_approve, purchase_order_create
 
 pytestmark = pytest.mark.django_db
 
@@ -67,39 +67,6 @@ class TestAPPayments:
         invoice.refresh_from_db()
         assert invoice.status == PurchaseInvoice.Status.PAID
         assert invoice.paid_amount == Decimal("500.00")
-
-    def test_pay_invoice_with_mismatch_succeeds(self, setup_data):
-        user, vendor, item, warehouse = setup_data
-
-        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
-        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
-        order = purchase_order_approve(user=user, order_id=str(order.id))
-
-        invoice = order.invoices.first()
-
-        # Mismatch unit price to trigger warning in block_reason
-        inv_line = invoice.lines.first()
-        inv_line.unit_price = Decimal("60.00")
-        inv_line.save()
-
-        verify_4_way_matching(invoice_id=str(invoice.id))
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.UNPAID
-        assert "Chênh lệch đơn giá" in invoice.block_reason
-
-        # Pay invoice with warning -> should succeed normally
-        tx = pay_purchase_invoice(
-            user=user,
-            invoice_id=str(invoice.id),
-            amount=Decimal("100.00"),
-            payment_method="bank_transfer",
-        )
-        assert tx is not None
-        from apps.finance.services import cash_flow_approve
-
-        cash_flow_approve(user=user, tx_id=str(tx.id))
-        invoice.refresh_from_db()
-        assert invoice.status == PurchaseInvoice.Status.PARTIAL
 
     def test_pay_purchase_invoice_api_success(self, mock_permission_checker, setup_data):
         user, vendor, item, warehouse = setup_data

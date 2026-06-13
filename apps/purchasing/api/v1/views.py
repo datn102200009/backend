@@ -21,8 +21,6 @@ from apps.purchasing.services import (
     record_shipment_logistic_fees,
     shipment_create,
     shipment_update,
-    technical_certification_create,
-    verify_4_way_matching,
 )
 
 from .serializers import (
@@ -33,6 +31,7 @@ from .serializers import (
     PurchaseOrderInputSerializer,
     PurchaseOrderReceiveInputSerializer,
     PurchaseOrderSerializer,
+    ShipmentCompleteInputSerializer,
     ShipmentInputSerializer,
     ShipmentSerializer,
 )
@@ -170,16 +169,6 @@ class PurchaseInvoiceDetailAPIView(APIView):
         return Response(PurchaseInvoiceSerializer(invoice).data)
 
 
-class PurchaseInvoiceVerifyAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "purchasing.verify_matching")
-        verify_4_way_matching(invoice_id=str(pk))
-        invoice = purchase_invoice_detail(invoice_id=str(pk))
-        return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
-
-
 class ShipmentListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -187,9 +176,16 @@ class ShipmentListCreateAPIView(APIView):
         PermissionChecker.check_permission(request.user, "purchasing.allocate_landed_cost")
         from apps.purchasing.models import Shipment
 
-        shipments = Shipment.objects.prefetch_related(
-            "stock_entries__details__item", "stock_entries__details__target_warehouse"
-        ).order_by("-created_at", "id")
+        shipments = (
+            Shipment.objects.select_related("purchase_order")
+            .prefetch_related(
+                "purchase_order__lines__item",
+                "purchase_order__lines__item__stock_uom",
+                "stock_entries__details__item",
+                "stock_entries__details__target_warehouse",
+            )
+            .order_by("-created_at", "id")
+        )
         return Response(ShipmentSerializer(shipments, many=True).data)
 
     def post(self, request, *args, **kwargs):
@@ -197,13 +193,25 @@ class ShipmentListCreateAPIView(APIView):
         serializer = ShipmentInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        shipment = shipment_create(
-            user=request.user,
-            shipment_num=serializer.validated_data["shipment_num"],
-            name=serializer.validated_data["name"],
-            remarks=serializer.validated_data.get("remarks"),
-            stock_entry_ids=serializer.validated_data.get("stock_entry_ids"),
-        )
+        purchase_order_id = serializer.validated_data.get("purchase_order_id")
+        if purchase_order_id:
+            from apps.purchasing.services import shipment_create_from_po
+
+            shipment = shipment_create_from_po(
+                user=request.user,
+                shipment_num=serializer.validated_data["shipment_num"],
+                name=serializer.validated_data["name"],
+                purchase_order_id=str(purchase_order_id),
+                remarks=serializer.validated_data.get("remarks"),
+            )
+        else:
+            shipment = shipment_create(
+                user=request.user,
+                shipment_num=serializer.validated_data["shipment_num"],
+                name=serializer.validated_data["name"],
+                remarks=serializer.validated_data.get("remarks"),
+                stock_entry_ids=serializer.validated_data.get("stock_entry_ids"),
+            )
         return Response(ShipmentSerializer(shipment).data, status=status.HTTP_201_CREATED)
 
 
@@ -215,8 +223,12 @@ class ShipmentDetailAPIView(APIView):
         from apps.purchasing.models import Shipment
 
         shipment = (
-            Shipment.objects.prefetch_related(
-                "stock_entries__details__item", "stock_entries__details__target_warehouse"
+            Shipment.objects.select_related("purchase_order")
+            .prefetch_related(
+                "purchase_order__lines__item",
+                "purchase_order__lines__item__stock_uom",
+                "stock_entries__details__item",
+                "stock_entries__details__target_warehouse",
             )
             .filter(id=pk)
             .first()
@@ -235,54 +247,23 @@ class ShipmentDetailAPIView(APIView):
         return Response(ShipmentSerializer(shipment).data)
 
 
-class TechnicalCertificationListCreateAPIView(APIView):
+class ShipmentCompleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "purchasing.manage_qc")
-        from rest_framework.pagination import PageNumberPagination
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "purchasing.allocate_landed_cost")
+        from apps.purchasing.services import shipment_complete
 
-        from apps.finance.models import TechnicalCertification
-
-        from .serializers import TechnicalCertificationSerializer
-
-        queryset = TechnicalCertification.objects.select_related("item", "stock_entry").order_by("-issue_date", "-id")
-
-        item_id = request.query_params.get("item_id")
-        if item_id:
-            queryset = queryset.filter(item_id=item_id)
-
-        stock_entry_id = request.query_params.get("stock_entry_id")
-        if stock_entry_id:
-            queryset = queryset.filter(stock_entry_id=stock_entry_id)
-
-        paginator = PageNumberPagination()
-        paginator.page_size = 20
-        page = paginator.paginate_queryset(queryset, request, view=self)
-        if page is not None:
-            serializer = TechnicalCertificationSerializer(page, many=True)
-            return paginator.get_paginated_response(serializer.data)
-
-        serializer = TechnicalCertificationSerializer(queryset, many=True)
-        return Response(serializer.data)
-
-    def post(self, request, *args, **kwargs):
-        from .serializers import TechnicalCertificationCreateInputSerializer, TechnicalCertificationSerializer
-
-        serializer = TechnicalCertificationCreateInputSerializer(data=request.data)
+        serializer = ShipmentCompleteInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        cert = technical_certification_create(
+        shipment = shipment_complete(
             user=request.user,
-            item_id=str(serializer.validated_data["item_id"]),
-            stock_entry_id=str(serializer.validated_data["stock_entry_id"]),
-            cert_type=serializer.validated_data["cert_type"],
-            assessment_fee=serializer.validated_data.get("assessment_fee"),
-            expiry_date=serializer.validated_data.get("expiry_date"),
-            result=serializer.validated_data["result"],
-            remarks=serializer.validated_data.get("remarks"),
+            shipment_id=str(pk),
+            details=serializer.validated_data["details"],
+            total_logistic_fees=serializer.validated_data["total_logistic_fees"],
         )
-        return Response(TechnicalCertificationSerializer(cert).data, status=status.HTTP_201_CREATED)
+        return Response(ShipmentSerializer(shipment).data, status=status.HTTP_200_OK)
 
 
 class LandedCostAllocateAPIView(APIView):

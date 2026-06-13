@@ -50,7 +50,6 @@ def get_supplier_ap_aging(*, supplier_id: Optional[str] = None) -> List[Dict[str
         status__in=[
             PurchaseInvoice.Status.UNPAID,
             PurchaseInvoice.Status.PARTIAL,
-            PurchaseInvoice.Status.BLOCKED_FOR_PAYMENT,
         ]
     )
     if supplier_id:

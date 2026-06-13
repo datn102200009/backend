@@ -151,15 +151,6 @@ def stock_in_approve(
 
         purchase_order_update_status(stock_entry.purchase_order)
 
-    # Kích hoạt đối soát 4 bên cho các hóa đơn liên kết với PO
-    if stock_entry.purchase_order:
-        from apps.purchasing.models import PurchaseInvoice
-        from apps.purchasing.services import verify_4_way_matching
-
-        invoices = PurchaseInvoice.objects.filter(order=stock_entry.purchase_order)
-        for invoice in invoices:
-            verify_4_way_matching(invoice_id=str(invoice.id))
-
     # Ghi log
     create_system_log(
         user=user,

@@ -263,28 +263,9 @@ def get_purchasing_pending_delivery():
     }
 
 
-# 8. purchasing_pending_qc
-def get_purchasing_pending_qc():
-    shipments_qs = Shipment.objects.filter(status=Shipment.Status.ARRIVED).order_by("-created_at")
-    total_count = shipments_qs.count()
-    results = [
-        {
-            "id": str(s.id),
-            "shipment_num": s.shipment_num,
-            "name": s.name,
-            "created_at": s.created_at.isoformat(),
-        }
-        for s in shipments_qs[:5]
-    ]
-    return {
-        "total_count": total_count,
-        "top_items": results,
-    }
-
-
 # 9. purchasing_pending_logistic_fees
 def get_purchasing_pending_logistic_fees():
-    shipments_qs = Shipment.objects.filter(status=Shipment.Status.INSPECTED).order_by("-created_at")
+    shipments_qs = Shipment.objects.filter(status=Shipment.Status.INSPECTING).order_by("-created_at")
     total_count = shipments_qs.count()
     results = [
         {
@@ -294,33 +275,6 @@ def get_purchasing_pending_logistic_fees():
             "created_at": s.created_at.isoformat(),
         }
         for s in shipments_qs[:5]
-    ]
-    return {
-        "total_count": total_count,
-        "top_items": results,
-    }
-
-
-# 10. purchasing_blocked_invoices
-def get_purchasing_blocked_invoices():
-    invoices_qs = (
-        PurchaseInvoice.objects.filter(
-            Q(status=PurchaseInvoice.Status.BLOCKED_FOR_PAYMENT) | ~Q(block_reason=None) & ~Q(block_reason="")
-        )
-        .exclude(status=PurchaseInvoice.Status.CANCELLED)
-        .select_related("vendor")
-        .order_by("-created_at")
-    )
-    total_count = invoices_qs.count()
-    results = [
-        {
-            "id": str(i.id),
-            "supplier_name": i.vendor.supplier_name,
-            "total_amount": str(i.total_amount),
-            "block_reason": i.block_reason,
-            "created_at": i.created_at.isoformat(),
-        }
-        for i in invoices_qs[:5]
     ]
     return {
         "total_count": total_count,
@@ -335,7 +289,7 @@ def get_inventory_pending_entry_count():
     from apps.inventory.models import StockEntryDetail
 
     entries_qs = (
-        StockEntry.objects.filter(status="draft", purpose="receipt")
+        StockEntry.objects.filter(status="draft", purpose="receipt", purchase_order__isnull=True)
         .select_related("purchase_order", "sales_order", "work_order", "shipment")
         .prefetch_related(
             Prefetch(
@@ -1164,9 +1118,7 @@ SELECTORS_MAP = {
     "purchasing_active_po_count": get_purchasing_active_po_count,
     "purchasing_draft_orders": get_purchasing_draft_orders,
     "purchasing_pending_delivery": get_purchasing_pending_delivery,
-    "purchasing_pending_qc": get_purchasing_pending_qc,
     "purchasing_pending_logistic_fees": get_purchasing_pending_logistic_fees,
-    "purchasing_blocked_invoices": get_purchasing_blocked_invoices,
     "inventory_pending_entry_count": get_inventory_pending_entry_count,
     "inventory_low_stock": get_warehouse_low_stock_alerts,
     "inventory_pending_entries": get_inventory_pending_entries,

@@ -8,7 +8,7 @@ from apps.common.xlib.exceptions import ValidationException
 from apps.inventory.tests.factories import ItemFactory, SupplierFactory, UserFactory, WarehouseFactory
 from apps.purchasing.models import PurchaseInvoice
 from apps.purchasing.selectors import get_supplier_ap_aging
-from apps.purchasing.services import purchase_order_approve, purchase_order_create, verify_4_way_matching
+from apps.purchasing.services import purchase_order_approve, purchase_order_create
 
 pytestmark = pytest.mark.django_db
 

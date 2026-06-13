@@ -5,22 +5,17 @@ from .views import (
     LandedCostAllocateAPIView,
     PurchaseInvoiceDetailAPIView,
     PurchaseInvoiceListAPIView,
-    PurchaseInvoiceVerifyAPIView,
     PurchaseOrderApproveAPIView,
     PurchaseOrderCancelAPIView,
     PurchaseOrderDetailUpdateDeleteAPIView,
     PurchaseOrderListCreateAPIView,
     PurchaseOrderReceiveAPIView,
+    ShipmentCompleteAPIView,
     ShipmentDetailAPIView,
     ShipmentListCreateAPIView,
-    TechnicalCertificationListCreateAPIView,
 )
 
 urlpatterns = [
-    # QC QA Certifications
-    path(
-        "certifications/", TechnicalCertificationListCreateAPIView.as_view(), name="technical-certification-list-create"
-    ),
     # Orders
     path("orders/", PurchaseOrderListCreateAPIView.as_view(), name="purchase-order-list-create"),
     path(
@@ -34,10 +29,10 @@ urlpatterns = [
     # Invoices
     path("invoices/", PurchaseInvoiceListAPIView.as_view(), name="purchase-invoice-list"),
     path("invoices/<uuid:pk>/", PurchaseInvoiceDetailAPIView.as_view(), name="purchase-invoice-detail"),
-    path("invoices/<uuid:pk>/verify/", PurchaseInvoiceVerifyAPIView.as_view(), name="purchase-invoice-verify"),
     # Shipments & Landed Cost
     path("shipments/", ShipmentListCreateAPIView.as_view(), name="shipment-list-create"),
     path("shipments/<uuid:pk>/", ShipmentDetailAPIView.as_view(), name="shipment-detail"),
+    path("shipments/<uuid:pk>/complete/", ShipmentCompleteAPIView.as_view(), name="shipment-complete"),
     path("shipments/allocate/", LandedCostAllocateAPIView.as_view(), name="landed-cost-allocate"),
     # Reports
     path("reports/ap-aging/", APAgingReportAPIView.as_view(), name="ap-aging-report"),

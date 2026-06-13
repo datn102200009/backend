@@ -23,11 +23,9 @@ from apps.dashboard.selectors import (
     get_manufacturing_pending_declarations,
     get_manufacturing_pending_wo_approval,
     get_purchasing_active_po_count,
-    get_purchasing_blocked_invoices,
     get_purchasing_draft_orders,
     get_purchasing_pending_delivery,
     get_purchasing_pending_logistic_fees,
-    get_purchasing_pending_qc,
     get_sales_draft_orders,
     get_sales_pending_credit_bypass,
     get_sales_pending_fulfillment,
@@ -135,32 +133,12 @@ class TestDashboardSelectors:
         assert res["top_items"][0]["receipt_fulfillment_rate"] == "85.00"
         assert res["top_items"][0]["payment_fulfillment_rate"] == "60.00"
 
-    def test_purchasing_pending_qc(self):
-        Shipment.objects.create(shipment_num="SHIP-01", name="Lô hàng 1", status=Shipment.Status.ARRIVED)
-        res = get_purchasing_pending_qc()
-        assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
-        assert res["top_items"][0]["shipment_num"] == "SHIP-01"
-
     def test_purchasing_pending_logistic_fees(self):
-        Shipment.objects.create(shipment_num="SHIP-02", name="Lô hàng 2", status=Shipment.Status.INSPECTED)
+        Shipment.objects.create(shipment_num="SHIP-02", name="Lô hàng 2", status=Shipment.Status.INSPECTING)
         res = get_purchasing_pending_logistic_fees()
         assert res["total_count"] == 1
         assert len(res["top_items"]) == 1
         assert res["top_items"][0]["shipment_num"] == "SHIP-02"
-
-    def test_purchasing_blocked_invoices(self):
-        supplier = SupplierFactory()
-        PurchaseInvoice.objects.create(
-            vendor=supplier,
-            status=PurchaseInvoice.Status.UNPAID,
-            total_amount=Decimal("100.00"),
-            block_reason="QC Failed",
-        )
-        res = get_purchasing_blocked_invoices()
-        assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
-        assert res["top_items"][0]["block_reason"] == "QC Failed"
 
     def test_inventory_pending_entry_count(self):
         StockEntry.objects.create(name="SE-DRAFT", purpose="receipt", posting_date=timezone.now(), status="draft")

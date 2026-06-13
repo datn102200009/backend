@@ -50,26 +50,12 @@ WIDGETS_REGISTRY = {
         "title": "Đơn mua hàng chờ nhận hàng",
         "quick_links": ["/inventory?tab=entries&status=draft"],
     },
-    "purchasing_pending_qc": {
-        "permission": "purchasing.manage_qc",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Lô hàng chờ kiểm QC",
-        "quick_links": ["/purchasing?tab=shipment"],
-    },
     "purchasing_pending_logistic_fees": {
         "permission": "purchasing.allocate_landed_cost",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Lô hàng chờ phân bổ chi phí",
         "quick_links": ["/purchasing?tab=shipment"],
-    },
-    "purchasing_blocked_invoices": {
-        "permission": "purchasing.verify_matching",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Hóa đơn mua bị chặn",
-        "quick_links": ["/purchasing?tab=invoices&status=blocked"],
     },
     "inventory_pending_entry_count": {
         "permission": "inventory.stock_in_approve",

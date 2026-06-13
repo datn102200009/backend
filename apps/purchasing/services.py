@@ -317,27 +317,10 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
                 remarks=f"Tự động chi tiền cọc cho đơn mua hàng {order.id} (Nhà cung cấp: {order.vendor.supplier_name}, Tổng giá trị đơn: {order.total_amount:,.2f}đ, Số tiền cọc: {orig_advance_paid_amount:,.2f}đ).",
             )
 
-    # 2. Tạo Phiếu nhập kho nháp (Draft Stock Entry)
-    from apps.inventory.models import StockEntry, StockEntryDetail
-
-    stock_name = f"IN-PUR-PO-{str(order.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
-    stock_entry = StockEntry.objects.create(
-        name=stock_name,
-        purpose="receipt",
-        posting_date=order.updated_at,
-        remarks=f"Nhập kho tự động từ đơn mua {order.id}",
-        status="draft",
-        purchase_order=order,
-    )
-    for line in order.lines.all():
-        StockEntryDetail.objects.create(
-            parent=stock_entry, item=line.item, quantity=line.quantity, target_warehouse=None
-        )
-
-    # 3. Tạo Hóa đơn mua hàng (Purchase Invoice)
+    # 2. Tạo Hóa đơn mua hàng (Purchase Invoice)
     invoice = PurchaseInvoice.objects.create(
         order=order,
-        stock_entry=stock_entry,
+        stock_entry=None,  # Sẽ được gán khi hoàn tất lô hàng (shipment_complete)
         vendor=order.vendor,
         status=PurchaseInvoice.Status.UNPAID,
         total_amount=order.total_amount,
@@ -354,7 +337,7 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
             line_total=line.line_total,
         )
 
-    # 4. Kích hoạt cập nhật lại trạng thái dựa trên thanh toán ứng trước (nếu có)
+    # 3. Kích hoạt cập nhật lại trạng thái dựa trên thanh toán ứng trước (nếu có)
     purchase_order_update_status(order)
 
     create_system_log(
@@ -362,7 +345,7 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
         action="approve",
         table_name="purchase_order",
         record_id=str(order.id),
-        new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": str(stock_entry.id)},
+        new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": None},
     )
 
     return order
@@ -613,142 +596,6 @@ def purchase_order_cancel(
 
 
 @transaction.atomic
-def verify_4_way_matching(*, invoice_id: str) -> bool:
-    """
-    Thực hiện quy trình đối soát 4 bên (4-Way Matching) cho Hóa đơn mua hàng (Purchase Invoice).
-    - So khớp đơn giá từng dòng hóa đơn với đơn giá trên dòng Đơn mua hàng gốc (PO).
-    - Kiểm tra kết quả kiểm định chất lượng (QA/QC) của từng sản phẩm.
-    - So sánh ngày thực tế nhận hàng với ngày cam kết giao hàng của PO.
-    - Tính toán tỷ lệ hoàn thành số lượng (%) cấp dòng và cấp tổng hóa đơn và lưu lại.
-    - Ghi nhận chênh lệch vào block_reason làm thông tin rà soát cho người dùng,
-      nhưng KHÔNG chặn thanh toán (trạng thái hóa đơn vẫn là unpaid/partial/paid).
-    """
-    from apps.finance.models import TechnicalCertification
-    from apps.inventory.models import StockEntryDetail
-    from apps.purchasing.models import PurchaseInvoice
-
-    invoice = PurchaseInvoice.objects.select_for_update().filter(id=invoice_id).first()
-    if not invoice:
-        raise NotFoundException("Hóa đơn mua hàng không tồn tại.")
-
-    po = invoice.order
-
-    blocked = False
-    reasons = []
-
-    # Map PO lines for matching unit prices
-    po_lines = {}
-    if po:
-        po_lines = {line.item_id: line for line in po.lines.all()}
-
-    # Map Stock entry details for receiving quantities from all posted StockEntries for this PO
-    received_qtys = {}
-    if po:
-        from django.db.models import Sum
-
-        # DB-level group by item to avoid loop N+1 issues and memory overhead
-        rows = (
-            StockEntryDetail.objects.filter(parent__purchase_order=po, parent__status="posted")
-            .values("item_id")
-            .annotate(total_qty=Sum("quantity"))
-        )
-        for row in rows:
-            received_qtys[row["item_id"]] = row["total_qty"]
-
-    total_po_qty = Decimal("0.00")
-    total_received_qty = Decimal("0.00")
-
-    invoice_lines = list(invoice.lines.all())
-    for line in invoice_lines:
-        item = line.item
-        item_id = item.id
-
-        # a. Đơn giá
-        if po:
-            po_line = po_lines.get(item_id)
-            if po_line:
-                if line.unit_price != po_line.unit_price:
-                    blocked = True
-                    reasons.append(
-                        f"Chênh lệch đơn giá dòng sản phẩm {item.item_code} (Hóa đơn: {line.unit_price:,.2f}đ, PO: {po_line.unit_price:,.2f}đ)"
-                    )
-            else:
-                blocked = True
-                reasons.append(f"Không tìm thấy dòng sản phẩm {item.item_code} tương ứng trên Đơn mua hàng gốc")
-
-        # b. QA/QC check (Kiểm tra nếu có bất kỳ chứng nhận FAILED nào cho sản phẩm này trong các lô nhập kho của PO)
-        if po:
-            failed_certs = TechnicalCertification.objects.filter(
-                item=item, stock_entry__purchase_order=po, result="FAILED"
-            )
-            if failed_certs.exists():
-                blocked = True
-                reasons.append(f"Sản phẩm {item.item_code} có lô hàng không đạt kiểm định chất lượng (QA/QC Failed)")
-
-        # c. Tỷ lệ hoàn thành số lượng dòng (%)
-        po_qty = Decimal("0.00")
-        if po:
-            po_line = po_lines.get(item_id)
-            if po_line:
-                po_qty = po_line.quantity
-
-        if po_qty == 0:
-            po_qty = line.quantity
-
-        received_qty = received_qtys.get(item_id, Decimal("0.00"))
-
-        total_po_qty += po_qty
-        total_received_qty += received_qty
-
-        if po_qty > 0:
-            line_rate = (received_qty / po_qty) * Decimal("100.00")
-        else:
-            line_rate = Decimal("100.00")
-
-        line_rate = line_rate.quantize(Decimal("0.01"))
-        line.qty_fulfillment_rate = line_rate
-
-    if invoice_lines:
-        PurchaseInvoiceLine.objects.bulk_update(invoice_lines, ["qty_fulfillment_rate"])
-
-    # d. Kiểm tra thời gian giao hàng trễ hạn
-    if po and po.expected_delivery_date:
-        late_entries = po.stock_entries.filter(status="posted", posting_date__date__gt=po.expected_delivery_date)
-        if late_entries.exists():
-            blocked = True
-            reasons.append(f"Giao hàng trễ hạn ở các phiếu nhập kho: {', '.join(entry.name for entry in late_entries)}")
-
-    # Calculate overall fulfillment rate
-    if total_po_qty > 0:
-        overall_rate = (total_received_qty / total_po_qty) * Decimal("100.00")
-    else:
-        overall_rate = Decimal("100.00")
-
-    overall_rate = overall_rate.quantize(Decimal("0.01"))
-    invoice.qty_fulfillment_rate = overall_rate
-
-    # Update invoice status (Không gán trạng thái BLOCKED_FOR_PAYMENT)
-    if reasons:
-        invoice.block_reason = "; ".join(reasons)
-    else:
-        invoice.block_reason = None
-
-    if invoice.paid_amount >= invoice.total_amount and invoice.total_amount > 0:
-        invoice.status = PurchaseInvoice.Status.PAID
-    elif invoice.paid_amount > 0:
-        invoice.status = PurchaseInvoice.Status.PARTIAL
-    else:
-        invoice.status = PurchaseInvoice.Status.UNPAID
-
-    invoice.save()
-
-    if invoice.order:
-        purchase_order_update_status(invoice.order)
-
-    return not blocked
-
-
-@transaction.atomic
 def shipment_create(
     *,
     user: User,
@@ -848,83 +695,6 @@ def record_shipment_logistic_fees(*, user: User, shipment_id: str, total_logisti
 
 
 @transaction.atomic
-def technical_certification_create(
-    *,
-    user: User,
-    item_id: str,
-    stock_entry_id: str,
-    cert_type: str,
-    assessment_fee: Optional[Decimal] = None,
-    expiry_date: Optional[str] = None,
-    result: str,
-    remarks: Optional[str] = None,
-) -> Any:
-    PermissionChecker.check_permission(user, "purchasing.manage_qc")
-
-    import uuid
-
-    from apps.finance.models import TechnicalCertification
-    from apps.inventory.models import StockEntry
-    from apps.master_data.models import Item
-
-    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
-    if not stock_entry:
-        raise NotFoundException("Phiếu nhập kho không tồn tại")
-
-    shipment = stock_entry.shipment
-    if not shipment:
-        raise ValidationException(
-            "Phiếu nhập kho chưa được liên kết với bất kỳ Lô hàng nào. Vui lòng lập Lô hàng trước khi thực hiện QC."
-        )
-
-    if shipment.status == "draft":
-        raise ValidationException(
-            "Lô hàng chưa cập bến thực tế (đang ở trạng thái Draft). Không được phép thực hiện kiểm định QA/QC sớm."
-        )
-
-    item = Item.objects.filter(id=item_id).first()
-    if not item:
-        raise NotFoundException("Sản phẩm không tồn tại")
-
-    cert_id = f"CERT-{str(uuid.uuid4())[:8].upper()}"
-    cert = TechnicalCertification.objects.create(
-        cert_id=cert_id,
-        item=item,
-        stock_entry=stock_entry,
-        cert_type=cert_type,
-        assessment_fee=assessment_fee,
-        expiry_date=expiry_date,
-        result=result,
-        remarks=remarks,
-    )
-
-    create_system_log(
-        user=user,
-        action="create",
-        table_name="technical_certification",
-        record_id=str(cert.id),
-        new_value={
-            "cert_id": cert_id,
-            "item_id": str(item.id),
-            "stock_entry_id": str(stock_entry.id),
-            "cert_type": cert_type,
-            "result": result,
-        },
-    )
-
-    from apps.purchasing.models import PurchaseInvoice
-    from apps.purchasing.services import verify_4_way_matching
-
-    invoices = PurchaseInvoice.objects.filter(stock_entry=stock_entry).exclude(
-        status__in=[PurchaseInvoice.Status.PAID, PurchaseInvoice.Status.CANCELLED]
-    )
-    for invoice in invoices:
-        verify_4_way_matching(invoice_id=str(invoice.id))
-
-    return cert
-
-
-@transaction.atomic
 def shipment_update(
     *,
     user: User,
@@ -947,10 +717,9 @@ def shipment_update(
             raise ValidationException(f"Trạng thái {status} không hợp lệ.")
 
         valid_transitions = {
-            Shipment.Status.DRAFT: [Shipment.Status.ARRIVED],
-            Shipment.Status.ARRIVED: [Shipment.Status.DRAFT, Shipment.Status.INSPECTED],
-            Shipment.Status.INSPECTED: [Shipment.Status.ARRIVED, Shipment.Status.COMPLETED],
-            Shipment.Status.COMPLETED: [Shipment.Status.INSPECTED],
+            Shipment.Status.DRAFT: [Shipment.Status.INSPECTING],
+            Shipment.Status.INSPECTING: [Shipment.Status.COMPLETED],
+            Shipment.Status.COMPLETED: [],
         }
         allowed = valid_transitions.get(shipment.status, [])
         if status not in allowed:
@@ -969,5 +738,168 @@ def shipment_update(
         record_id=str(shipment.id),
         old_value={"status": old_status, "remarks": old_remarks},
         new_value={"status": shipment.status, "remarks": shipment.remarks},
+    )
+    return shipment
+
+
+@transaction.atomic
+def shipment_create_from_po(
+    *,
+    user: User,
+    shipment_num: str,
+    name: str,
+    purchase_order_id: str,
+    remarks: Optional[str] = None,
+) -> Shipment:
+    PermissionChecker.check_permission(user, "purchasing.allocate_landed_cost")
+    from apps.purchasing.models import PurchaseOrder, Shipment
+
+    po = PurchaseOrder.objects.select_for_update().filter(id=purchase_order_id).first()
+    if not po:
+        raise NotFoundException("Đơn mua hàng không tồn tại.")
+
+    if po.status not in [PurchaseOrder.Status.PENDING, PurchaseOrder.Status.PAID_UNSHIPPED]:
+        raise ValidationException("Chỉ có thể tạo lô hàng cho PO ở trạng thái chờ xử lý hoặc đã thanh toán.")
+
+    existing = Shipment.objects.filter(
+        purchase_order=po, status__in=[Shipment.Status.DRAFT, Shipment.Status.INSPECTING]
+    ).exists()
+    if existing:
+        raise ValidationException("PO này đã có lô hàng đang xử lý.")
+
+    if Shipment.objects.filter(shipment_num=shipment_num).exists():
+        raise ValidationException("Mã lô hàng đã tồn tại.")
+
+    shipment = Shipment.objects.create(
+        shipment_num=shipment_num,
+        name=name,
+        purchase_order=po,
+        status=Shipment.Status.DRAFT,
+        remarks=remarks,
+        total_logistic_fees=Decimal("0.00"),
+    )
+
+    create_system_log(
+        user=user,
+        action="create",
+        table_name="shipment",
+        record_id=str(shipment.id),
+        new_value={"shipment_num": shipment_num, "status": shipment.status, "purchase_order_id": str(po.id)},
+    )
+    return shipment
+
+
+@transaction.atomic
+def shipment_complete(
+    *,
+    user: User,
+    shipment_id: str,
+    details: list,
+    total_logistic_fees: Decimal,
+) -> Shipment:
+    PermissionChecker.check_permission(user, "purchasing.allocate_landed_cost")
+    import uuid
+
+    from django.utils import timezone
+
+    from apps.finance.models import CashFlowTransaction
+    from apps.inventory.models import StockEntry, StockEntryDetail, StockLedger
+    from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, Shipment
+
+    shipment = Shipment.objects.select_for_update().filter(id=shipment_id).first()
+    if not shipment:
+        raise NotFoundException("Lô hàng không tồn tại.")
+
+    if shipment.status != Shipment.Status.INSPECTING:
+        raise ValidationException("Chỉ có thể hoàn tất lô hàng đang ở trạng thái Đang tiếp nhận.")
+
+    po = shipment.purchase_order
+    if not po:
+        raise ValidationException("Lô hàng chưa liên kết PO.")
+
+    if total_logistic_fees < 0:
+        raise ValidationException("Chi phí logistic không được âm.")
+
+    # Validate details
+    for d in details:
+        qty = Decimal(str(d["quantity"]))
+        if qty < 0:
+            raise ValidationException("Số lượng đạt chuẩn không được âm.")
+
+        po_line = po.lines.filter(id=d["po_line_id"]).first()
+        if not po_line:
+            raise ValidationException("Dòng sản phẩm không khớp với PO.")
+
+        if qty > po_line.quantity:
+            raise ValidationException("Số lượng đạt chuẩn vượt quá số lượng đặt.")
+
+        if qty > 0 and not d.get("target_warehouse_id"):
+            raise ValidationException(f"Sản phẩm {d['item_id']} có số lượng đạt >0 phải chỉ định kho.")
+
+    # Bước 1: Tạo StockEntry posted trực tiếp
+    stock_name = f"IN-PUR-SHIP-{str(shipment.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
+    stock_entry = StockEntry.objects.create(
+        name=stock_name,
+        purpose="receipt",
+        posting_date=timezone.now(),
+        remarks=f"Nhập kho từ lô hàng {shipment.shipment_num}",
+        status="posted",
+        purchase_order=po,
+        shipment=shipment,
+    )
+
+    for d in details:
+        qty = Decimal(str(d["quantity"]))
+        if qty > 0:
+            StockEntryDetail.objects.create(
+                parent=stock_entry,
+                item_id=d["item_id"],
+                quantity=qty,
+                target_warehouse_id=d["target_warehouse_id"],
+            )
+            StockLedger.objects.create(
+                item_id=d["item_id"],
+                warehouse_id=d["target_warehouse_id"],
+                posting_date=stock_entry.posting_date,
+                actual_quantity=qty,
+                voucher_number=stock_entry.name,
+                voucher_type="Stock In",
+            )
+
+    # Bước 2: Cập nhật PurchaseInvoice liên kết với StockEntry
+    PurchaseInvoice.objects.filter(order=po, stock_entry__isnull=True).update(stock_entry=stock_entry)
+
+    # Bước 3: Tạo CashFlowTransaction cho chi phí logistic
+    if total_logistic_fees > 0:
+        CashFlowTransaction.objects.create(
+            name=f"CF-PAY-LOG-{shipment.shipment_num[:10]}-{str(uuid.uuid4())[:4]}",
+            payment_type="pay",
+            category="Chi phí vận chuyển lô hàng",
+            payment_method="bank_transfer",
+            amount=total_logistic_fees,
+            payment_date=timezone.now().date(),
+            purchase_order=po,
+            status="pending_approval",
+            remarks=f"Thanh toán chi phí logistic dồn tích cho Lô Hàng {shipment.shipment_num}",
+        )
+
+    # Bước 4: Cập nhật Shipment status
+    shipment.status = Shipment.Status.COMPLETED
+    shipment.total_logistic_fees = total_logistic_fees
+    shipment.save()
+
+    # Bước 5: Cập nhật PO status
+    purchase_order_update_status(po)
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="shipment",
+        record_id=str(shipment.id),
+        new_value={
+            "status": shipment.status,
+            "total_logistic_fees": str(total_logistic_fees),
+            "stock_entry_id": str(stock_entry.id),
+        },
     )
     return shipment
