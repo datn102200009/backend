@@ -68,6 +68,8 @@ components:
           description: Total count of items matching the criteria (which can be more than the 5 items returned).
         data:
           oneOf:
+            - $ref: '#/components/schemas/WidgetKpiListData'
+            - $ref: '#/components/schemas/WidgetLowStockData'
             - type: array
               items:
                 anyOf:
@@ -101,6 +103,72 @@ components:
         error:
           type: string
           nullable: true
+
+    WidgetKpiListData:
+      type: object
+      properties:
+        total_count:
+          type: integer
+        top_items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        active_po_count:
+          type: integer
+        total_pending_amount:
+          type: string
+        pending_entry_count:
+          type: integer
+        depreciated_assets_count:
+          type: integer
+        pending_assets_count:
+          type: integer
+        total_depreciation_amount:
+          type: string
+        is_done:
+          type: boolean
+        salary_period:
+          type: string
+        status:
+          type: string
+        calculated_slips_count:
+          type: integer
+        net_pay_total:
+          type: string
+        expiring_count:
+          type: integer
+        critical_count:
+          type: integer
+        pending_completion_count:
+          type: integer
+        total_produced_qty:
+          type: string
+
+    WidgetLowStockData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryLowStockLine'
+        product_distribution:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+        warehouses:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+        total_count:
+          type: integer
 
     # Converted List Types Data Schemas
     SalesTodayRevenueLine:
@@ -281,24 +349,17 @@ components:
     InventoryLowStockLine:
       type: object
       properties:
+        id:
+          type: string
         item_code:
           type: string
         item_name:
           type: string
         uom:
           type: string
-        warehouse_name:
-          type: string
-        balance:
-          type: string
-        days_left:
-          type: number
-          nullable: true
         status:
           type: string
         reason:
-          type: string
-        action_suggest:
           type: string
     InventoryPendingEntryLine:
       type: object
@@ -388,12 +449,18 @@ components:
           type: string
         name:
           type: string
+        code:
+          type: string
         production_item_name:
+          type: string
+        product_name:
           type: string
         quantity:
           type: string
         planned_start_date:
           type: string
+        days_to_start:
+          type: integer
         created_at:
           type: string
     ManufacturingActiveWOLine:
@@ -515,6 +582,13 @@ paths:
             type: string
           description: Mã của widget
           example: "sales_today_revenue"
+        - name: purpose
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter theo mục đích (chỉ cho inventory_pending_entries)
+          example: "transfer"
       responses:
         '200':
           description: Thành công

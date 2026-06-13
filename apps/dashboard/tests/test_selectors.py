@@ -8,8 +8,7 @@ from django.utils import timezone
 
 from apps.dashboard.selectors import (
     format_num,
-    get_finance_cashflow_chart,
-    get_finance_cashflow_summary,
+    get_finance_cashflow_overview,
     get_finance_depreciation_status,
     get_finance_unpaid_purchase_invoices,
     get_finance_unpaid_sales_invoices,
@@ -63,28 +62,33 @@ class TestDashboardSelectors:
         SalesOrder.objects.create(customer=customer, total_amount=Decimal("500.00"), status=SalesOrder.Status.DRAFT)
 
         res = get_sales_today_revenue()
-        assert len(res) == 2
-        assert res[0]["total_amount"] in ["150.00", "250.00"]
-        assert isinstance(res[0]["total_amount"], str)
-        assert "customer_name" in res[0]
+        assert "points" in res
+        assert len(res["points"]) == 7
+        today_str = timezone.localdate().isoformat()
+        today_point = [p for p in res["points"] if p["date"] == today_str][0]
+        assert float(today_point["revenue"]) == 400.0
 
     def test_sales_draft_orders(self):
         customer = CustomerFactory()
         SalesOrder.objects.create(customer=customer, total_amount=Decimal("100.00"), status=SalesOrder.Status.DRAFT)
 
         res = get_sales_draft_orders()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "100.00"
-        assert isinstance(res[0]["total_amount"], str)
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["total_amount"] == "100.00"
+        assert "items_summary" in res["top_items"][0]
+        assert isinstance(res["top_items"][0]["total_amount"], str)
 
     def test_sales_pending_fulfillment(self):
         customer = CustomerFactory()
         SalesOrder.objects.create(customer=customer, total_amount=Decimal("150.00"), status=SalesOrder.Status.PENDING)
 
         res = get_sales_pending_fulfillment()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "150.00"
-        assert isinstance(res[0]["total_amount"], str)
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["total_amount"] == "150.00"
+        assert "items_summary" in res["top_items"][0]
+        assert isinstance(res["top_items"][0]["total_amount"], str)
 
     def test_purchasing_active_po_count(self):
         supplier = SupplierFactory()
@@ -94,19 +98,23 @@ class TestDashboardSelectors:
         PurchaseOrder.objects.create(vendor=supplier, total_amount=Decimal("200.00"), status=PurchaseOrder.Status.DRAFT)
 
         res = get_purchasing_active_po_count()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "100.00"
-        assert isinstance(res[0]["total_amount"], str)
-        assert "supplier_name" in res[0]
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["active_po_count"] == 1
+        assert res["total_pending_amount"] == "100.00"
+        assert "items_summary" in res["top_items"][0]
+        assert "expected_delivery_date" in res["top_items"][0]
 
     def test_purchasing_draft_orders(self):
         supplier = SupplierFactory()
         PurchaseOrder.objects.create(vendor=supplier, total_amount=Decimal("150.00"), status=PurchaseOrder.Status.DRAFT)
 
         res = get_purchasing_draft_orders()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "150.00"
-        assert isinstance(res[0]["total_amount"], str)
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["total_amount"] == "150.00"
+        assert "items_summary" in res["top_items"][0]
+        assert isinstance(res["top_items"][0]["total_amount"], str)
 
     def test_purchasing_pending_delivery(self):
         supplier = SupplierFactory()
@@ -119,23 +127,27 @@ class TestDashboardSelectors:
         )
 
         res = get_purchasing_pending_delivery()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "150.00"
-        assert isinstance(res[0]["total_amount"], str)
-        assert res[0]["receipt_fulfillment_rate"] == "85.00"
-        assert res[0]["payment_fulfillment_rate"] == "60.00"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["total_amount"] == "150.00"
+        assert "items_summary" in res["top_items"][0]
+        assert isinstance(res["top_items"][0]["total_amount"], str)
+        assert res["top_items"][0]["receipt_fulfillment_rate"] == "85.00"
+        assert res["top_items"][0]["payment_fulfillment_rate"] == "60.00"
 
     def test_purchasing_pending_qc(self):
         Shipment.objects.create(shipment_num="SHIP-01", name="Lô hàng 1", status=Shipment.Status.ARRIVED)
         res = get_purchasing_pending_qc()
-        assert len(res) == 1
-        assert res[0]["shipment_num"] == "SHIP-01"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["shipment_num"] == "SHIP-01"
 
     def test_purchasing_pending_logistic_fees(self):
         Shipment.objects.create(shipment_num="SHIP-02", name="Lô hàng 2", status=Shipment.Status.INSPECTED)
         res = get_purchasing_pending_logistic_fees()
-        assert len(res) == 1
-        assert res[0]["shipment_num"] == "SHIP-02"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["shipment_num"] == "SHIP-02"
 
     def test_purchasing_blocked_invoices(self):
         supplier = SupplierFactory()
@@ -146,15 +158,16 @@ class TestDashboardSelectors:
             block_reason="QC Failed",
         )
         res = get_purchasing_blocked_invoices()
-        assert len(res) == 1
-        assert res[0]["block_reason"] == "QC Failed"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["block_reason"] == "QC Failed"
 
     def test_inventory_pending_entry_count(self):
         StockEntry.objects.create(name="SE-DRAFT", purpose="receipt", posting_date=timezone.now(), status="draft")
         res = get_inventory_pending_entry_count()
-        assert len(res) == 1
-        assert res[0]["name"] == "SE-DRAFT"
-        assert "route_desc" in res[0]
+        assert res["pending_entry_count"] == 1
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
 
     def test_inventory_pending_entries(self):
         uom = UOMFactory()
@@ -170,37 +183,47 @@ class TestDashboardSelectors:
         )
 
         res = get_inventory_pending_entries()
-        assert len(res) == 1
-        assert res[0]["name"] == "SE-TRF"
-        assert res[0]["purpose"] == "transfer"
-        assert res[0]["route_desc"] == "Kho Nguồn → Kho Đích"
-        assert res[0]["item_count"] == 1
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["name"] == "SE-TRF"
+        assert res["top_items"][0]["purpose"] == "transfer"
+        assert res["top_items"][0]["route_desc"] == "Kho Nguồn → Kho Đích"
+        assert res["top_items"][0]["item_count"] == 1
 
-    def test_finance_cashflow_chart(self):
+    def test_finance_cashflow_overview(self):
+        today = timezone.localdate()
+        # Transaction in period
         CashFlowTransaction.objects.create(
             name="TX-01",
             payment_type="receive",
-            amount=Decimal("1000.00"),
-            payment_date=timezone.now().date(),
+            amount=Decimal("1500.00"),
+            payment_date=today,
             status="posted",
         )
-        res = get_finance_cashflow_chart()
+        # Transaction in period
+        CashFlowTransaction.objects.create(
+            name="TX-02",
+            payment_type="pay",
+            amount=Decimal("500.00"),
+            payment_date=today,
+            status="posted",
+        )
+        # Old transaction (30 days ago, should be excluded from summary)
+        CashFlowTransaction.objects.create(
+            name="TX-OLD",
+            payment_type="receive",
+            amount=Decimal("2000.00"),
+            payment_date=today - timedelta(days=30),
+            status="posted",
+        )
+        res = get_finance_cashflow_overview()
+        assert "summary" in res
         assert "weeks" in res
+        assert res["summary"]["receive_total"] == "1500.00"
+        assert res["summary"]["pay_total"] == "500.00"
+        assert res["summary"]["net_cashflow"] == "1000.00"
+        assert res["summary"]["period_label"] == "4 tuần gần nhất"
         assert len(res["weeks"]) == 4
-
-    def test_finance_cashflow_summary(self):
-        today = timezone.now().date()
-        CashFlowTransaction.objects.create(
-            name="TX-02", payment_type="receive", amount=Decimal("1500.00"), payment_date=today, status="posted"
-        )
-        CashFlowTransaction.objects.create(
-            name="TX-03", payment_type="pay", amount=Decimal("500.00"), payment_date=today, status="posted"
-        )
-        res = get_finance_cashflow_summary()
-        assert len(res) == 2
-        assert res[0]["amount"] in ["1500.00", "500.00"]
-        assert isinstance(res[0]["amount"], str)
-        assert "payment_type" in res[0]
 
     def test_finance_unpaid_purchase_invoices(self):
         supplier = SupplierFactory()
@@ -208,9 +231,12 @@ class TestDashboardSelectors:
             vendor=supplier, status=PurchaseInvoice.Status.UNPAID, total_amount=Decimal("200.00")
         )
         res = get_finance_unpaid_purchase_invoices()
-        assert len(res) == 1
-        assert res[0]["remaining_amount"] == "200.00"
-        assert isinstance(res[0]["remaining_amount"], str)
+        assert "buckets" in res
+        assert res["total_outstanding"] == "200.00"
+        assert res["total_count"] == 1
+        assert len(res["buckets"]) == 4
+        fresh_bucket = [b for b in res["buckets"] if b["label"] == "0-30 ngày"][0]
+        assert float(fresh_bucket["value"]) == 200.00
 
     def test_finance_unpaid_sales_invoices(self):
         customer = CustomerFactory()
@@ -218,9 +244,12 @@ class TestDashboardSelectors:
             customer=customer, status=SalesInvoice.Status.UNPAID, total_amount=Decimal("300.00")
         )
         res = get_finance_unpaid_sales_invoices()
-        assert len(res) == 1
-        assert res[0]["remaining_amount"] == "300.00"
-        assert isinstance(res[0]["remaining_amount"], str)
+        assert "buckets" in res
+        assert res["total_outstanding"] == "300.00"
+        assert res["total_count"] == 1
+        assert len(res["buckets"]) == 4
+        fresh_bucket = [b for b in res["buckets"] if b["label"] == "0-30 ngày"][0]
+        assert float(fresh_bucket["value"]) == 300.00
 
     def test_finance_depreciation_status(self):
         asset = FixedAsset.objects.create(
@@ -235,10 +264,12 @@ class TestDashboardSelectors:
             asset=asset, period=timezone.now().strftime("%Y-%m"), depreciation_amount=Decimal("100.00")
         )
         res = get_finance_depreciation_status()
-        assert len(res) == 1
-        assert res[0]["asset_code"] == "M-01"
-        assert isinstance(res[0]["depreciation_amount"], str)
-        assert res[0]["status"] == "đã trích"
+        assert res["depreciated_assets_count"] == 1
+        assert res["pending_assets_count"] == 0
+        assert res["total_depreciation_amount"] == "100.00"
+        assert res["is_done"] is True
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
 
     def test_hrm_payroll_lifecycle_status(self):
         emp = Employee.objects.create(employee_id="E-01", full_name="Employee 1", employment_status="active")
@@ -252,10 +283,11 @@ class TestDashboardSelectors:
             status="calculated",
         )
         res = get_hrm_payroll_lifecycle_status()
-        assert len(res) == 1
-        assert res[0]["employee_name"] == "Employee 1"
-        assert res[0]["net_pay"] == "4500.00"
-        assert isinstance(res[0]["net_pay"], str)
+        assert res["status"] == "calculated"
+        assert res["calculated_slips_count"] == 1
+        assert res["net_pay_total"] == "4500.00"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
 
     def test_hrm_pending_leave_requests(self):
         emp = Employee.objects.create(employee_id="E-02", full_name="Employee 2", employment_status="active")
@@ -268,8 +300,9 @@ class TestDashboardSelectors:
             status="pending",
         )
         res = get_hrm_pending_leave_requests()
-        assert len(res) == 1
-        assert res[0]["employee_name"] == "Employee 2"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["employee_name"] == "Employee 2"
 
     def test_hrm_expiring_contracts(self):
         emp = Employee.objects.create(employee_id="E-03", full_name="Employee 3", employment_status="active")
@@ -282,23 +315,31 @@ class TestDashboardSelectors:
             status="active",
         )
         res = get_hrm_expiring_contracts()
-        assert len(res) == 1
-        assert res[0]["employee_name"] == "Employee 3"
+        assert res["expiring_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["employee_name"] == "Employee 3"
 
     def test_hrm_today_attendance_rate(self):
         emp = Employee.objects.create(employee_id="E-05", full_name="Employee 5", employment_status="active")
-        # Attendance status is working, so they should not show up in absent list
         Attendance.objects.create(employee=emp, date=date.today(), status="working")
         res = get_hrm_today_attendance_rate()
-        assert len(res) == 0
+        assert res["attendance_rate"] == Decimal("100.00")
+        assert res["present_count"] == 1
+        assert res["absent_count"] == 0
 
         # Now test with another employee who is absent
         emp_absent = Employee.objects.create(employee_id="E-06", full_name="Employee 6", employment_status="active")
         Attendance.objects.create(employee=emp_absent, date=date.today(), status="paid_leave")
         res = get_hrm_today_attendance_rate()
-        assert len(res) == 1
-        assert res[0]["employee_id"] == "E-06"
-        assert res[0]["status"] == "Nghỉ phép"
+        assert res["attendance_rate"] == Decimal("50.00")
+        assert res["present_count"] == 1
+        assert res["absent_count"] == 1
+
+        # Test with 3 employees (1 working, 2 absent) -> 33.33%
+        emp_absent_2 = Employee.objects.create(employee_id="E-07", full_name="Employee 7", employment_status="active")
+        Attendance.objects.create(employee=emp_absent_2, date=date.today(), status="paid_leave")
+        res = get_hrm_today_attendance_rate()
+        assert res["attendance_rate"] == Decimal("33.33")
 
     def test_manufacturing_pending_wo_approval(self):
         item = ItemFactory()
@@ -306,9 +347,7 @@ class TestDashboardSelectors:
             name="WO-01", production_item=item, quantity=10, planned_start_date=date.today(), status="pending_approval"
         )
         res = get_manufacturing_pending_wo_approval()
-        assert len(res) == 1
-        assert res[0]["name"] == "WO-01"
-        assert isinstance(res[0]["quantity"], str)
+        assert res["total_count"] == 1
 
     def test_manufacturing_active_wos(self):
         item = ItemFactory()
@@ -343,9 +382,10 @@ class TestDashboardSelectors:
             status="in_progress",
         )
         res = get_manufacturing_pending_declarations()
-        assert len(res) == 1
-        assert res[0]["name"] == "WO-03"
-        assert res[0]["days_left"] == 2
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["name"] == "WO-03"
+        assert res["top_items"][0]["days_left"] == 2
 
     def test_manufacturing_pending_completion(self):
         item = ItemFactory()
@@ -360,9 +400,10 @@ class TestDashboardSelectors:
             target_warehouse=wh,
         )
         res = get_manufacturing_pending_completion()
-        assert len(res) == 1
-        assert res[0]["name"] == "WO-04"
-        assert res[0]["target_warehouse_name"] == "Kho Thành Phẩm"
+        assert res["pending_completion_count"] == 1
+        assert res["total_produced_qty"] == "10.00"
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
 
     # Specific tests for inventory_low_stock (DOS, Excluded Warehouses, UOM Fallback, O(1) query complexity)
     def test_inventory_low_stock_calculations(self):
@@ -416,22 +457,21 @@ class TestDashboardSelectors:
             )
 
         # Run selector
-        alerts = get_warehouse_low_stock_alerts()
+        res = get_warehouse_low_stock_alerts()
 
         # Assertions
-        assert len(alerts) == 2  # Both should alert
+        assert res["total_count"] == 2
+        assert len(res["items"]) == 2
 
         # Verify item_ton warning alert
-        alert_ton = [a for a in alerts if a["item_code"] == "RAW-TON"][0]
+        alert_ton = [a for a in res["items"] if a["item_code"] == "RAW-TON"][0]
         assert alert_ton["status"] == "warning"
-        assert alert_ton["days_left"] == 5.0
-        assert alert_ton["action_suggest"] == "Tạo Yêu cầu Mua hàng (PO)"
+        assert "5" in alert_ton["reason"]
 
         # Verify item_pcs critical alert (due to UOM fallback < 200, no ADC)
-        alert_pcs = [a for a in alerts if a["item_code"] == "COMP-PCS"][0]
+        alert_pcs = [a for a in res["items"] if a["item_code"] == "COMP-PCS"][0]
         assert alert_pcs["status"] == "critical"
-        assert float(alert_pcs["balance"]) == 50.0
-        assert isinstance(alert_pcs["balance"], str)
+        assert "50" in alert_pcs["reason"]
 
     def test_inventory_low_stock_query_efficiency(self):
         # 1. Setup active warehouses
@@ -451,10 +491,11 @@ class TestDashboardSelectors:
 
         # Measure query counts
         with CaptureQueriesContext(connection) as ctx:
-            alerts = get_warehouse_low_stock_alerts()
+            res = get_warehouse_low_stock_alerts()
 
         # Verified O(1) query count (maximum 4 queries: active warehouses, balances, consumptions, item/uom master data)
         assert len(ctx.captured_queries) <= 5
+        assert len(res["items"]) == 10
 
     def test_selector_total_count_greater_than_five(self):
         customer = CustomerFactory()
@@ -463,10 +504,220 @@ class TestDashboardSelectors:
             SalesOrder.objects.create(customer=customer, total_amount=Decimal("100.00"), status=SalesOrder.Status.DRAFT)
 
         res = get_sales_draft_orders()
-        # Since it is sliced to [:5], len(res) is 5
-        assert len(res) == 5
-        # res.total_count should be 7
-        assert getattr(res, "total_count", None) == 7
+        assert len(res["top_items"]) == 5
+        assert res["total_count"] == 7
+
+    def test_inventory_pending_entries_with_purpose_filter(self):
+        uom = UOMFactory()
+        item = ItemFactory(stock_uom=uom)
+        wh_src = WarehouseFactory(name="Kho Nguồn 1")
+        wh_tgt = WarehouseFactory(name="Kho Đích 1")
+
+        se1 = StockEntry.objects.create(name="SE-REC", purpose="receipt", posting_date=timezone.now(), status="draft")
+        se2 = StockEntry.objects.create(name="SE-TRF2", purpose="transfer", posting_date=timezone.now(), status="draft")
+
+        res_receipt = get_inventory_pending_entries(purpose="receipt")
+        assert res_receipt["total_count"] == 1
+        assert res_receipt["top_items"][0]["purpose"] == "receipt"
+
+        res_all = get_inventory_pending_entries()
+        assert res_all["total_count"] == 2
+
+    def test_finance_unpaid_purchase_invoices_remaining_amount(self):
+        supplier = SupplierFactory()
+        PurchaseInvoice.objects.create(
+            vendor=supplier,
+            status=PurchaseInvoice.Status.PARTIAL,
+            total_amount=Decimal("500.00"),
+            paid_amount=Decimal("200.00"),
+            due_date=date.today() - timedelta(days=5),
+        )
+        res = get_finance_unpaid_purchase_invoices()
+        assert len(res["top_overdue"]) > 0
+        invoice = res["top_overdue"][0]
+        assert "remaining_amount" in invoice
+        assert invoice["remaining_amount"] == "300.00"
+        assert isinstance(invoice["remaining_amount"], str)
+        assert invoice["overdue_days"] == 5
+
+    def test_finance_unpaid_sales_invoices_remaining_amount(self):
+        customer = CustomerFactory()
+        invoice = SalesInvoice.objects.create(
+            customer=customer,
+            status=SalesInvoice.Status.PARTIAL,
+            total_amount=Decimal("1000.00"),
+            paid_amount=Decimal("400.00"),
+        )
+        SalesInvoice.objects.filter(id=invoice.id).update(created_at=timezone.now() - timedelta(days=10))
+        res = get_finance_unpaid_sales_invoices()
+        assert len(res["top_overdue"]) > 0
+        invoice_res = res["top_overdue"][0]
+        assert "remaining_amount" in invoice_res
+        assert invoice_res["remaining_amount"] == "600.00"
+        assert isinstance(invoice_res["remaining_amount"], str)
+        assert invoice_res["overdue_days"] == 10
+
+    def test_finance_unpaid_purchase_invoices_n_plus_one_safe(self):
+        supplier = SupplierFactory()
+        for i in range(10):
+            PurchaseInvoice.objects.create(
+                vendor=supplier,
+                status=PurchaseInvoice.Status.UNPAID,
+                total_amount=Decimal("100.00") + i,
+                due_date=date.today() - timedelta(days=i),
+            )
+        with CaptureQueriesContext(connection) as ctx:
+            res = get_finance_unpaid_purchase_invoices()
+        # 1 query for invoices (+ select_related vendor), 1 query for count
+        assert len(ctx.captured_queries) <= 3
+
+    def test_manufacturing_pending_wo_approval_list(self):
+        item = ItemFactory()
+        # Create 5 WOs
+        for i in range(5):
+            WorkOrder.objects.create(
+                name=f"WO-APP-0{i}",
+                production_item=item,
+                quantity=10 + i,
+                planned_start_date=date.today() + timedelta(days=i),
+                status="pending_approval",
+            )
+        res = get_manufacturing_pending_wo_approval()
+        assert "top_items" in res
+        assert len(res["top_items"]) == 5
+        # Should be sorted by planned_start_date ASC
+        assert res["top_items"][0]["code"] == "WO-APP-00"
+        assert res["top_items"][0]["product_name"] == item.item_name
+        assert res["top_items"][0]["days_to_start"] == 0
+        assert res["top_items"][1]["days_to_start"] == 1
+        assert res["top_items"][2]["days_to_start"] == 2
+
+    def test_manufacturing_pending_wo_approval_no_n_plus_one(self):
+        item = ItemFactory()
+        for i in range(20):
+            WorkOrder.objects.create(
+                name=f"WO-APP-BATCH-{i}",
+                production_item=item,
+                quantity=10,
+                planned_start_date=date.today(),
+                status="pending_approval",
+            )
+        with CaptureQueriesContext(connection) as ctx:
+            res = get_manufacturing_pending_wo_approval()
+        # 1 query for pending count, 1 query for top 3 pending WOs (including select_related)
+        assert len(ctx.captured_queries) <= 2
+
+    def test_items_summary_format(self):
+        customer = CustomerFactory()
+        uom = UOMFactory()
+        item_a = ItemFactory(stock_uom=uom, item_name="Sắt")
+        item_b = ItemFactory(stock_uom=uom, item_name="Thép")
+        item_c = ItemFactory(stock_uom=uom, item_name="Đồng")
+
+        # Test 1: No lines
+        so_empty = SalesOrder.objects.create(
+            customer=customer, total_amount=Decimal("0.00"), status=SalesOrder.Status.DRAFT
+        )
+        res_empty = get_sales_draft_orders()
+        assert res_empty["top_items"][0]["items_summary"] == ""
+
+        # Test 2: 1 line
+        so_1 = SalesOrder.objects.create(
+            customer=customer, total_amount=Decimal("100.00"), status=SalesOrder.Status.DRAFT
+        )
+        from apps.sales.models import SalesOrderLine
+
+        SalesOrderLine.objects.create(order=so_1, item=item_a, quantity=Decimal("10.0"))
+        res_1 = get_sales_draft_orders()
+        assert res_1["top_items"][0]["items_summary"] == "Sắt: 10"
+
+        # Test 3: 2 lines
+        so_2 = SalesOrder.objects.create(
+            customer=customer, total_amount=Decimal("200.00"), status=SalesOrder.Status.DRAFT
+        )
+        SalesOrderLine.objects.create(order=so_2, item=item_a, quantity=Decimal("10.0"))
+        SalesOrderLine.objects.create(order=so_2, item=item_b, quantity=Decimal("5.5"))
+        res_2 = get_sales_draft_orders()
+        assert res_2["top_items"][0]["items_summary"] == "Sắt: 10, Thép: 5.5"
+
+        # Test 4: 3 lines
+        so_3 = SalesOrder.objects.create(
+            customer=customer, total_amount=Decimal("300.00"), status=SalesOrder.Status.DRAFT
+        )
+        SalesOrderLine.objects.create(order=so_3, item=item_a, quantity=Decimal("10.0"))
+        SalesOrderLine.objects.create(order=so_3, item=item_b, quantity=Decimal("5.0"))
+        SalesOrderLine.objects.create(order=so_3, item=item_c, quantity=Decimal("2.0"))
+        res_3 = get_sales_draft_orders()
+        assert res_3["top_items"][0]["items_summary"] == "Sắt: 10, Thép: 5 và +1 sản phẩm khác"
+
+    def test_items_summary_no_n_plus_one(self):
+        customer = CustomerFactory()
+        uom = UOMFactory()
+        item = ItemFactory(stock_uom=uom, item_name="Sắt")
+        from apps.sales.models import SalesOrderLine
+
+        # Create 5 orders each with 3 lines
+        for i in range(5):
+            so = SalesOrder.objects.create(
+                customer=customer, total_amount=Decimal("100.00"), status=SalesOrder.Status.DRAFT
+            )
+            for j in range(3):
+                SalesOrderLine.objects.create(order=so, item=item, quantity=Decimal("10.0"))
+
+        with CaptureQueriesContext(connection) as ctx:
+            res = get_sales_draft_orders()
+
+        # O(1) complexity: 1 count query + 1 query to fetch top 5 sales orders + 1 query for prefetched lines + 1 query for prefetched items
+        assert len(ctx.captured_queries) <= 4
+
+    def test_unpaid_purchase_invoices_remaining_amount_is_decimal(self):
+        from apps.purchasing.models import PurchaseInvoice
+
+        supplier = SupplierFactory()
+        PurchaseInvoice.objects.create(
+            vendor=supplier,
+            status=PurchaseInvoice.Status.PARTIAL,
+            total_amount=Decimal("100000.50"),
+            paid_amount=Decimal("30000.25"),
+        )
+        res = get_finance_unpaid_purchase_invoices()
+        assert res["total_outstanding"] == "70000.25"
+        assert res["top_overdue"][0]["remaining_amount"] == "70000.25"
+
+    def test_unpaid_sales_invoices_remaining_amount_is_decimal(self):
+        from apps.sales.models import SalesInvoice
+
+        customer = CustomerFactory()
+        SalesInvoice.objects.create(
+            customer=customer,
+            status=SalesInvoice.Status.PARTIAL,
+            total_amount=Decimal("100000.50"),
+            paid_amount=Decimal("30000.25"),
+        )
+        res = get_finance_unpaid_sales_invoices()
+        assert res["total_outstanding"] == "70000.25"
+        assert res["top_overdue"][0]["remaining_amount"] == "70000.25"
+
+    def test_finance_cashflow_overview_decimal_format(self):
+        # Create transactions
+        CashFlowTransaction.objects.create(
+            name="TX-DEC-1",
+            payment_type="receive",
+            amount=Decimal("1500.50"),
+            payment_date=date.today(),
+            status="posted",
+        )
+        CashFlowTransaction.objects.create(
+            name="TX-DEC-2",
+            payment_type="pay",
+            amount=Decimal("800.25"),
+            payment_date=date.today(),
+            status="posted",
+        )
+        res = get_finance_cashflow_overview()
+        assert res["summary"]["receive_total"] == "1500.50"
+        assert res["summary"]["pay_total"] == "800.25"
+        assert res["summary"]["net_cashflow"] == "700.25"
 
 
 class TestFormatNum:

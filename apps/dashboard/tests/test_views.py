@@ -24,22 +24,22 @@ class TestDashboardViews:
 
         assert "sales_today_revenue" in codes
         assert "sales_draft_orders" in codes
-        # Widgets like finance_cashflow_chart or hrm_expiring_contracts should NOT be returned
-        assert "finance_cashflow_chart" not in codes
+        # Widgets like finance_cashflow_overview or hrm_expiring_contracts should NOT be returned
+        assert "finance_cashflow_overview" not in codes
         assert "hrm_expiring_contracts" not in codes
 
     def test_widget_batch_data_rbac_denied(self, authenticated_client_with_perms):
         client, user = authenticated_client_with_perms
         url = reverse("widget-batch-data")
 
-        # Requesting a widget user has no permission for (e.g. finance_cashflow_summary)
-        response = client.get(url, {"widgets": "sales_today_revenue,finance_cashflow_summary"})
+        # Requesting a widget user has no permission for (e.g. finance_unpaid_purchase_invoices)
+        response = client.get(url, {"widgets": "sales_today_revenue,finance_unpaid_purchase_invoices"})
         assert response.status_code == status.HTTP_200_OK
 
         data = response.data
         assert data["sales_today_revenue"]["success"] is True
-        assert data["finance_cashflow_summary"]["success"] is False
-        assert "permission" in data["finance_cashflow_summary"]["error"].lower()
+        assert data["finance_unpaid_purchase_invoices"]["success"] is False
+        assert "permission" in data["finance_unpaid_purchase_invoices"]["error"].lower()
 
     @patch("apps.dashboard.selectors.get_sales_draft_orders")
     def test_widget_batch_data_partial_failure(self, mock_get_drafts, authenticated_client_with_perms):
@@ -60,7 +60,7 @@ class TestDashboardViews:
 
         # sales_today_revenue should succeed
         assert data["sales_today_revenue"]["success"] is True
-        assert isinstance(data["sales_today_revenue"]["data"], list)
+        assert isinstance(data["sales_today_revenue"]["data"], dict)
 
         # sales_draft_orders should fail with the mocked error message
         assert data["sales_draft_orders"]["success"] is False
@@ -73,11 +73,12 @@ class TestDashboardViews:
         response = client.get(url)
         assert response.status_code == status.HTTP_200_OK
         assert response.data["success"] is True
-        assert isinstance(response.data["data"], list)
+        assert isinstance(response.data["data"], dict)
+        assert "points" in response.data["data"]
 
     def test_widget_data_detail_permission_denied(self, authenticated_client_with_perms):
         client, user = authenticated_client_with_perms
-        url = reverse("widget-data-detail", kwargs={"widget_code": "finance_cashflow_summary"})
+        url = reverse("widget-data-detail", kwargs={"widget_code": "finance_unpaid_purchase_invoices"})
 
         response = client.get(url)
         # Check standard behavior of PermissionChecker.check_permission: raises PermissionException
@@ -116,16 +117,78 @@ class TestDashboardViews:
 
         # 1. Batch API test
         batch_url = reverse("widget-batch-data")
-        response = client.get(batch_url, {"widgets": "sales_today_revenue"})
+        response = client.get(batch_url, {"widgets": "sales_draft_orders"})
         assert response.status_code == status.HTTP_200_OK
         data = response.data
-        assert "sales_today_revenue" in data
-        assert "total_count" in data["sales_today_revenue"]
-        assert isinstance(data["sales_today_revenue"]["total_count"], int)
+        assert "sales_draft_orders" in data
+        assert "total_count" in data["sales_draft_orders"]
+        assert isinstance(data["sales_draft_orders"]["total_count"], int)
 
         # 2. Detail API test
-        detail_url = reverse("widget-data-detail", kwargs={"widget_code": "sales_today_revenue"})
+        detail_url = reverse("widget-data-detail", kwargs={"widget_code": "sales_draft_orders"})
         response = client.get(detail_url)
         assert response.status_code == status.HTTP_200_OK
         assert "total_count" in response.data
         assert isinstance(response.data["total_count"], int)
+
+    def test_widget_batch_data_cashflow_overview(self, api_client, db):
+        role = RoleFactory(name="Accountant")
+        user = UserFactory(username="accountant", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(code="finance.view_cash_flow", defaults={"name": "Xem dòng tiền"})
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-batch-data")
+        response = api_client.get(url, {"widgets": "finance_cashflow_overview"})
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.data
+        assert data["finance_cashflow_overview"]["success"] is True
+        payload = data["finance_cashflow_overview"]["data"]
+        assert "summary" in payload
+        assert "weeks" in payload
+        assert payload["summary"]["period_label"] == "4 tuần gần nhất"
+
+    def test_widget_batch_data_manufacturing_pending_wo_approval(self, api_client, db):
+        role = RoleFactory(name="Planner")
+        user = UserFactory(username="planner", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(
+            code="manufacturing.work_order_approve", defaults={"name": "Duyệt lệnh SX"}
+        )
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-batch-data")
+        response = api_client.get(url, {"widgets": "manufacturing_pending_wo_approval"})
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.data
+        assert data["manufacturing_pending_wo_approval"]["success"] is True
+        payload = data["manufacturing_pending_wo_approval"]["data"]
+        assert "total_count" in payload
+        assert "top_items" in payload
+        assert isinstance(payload["top_items"], list)
+
+    def test_widget_batch_data_dict_total_count(self, authenticated_client_with_perms):
+        client, user = authenticated_client_with_perms
+        url = reverse("widget-batch-data")
+        response = client.get(url, {"widgets": "sales_draft_orders"})
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert data["sales_draft_orders"]["success"] is True
+        assert "total_count" in data["sales_draft_orders"]
+        assert isinstance(data["sales_draft_orders"]["total_count"], int)
+
+    def test_widget_data_detail_with_purpose_filter(self, api_client, db):
+        role = RoleFactory(name="Inventory Manager")
+        user = UserFactory(username="inv_mgr", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(code="inventory.stock_transfer", defaults={"name": "Chuyển kho"})
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-data-detail", kwargs={"widget_code": "inventory_pending_entries"})
+        response = api_client.get(url, {"purpose": "transfer"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["success"] is True
+        assert "data" in response.data
+        assert "total_count" in response.data
