@@ -180,28 +180,69 @@ def sales_order_deliver_goods(*, user: User, order_id: str, source_warehouse_id:
 
 def sales_order_update_status(order: SalesOrder) -> None:
     """
-    Tự động tính toán lại trạng thái của SalesOrder dựa trên:
-    - Trạng thái thanh toán của Hóa đơn liên kết
-    - Trạng thái duyệt của Phiếu xuất kho liên kết
+    Tự động tính toán lại trạng thái của SalesOrder và tiến độ giao hàng/thanh toán.
     """
     if order.status in [SalesOrder.Status.DRAFT, SalesOrder.Status.CANCELLED]:
         return
 
-    # 1. Kiểm tra trạng thái thanh toán
+    from django.db.models import Sum
+
+    from apps.inventory.models import StockEntryDetail
+
+    # 1. Tính toán tiến độ giao hàng cho từng dòng và lưu lại
+    lines = order.lines.all()
+    lines_count = lines.count()
+
+    # DB-level group by item to avoid loop N+1 issues and memory overhead
+    shipped_qtys = {}
+    rows = (
+        StockEntryDetail.objects.filter(parent__sales_order=order, parent__status="posted")
+        .values("item_id")
+        .annotate(total_qty=Sum("quantity"))
+    )
+    for row in rows:
+        shipped_qtys[row["item_id"]] = row["total_qty"]
+
+    updated_lines = []
+    for line in lines:
+        total_shipped = shipped_qtys.get(line.item_id, Decimal("0.00"))
+
+        if line.quantity > 0:
+            line.receipt_fulfillment_rate = ((total_shipped / line.quantity) * Decimal("100.00")).quantize(
+                Decimal("0.01")
+            )
+        else:
+            line.receipt_fulfillment_rate = Decimal("100.00")
+        updated_lines.append(line)
+
+    SalesOrderLine.objects.bulk_update(updated_lines, ["receipt_fulfillment_rate"])
+
+    # 2. Tính toán tiến độ giao hàng tổng của SO (trung bình cộng tiến độ các dòng)
+    if lines_count > 0:
+        total_rates_sum = sum(line.receipt_fulfillment_rate for line in lines)
+        order.receipt_fulfillment_rate = (total_rates_sum / lines_count).quantize(Decimal("0.01"))
+    else:
+        order.receipt_fulfillment_rate = Decimal("100.00")
+
+    # 3. Tính toán tiến độ thanh toán của SO dựa trên toàn bộ hóa đơn hoạt động
     invoices = order.invoices.exclude(status="cancelled")
     if invoices.exists():
-        from django.db.models import Sum
-
         totals = invoices.aggregate(paid=Sum("paid_amount"))
-        total_paid = totals["paid"] or Decimal("0.00")
-        is_paid = total_paid >= order.total_amount and order.total_amount > 0
+        paid_amount = totals["paid"] or Decimal("0.00")
     else:
-        is_paid = order.advance_paid_amount >= order.total_amount and order.total_amount > 0
+        paid_amount = order.advance_paid_amount
 
-    # 2. Kiểm tra trạng thái xuất kho
-    is_shipped = order.stock_entries.filter(status="posted").exists()
+    if order.total_amount > 0:
+        order.payment_fulfillment_rate = ((paid_amount / order.total_amount) * Decimal("100.00")).quantize(
+            Decimal("0.01")
+        )
+    else:
+        order.payment_fulfillment_rate = Decimal("100.00")
 
-    # 3. Xác định trạng thái mới
+    # 4. Xác định trạng thái mới dựa trên tiến độ giao hàng và thanh toán
+    is_shipped = order.receipt_fulfillment_rate >= Decimal("100.00")
+    is_paid = order.payment_fulfillment_rate >= Decimal("100.00")
+
     if is_shipped and is_paid:
         order.status = SalesOrder.Status.COMPLETED
     elif is_paid and not is_shipped:

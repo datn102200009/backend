@@ -17,14 +17,12 @@ from apps.dashboard.selectors import (
     get_hrm_pending_leave_requests,
     get_hrm_today_attendance_rate,
     get_inventory_pending_entries,
-    get_inventory_pending_entry_count,
     get_manufacturing_active_wos,
     get_manufacturing_pending_completion,
     get_manufacturing_pending_declarations,
     get_manufacturing_pending_wo_approval,
     get_purchasing_active_po_count,
     get_purchasing_draft_orders,
-    get_purchasing_pending_delivery,
     get_purchasing_pending_logistic_fees,
     get_sales_draft_orders,
     get_sales_pending_credit_bypass,
@@ -114,38 +112,12 @@ class TestDashboardSelectors:
         assert "items_summary" in res["top_items"][0]
         assert isinstance(res["top_items"][0]["total_amount"], str)
 
-    def test_purchasing_pending_delivery(self):
-        supplier = SupplierFactory()
-        PurchaseOrder.objects.create(
-            vendor=supplier,
-            total_amount=Decimal("150.00"),
-            status=PurchaseOrder.Status.PENDING,
-            receipt_fulfillment_rate=Decimal("85.00"),
-            payment_fulfillment_rate=Decimal("60.00"),
-        )
-
-        res = get_purchasing_pending_delivery()
-        assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
-        assert res["top_items"][0]["total_amount"] == "150.00"
-        assert "items_summary" in res["top_items"][0]
-        assert isinstance(res["top_items"][0]["total_amount"], str)
-        assert res["top_items"][0]["receipt_fulfillment_rate"] == "85.00"
-        assert res["top_items"][0]["payment_fulfillment_rate"] == "60.00"
-
     def test_purchasing_pending_logistic_fees(self):
         Shipment.objects.create(shipment_num="SHIP-02", name="Lô hàng 2", status=Shipment.Status.INSPECTING)
         res = get_purchasing_pending_logistic_fees()
         assert res["total_count"] == 1
         assert len(res["top_items"]) == 1
         assert res["top_items"][0]["shipment_num"] == "SHIP-02"
-
-    def test_inventory_pending_entry_count(self):
-        StockEntry.objects.create(name="SE-DRAFT", purpose="receipt", posting_date=timezone.now(), status="draft")
-        res = get_inventory_pending_entry_count()
-        assert res["pending_entry_count"] == 1
-        assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
 
     def test_inventory_pending_entries(self):
         uom = UOMFactory()

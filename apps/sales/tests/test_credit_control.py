@@ -203,7 +203,16 @@ class TestCreditControl:
 
         # Đơn hàng đang ở trạng thái PENDING_CREDIT_APPROVAL
         customer = CustomerFactory(is_credit_locked=True)
-        order = SalesOrder.objects.create(customer=customer, status=SalesOrder.Status.PENDING_CREDIT_APPROVAL)
+        order = SalesOrder.objects.create(
+            customer=customer,
+            status=SalesOrder.Status.PENDING_CREDIT_APPROVAL,
+            total_amount=Decimal("100.00"),
+        )
+        from apps.sales.tests.factories import SalesOrderLineFactory
+
+        SalesOrderLineFactory(
+            order=order, quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00")
+        )
 
         # Test sales user không có quyền bypass
         with pytest.raises(PermissionException):

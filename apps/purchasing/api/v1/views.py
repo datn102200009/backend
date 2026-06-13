@@ -4,13 +4,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.xlib.permissions import PermissionChecker
-from apps.purchasing.selectors import (
-    get_supplier_ap_aging,
-    purchase_invoice_detail,
-    purchase_invoice_list,
-    purchase_order_detail,
-    purchase_order_list,
-)
+from apps.finance.api.v1.serializers import PurchaseInvoiceSerializer
+from apps.purchasing.selectors import get_supplier_ap_aging, purchase_order_detail, purchase_order_list
 from apps.purchasing.services import (
     purchase_order_approve,
     purchase_order_cancel,
@@ -26,7 +21,6 @@ from apps.purchasing.services import (
 from .serializers import (
     APAgingSerializer,
     LandedCostAllocationInputSerializer,
-    PurchaseInvoiceSerializer,
     PurchaseOrderCancelInputSerializer,
     PurchaseOrderInputSerializer,
     PurchaseOrderReceiveInputSerializer,
@@ -126,47 +120,6 @@ class PurchaseOrderCancelAPIView(APIView):
             keep_goods=serializer.validated_data.get("keep_goods", False),
         )
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_200_OK)
-
-
-class PurchaseInvoiceListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "purchasing.view_invoice")
-        invoices = purchase_invoice_list()
-
-        status_filter = request.query_params.get("status")
-        if status_filter:
-            if "," in status_filter:
-                status_list = [s.strip() for s in status_filter.split(",")]
-                invoices = invoices.filter(status__in=status_list)
-            else:
-                invoices = invoices.filter(status=status_filter)
-
-        from rest_framework.pagination import PageNumberPagination
-
-        paginator = PageNumberPagination()
-        limit_param = request.query_params.get("limit")
-        paginator.page_size = int(limit_param) if limit_param else 10
-        page = paginator.paginate_queryset(invoices, request, view=self)
-        serializer = PurchaseInvoiceSerializer(page, many=True)
-        return Response(
-            {
-                "count": paginator.page.paginator.count,
-                "total_pages": paginator.page.paginator.num_pages,
-                "current_page": paginator.page.number,
-                "results": serializer.data,
-            }
-        )
-
-
-class PurchaseInvoiceDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, pk, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "purchasing.view_invoice")
-        invoice = purchase_invoice_detail(invoice_id=str(pk))
-        return Response(PurchaseInvoiceSerializer(invoice).data)
 
 
 class ShipmentListCreateAPIView(APIView):

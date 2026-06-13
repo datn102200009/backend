@@ -8,7 +8,12 @@ from .views import (
     DepreciationRunAPIView,
     FixedAssetDetailAPIView,
     FixedAssetListCreateAPIView,
+    PurchaseInvoiceDetailAPIView,
+    PurchaseInvoiceListAPIView,
     PurchaseInvoicePayAPIView,
+    SalesInvoiceCollectAPIView,
+    SalesInvoiceDetailAPIView,
+    SalesInvoiceListAPIView,
 )
 
 urlpatterns = [
@@ -19,5 +24,12 @@ urlpatterns = [
     path("fixed-assets/depreciation/", DepreciationRunAPIView.as_view(), name="depreciation-run"),
     path("fixed-assets/depreciation-logs/", DepreciationLogListAPIView.as_view(), name="depreciation-log-list"),
     path("fixed-assets/<uuid:pk>/", FixedAssetDetailAPIView.as_view(), name="fixed-asset-detail"),
+    # Purchase Invoices
+    path("invoices/purchase/", PurchaseInvoiceListAPIView.as_view(), name="purchase-invoice-list"),
+    path("invoices/purchase/<uuid:pk>/", PurchaseInvoiceDetailAPIView.as_view(), name="purchase-invoice-detail"),
     path("invoices/purchase/<uuid:pk>/pay/", PurchaseInvoicePayAPIView.as_view(), name="purchase-invoice-pay"),
+    # Sales Invoices
+    path("invoices/sales/", SalesInvoiceListAPIView.as_view(), name="sales-invoice-list"),
+    path("invoices/sales/<uuid:pk>/", SalesInvoiceDetailAPIView.as_view(), name="sales-invoice-detail"),
+    path("invoices/sales/<uuid:pk>/collect/", SalesInvoiceCollectAPIView.as_view(), name="sales-invoice-collect"),
 ]

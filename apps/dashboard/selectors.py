@@ -162,6 +162,8 @@ def get_sales_pending_fulfillment():
             "customer_name": o.customer.customer_name,
             "total_amount": str(o.total_amount),
             "items_summary": _build_items_summary(o),
+            "receipt_fulfillment_rate": str(o.receipt_fulfillment_rate),
+            "payment_fulfillment_rate": str(o.payment_fulfillment_rate),
             "created_at": o.created_at.isoformat(),
         }
         for o in orders_qs[:5]
@@ -192,6 +194,8 @@ def get_purchasing_active_po_count():
             "total_amount": str(o.total_amount),
             "items_summary": _build_items_summary(o),
             "expected_delivery_date": o.expected_delivery_date.isoformat() if o.expected_delivery_date else None,
+            "receipt_fulfillment_rate": str(o.receipt_fulfillment_rate),
+            "payment_fulfillment_rate": str(o.payment_fulfillment_rate),
             "created_at": o.created_at.isoformat(),
         }
         for o in top_pos
@@ -230,48 +234,33 @@ def get_purchasing_draft_orders():
     }
 
 
-# 7. purchasing_pending_delivery
-def get_purchasing_pending_delivery():
-    orders_qs = (
-        PurchaseOrder.objects.filter(
-            status__in=[
-                PurchaseOrder.Status.PENDING,
-                PurchaseOrder.Status.PAID_UNSHIPPED,
-            ]
-        )
-        .select_related("vendor")
-        .prefetch_related("lines__item")
-        .order_by("-created_at")
-    )
-    total_count = orders_qs.count()
-    results = [
-        {
-            "id": str(o.id),
-            "supplier_name": o.vendor.supplier_name,
-            "total_amount": str(o.total_amount),
-            "items_summary": _build_items_summary(o),
-            "expected_delivery_date": o.expected_delivery_date.isoformat() if o.expected_delivery_date else None,
-            "receipt_fulfillment_rate": str(o.receipt_fulfillment_rate),
-            "payment_fulfillment_rate": str(o.payment_fulfillment_rate),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
-    return {
-        "total_count": total_count,
-        "top_items": results,
-    }
-
-
-# 9. purchasing_pending_logistic_fees
+# 9. purchasing_pending_logistic_fees (Lô Hàng Chờ Duyệt)
 def get_purchasing_pending_logistic_fees():
-    shipments_qs = Shipment.objects.filter(status=Shipment.Status.INSPECTING).order_by("-created_at")
+    from django.db.models import Case, IntegerField, Value, When
+
+    # Lấy cả DRAFT và INSPECTING, ưu tiên INSPECTING lên trước
+    shipments_qs = (
+        Shipment.objects.filter(status__in=[Shipment.Status.DRAFT, Shipment.Status.INSPECTING])
+        .annotate(
+            status_priority=Case(
+                When(status=Shipment.Status.INSPECTING, then=Value(0)),  # ưu tiên 1
+                When(status=Shipment.Status.DRAFT, then=Value(1)),  # ưu tiên 2
+                default=Value(2),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at")
+    )
     total_count = shipments_qs.count()
     results = [
         {
             "id": str(s.id),
             "shipment_num": s.shipment_num,
             "name": s.name,
+            "status": s.status,
+            "purchase_order_id": str(s.purchase_order_id) if s.purchase_order_id else None,
+            "purchase_order_name": str(s.purchase_order_id)[:8].upper() if s.purchase_order_id else None,
+            "remarks": s.remarks,
             "created_at": s.created_at.isoformat(),
         }
         for s in shipments_qs[:5]
@@ -279,46 +268,6 @@ def get_purchasing_pending_logistic_fees():
     return {
         "total_count": total_count,
         "top_items": results,
-    }
-
-
-# 11. inventory_pending_entry_count (Phiếu nhập kho chờ duyệt)
-def get_inventory_pending_entry_count():
-    from django.db.models import Prefetch
-
-    from apps.inventory.models import StockEntryDetail
-
-    entries_qs = (
-        StockEntry.objects.filter(status="draft", purpose="receipt", purchase_order__isnull=True)
-        .select_related("purchase_order", "sales_order", "work_order", "shipment")
-        .prefetch_related(
-            Prefetch(
-                "details", queryset=StockEntryDetail.objects.select_related("source_warehouse", "target_warehouse")
-            )
-        )
-        .order_by("-created_at")
-    )
-    total_count = entries_qs.count()
-
-    top_items = []
-    for e in entries_qs[:5]:
-        route_desc = _build_route_desc(e)
-        top_items.append(
-            {
-                "id": str(e.id),
-                "name": e.name,
-                "purpose": e.purpose,
-                "remarks": e.remarks,
-                "route_desc": route_desc,
-                "item_count": e.details.count(),
-                "posting_date": e.posting_date.isoformat(),
-                "created_at": e.created_at.isoformat(),
-            }
-        )
-    return {
-        "total_count": total_count,
-        "top_items": top_items,
-        "pending_entry_count": total_count,
     }
 
 
@@ -1117,9 +1066,7 @@ SELECTORS_MAP = {
     "sales_pending_fulfillment": get_sales_pending_fulfillment,
     "purchasing_active_po_count": get_purchasing_active_po_count,
     "purchasing_draft_orders": get_purchasing_draft_orders,
-    "purchasing_pending_delivery": get_purchasing_pending_delivery,
     "purchasing_pending_logistic_fees": get_purchasing_pending_logistic_fees,
-    "inventory_pending_entry_count": get_inventory_pending_entry_count,
     "inventory_low_stock": get_warehouse_low_stock_alerts,
     "inventory_pending_entries": get_inventory_pending_entries,
     "finance_cashflow_overview": get_finance_cashflow_overview,

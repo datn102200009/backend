@@ -14,27 +14,34 @@ from apps.finance.selectors import (
     depreciation_log_list,
     fixed_asset_detail,
     fixed_asset_list,
+    purchase_invoice_detail,
+    purchase_invoice_list,
+    sales_invoice_detail,
+    sales_invoice_list,
 )
 from apps.finance.services import (
     cash_flow_approve,
     cash_flow_create,
+    collect_sales_invoice,
     fixed_asset_create,
     fixed_asset_delete,
     fixed_asset_update,
     pay_purchase_invoice,
     run_fixed_asset_depreciation,
 )
-from apps.purchasing.api.v1.serializers import PayInvoiceInputSerializer, PurchaseInvoiceSerializer
-from apps.purchasing.selectors import purchase_invoice_detail
 
 from .serializers import (
     CashFlowInputSerializer,
     CashFlowTransactionSerializer,
+    CollectInvoiceInputSerializer,
     FixedAssetCreateInputSerializer,
     FixedAssetDepreciationLogSerializer,
     FixedAssetSerializer,
     FixedAssetUpdateInputSerializer,
+    PayInvoiceInputSerializer,
+    PurchaseInvoiceSerializer,
     RunDepreciationInputSerializer,
+    SalesInvoiceSerializer,
 )
 
 
@@ -252,3 +259,104 @@ class CashFlowApproveAPIView(APIView):
         PermissionChecker.check_permission(request.user, "finance.approve_cash_flow")
         tx = cash_flow_approve(user=request.user, tx_id=str(pk))
         return Response(CashFlowTransactionSerializer(tx).data, status=status.HTTP_200_OK)
+
+
+class PurchaseInvoiceListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_invoice")
+        invoices = purchase_invoice_list()
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            if "," in status_filter:
+                status_list = [s.strip() for s in status_filter.split(",")]
+                invoices = invoices.filter(status__in=status_list)
+            else:
+                invoices = invoices.filter(status=status_filter)
+
+        from rest_framework.pagination import PageNumberPagination
+
+        paginator = PageNumberPagination()
+        limit_param = request.query_params.get("limit")
+        paginator.page_size = int(limit_param) if limit_param else 10
+        page = paginator.paginate_queryset(invoices, request, view=self)
+        serializer = PurchaseInvoiceSerializer(page, many=True)
+        return Response(
+            {
+                "count": paginator.page.paginator.count,
+                "total_pages": paginator.page.paginator.num_pages,
+                "current_page": paginator.page.number,
+                "results": serializer.data,
+            }
+        )
+
+
+class PurchaseInvoiceDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_invoice")
+        invoice = purchase_invoice_detail(invoice_id=str(pk))
+        return Response(PurchaseInvoiceSerializer(invoice).data)
+
+
+class SalesInvoiceListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_invoice")
+        invoices = sales_invoice_list()
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            if "," in status_filter:
+                status_list = [s.strip() for s in status_filter.split(",")]
+                invoices = invoices.filter(status__in=status_list)
+            else:
+                invoices = invoices.filter(status=status_filter)
+
+        from rest_framework.pagination import PageNumberPagination
+
+        paginator = PageNumberPagination()
+        limit_param = request.query_params.get("limit")
+        paginator.page_size = int(limit_param) if limit_param else 10
+        page = paginator.paginate_queryset(invoices, request, view=self)
+        serializer = SalesInvoiceSerializer(page, many=True)
+        return Response(
+            {
+                "count": paginator.page.paginator.count,
+                "total_pages": paginator.page.paginator.num_pages,
+                "current_page": paginator.page.number,
+                "results": serializer.data,
+            }
+        )
+
+
+class SalesInvoiceDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.view_invoice")
+        invoice = sales_invoice_detail(invoice_id=str(pk))
+        return Response(SalesInvoiceSerializer(invoice).data)
+
+
+class SalesInvoiceCollectAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.collect_invoice")
+        serializer = CollectInvoiceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        collect_sales_invoice(
+            user=request.user,
+            invoice_id=str(pk),
+            amount=serializer.validated_data["amount"],
+            payment_method=serializer.validated_data["payment_method"],
+        )
+
+        invoice = sales_invoice_detail(invoice_id=str(pk))
+        return Response(SalesInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)

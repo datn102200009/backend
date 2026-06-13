@@ -22,6 +22,12 @@ class SalesOrder(BaseModel):
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     advance_paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã ứng trước")
+    receipt_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ giao hàng tổng (%)"
+    )
+    payment_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ thanh toán (%)"
+    )
 
     class Meta:
         db_table = "sales_order"
@@ -38,6 +44,9 @@ class SalesOrderLine(BaseModel):
     quantity = models.DecimalField(max_digits=15, decimal_places=2, verbose_name="Số lượng")
     unit_price = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đơn giá")
     line_total = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thành tiền")
+    receipt_fulfillment_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ giao hàng (%)"
+    )
 
     class Meta:
         db_table = "sales_order_line"

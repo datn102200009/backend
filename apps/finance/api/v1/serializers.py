@@ -3,6 +3,8 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
+from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine
+from apps.sales.models import SalesInvoice, SalesInvoiceLine
 
 
 class CashFlowTransactionSerializer(serializers.ModelSerializer):
@@ -155,3 +157,124 @@ class FixedAssetUpdateInputSerializer(serializers.Serializer):
 
 class RunDepreciationInputSerializer(serializers.Serializer):
     period = serializers.CharField(max_length=7)  # Format: YYYY-MM
+
+
+# --- INVOICE SERIALIZERS ---
+
+
+class SalesInvoiceLineSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source="item.item_name", read_only=True)
+    item_code = serializers.CharField(source="item.item_code", read_only=True)
+
+    class Meta:
+        model = SalesInvoiceLine
+        fields = ["id", "item", "item_name", "item_code", "quantity", "unit_price", "vat_tax", "line_total"]
+        read_only_fields = ["id", "line_total"]
+
+
+class SalesInvoiceSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source="customer.customer_name", read_only=True)
+    lines = SalesInvoiceLineSerializer(many=True, read_only=True)
+    stock_entry_name = serializers.CharField(source="stock_entry.name", read_only=True)
+
+    class Meta:
+        model = SalesInvoice
+        fields = [
+            "id",
+            "order",
+            "stock_entry",
+            "stock_entry_name",
+            "customer",
+            "customer_name",
+            "status",
+            "total_amount",
+            "paid_amount",
+            "created_at",
+            "updated_at",
+            "lines",
+        ]
+        read_only_fields = [
+            "id",
+            "order",
+            "stock_entry",
+            "customer",
+            "status",
+            "total_amount",
+            "paid_amount",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source="item.item_name", read_only=True)
+    item_code = serializers.CharField(source="item.item_code", read_only=True)
+
+    class Meta:
+        model = PurchaseInvoiceLine
+        fields = [
+            "id",
+            "item",
+            "item_name",
+            "item_code",
+            "quantity",
+            "unit_price",
+            "import_tax",
+            "vat_tax",
+            "line_total",
+        ]
+        read_only_fields = ["id", "line_total"]
+
+
+class PurchaseInvoiceSerializer(serializers.ModelSerializer):
+    vendor_name = serializers.CharField(source="vendor.supplier_name", read_only=True)
+    lines = PurchaseInvoiceLineSerializer(many=True, read_only=True)
+    stock_entry_name = serializers.CharField(source="stock_entry.name", read_only=True)
+
+    class Meta:
+        model = PurchaseInvoice
+        fields = [
+            "id",
+            "order",
+            "stock_entry",
+            "stock_entry_name",
+            "vendor",
+            "vendor_name",
+            "status",
+            "total_amount",
+            "paid_amount",
+            "due_date",
+            "created_at",
+            "updated_at",
+            "lines",
+        ]
+        read_only_fields = [
+            "id",
+            "order",
+            "stock_entry",
+            "vendor",
+            "status",
+            "total_amount",
+            "paid_amount",
+            "due_date",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class PayInvoiceInputSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản ngân hàng")],
+        default="bank_transfer",
+    )
+
+
+class CollectInvoiceInputSerializer(serializers.Serializer):
+    """Input cho AR collection (Sales Invoice)."""
+
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản ngân hàng")],
+        default="bank_transfer",
+    )

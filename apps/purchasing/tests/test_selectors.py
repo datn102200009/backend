@@ -1,7 +1,8 @@
 import pytest
 
+from apps.finance.selectors import purchase_invoice_list
 from apps.inventory.tests.factories import StockEntryFactory
-from apps.purchasing.selectors import purchase_invoice_list, purchase_order_detail, purchase_order_list
+from apps.purchasing.selectors import purchase_order_detail, purchase_order_list
 from apps.purchasing.tests.factories import PurchaseInvoiceFactory, PurchaseOrderFactory, PurchaseOrderLineFactory
 
 pytestmark = pytest.mark.django_db

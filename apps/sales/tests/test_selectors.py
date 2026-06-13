@@ -1,6 +1,7 @@
 import pytest
 
-from apps.sales.selectors import sales_invoice_list, sales_order_list
+from apps.finance.selectors import sales_invoice_list
+from apps.sales.selectors import sales_order_list
 from apps.sales.tests.factories import SalesInvoiceFactory, SalesOrderFactory
 
 pytestmark = pytest.mark.django_db

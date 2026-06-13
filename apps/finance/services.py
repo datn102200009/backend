@@ -669,3 +669,38 @@ def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, paymen
     )
 
     return tx
+
+
+@transaction.atomic
+def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
+    """
+    Thu tiền hóa đơn bán hàng (Sales Invoice - AR collection).
+    Tạo CashFlow transaction pending_approval, tương tự pay_purchase_invoice.
+    """
+    PermissionChecker.check_permission(user, "finance.collect_invoice")
+
+    from apps.sales.models import SalesInvoice
+
+    invoice = SalesInvoice.objects.select_for_update().filter(id=invoice_id).first()
+    if not invoice:
+        raise NotFoundException("Hóa đơn bán hàng không tồn tại.")
+
+    if invoice.status in [SalesInvoice.Status.PAID, SalesInvoice.Status.CANCELLED]:
+        raise ValidationException("Hóa đơn bán không hợp lệ hoặc đã hoàn tất thanh toán.")
+
+    from django.utils import timezone
+
+    payment_date_str = timezone.now().date().isoformat()
+
+    tx = cash_flow_create(
+        user=user,
+        payment_type="receive",
+        amount=amount,
+        payment_date=payment_date_str,
+        category="Thu tiền hóa đơn bán hàng",
+        payment_method=payment_method,
+        sales_invoice_id=str(invoice.id),
+        remarks=f"Thu tiền HĐ bán {str(invoice.id)[:8].upper()} (Khách hàng: {invoice.customer.customer_name}).",
+    )
+
+    return tx

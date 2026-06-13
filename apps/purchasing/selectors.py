@@ -37,20 +37,6 @@ def purchase_order_detail(*, order_id: str) -> PurchaseOrder:
     )
 
 
-def purchase_invoice_list() -> QuerySet:
-    """
-    Returns a queryset of PurchaseInvoice, optimized with select_related.
-    """
-    return PurchaseInvoice.objects.select_related("vendor", "order").order_by("-created_at", "id")
-
-
-def purchase_invoice_detail(*, invoice_id: str) -> PurchaseInvoice:
-    """
-    Returns a single PurchaseInvoice instance, optimized with related lines.
-    """
-    return PurchaseInvoice.objects.select_related("vendor", "order").prefetch_related("lines__item").get(id=invoice_id)
-
-
 def get_supplier_ap_aging(*, supplier_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Tính tuổi nợ AP của các nhà cung cấp sử dụng gom nhóm ở mức Database.
