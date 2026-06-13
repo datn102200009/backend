@@ -702,8 +702,10 @@ paths:
 
   /purchasing/invoices/:
     get:
-      summary: List Purchase Invoices
-      description: Returns a list of purchase invoices.
+      summary: List Purchase Invoices (Paginated)
+      description: |
+        Trả về danh sách hóa đơn mua hàng dạng phân trang. Response LUÔN trả về object {count, total_pages, current_page, results}
+        kể cả khi client không truyền page/limit (mặc định page_size=10).
       tags:
         - Purchasing Invoices
       parameters:

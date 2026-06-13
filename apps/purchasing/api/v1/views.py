@@ -143,21 +143,21 @@ class PurchaseInvoiceListAPIView(APIView):
             else:
                 invoices = invoices.filter(status=status_filter)
 
-        page_param = request.query_params.get("page")
+        from rest_framework.pagination import PageNumberPagination
+
+        paginator = PageNumberPagination()
         limit_param = request.query_params.get("limit")
-
-        if page_param or limit_param:
-            from rest_framework.pagination import PageNumberPagination
-
-            paginator = PageNumberPagination()
-            paginator.page_size = int(limit_param) if limit_param else 10
-            page = paginator.paginate_queryset(invoices, request, view=self)
-            if page is not None:
-                serializer = PurchaseInvoiceSerializer(page, many=True)
-                return paginator.get_paginated_response(serializer.data)
-
-        serializer = PurchaseInvoiceSerializer(invoices, many=True)
-        return Response(serializer.data)
+        paginator.page_size = int(limit_param) if limit_param else 10
+        page = paginator.paginate_queryset(invoices, request, view=self)
+        serializer = PurchaseInvoiceSerializer(page, many=True)
+        return Response(
+            {
+                "count": paginator.page.paginator.count,
+                "total_pages": paginator.page.paginator.num_pages,
+                "current_page": paginator.page.number,
+                "results": serializer.data,
+            }
+        )
 
 
 class PurchaseInvoiceDetailAPIView(APIView):

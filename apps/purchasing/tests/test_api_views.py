@@ -30,6 +30,29 @@ class TestPurchaseAPIViews:
         response = client.get(url)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+    def test_get_invoices_list_paginated_by_default(self, authenticated_client):
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory
+
+        PurchaseInvoiceFactory.create_batch(3)
+        url = reverse("purchase-invoice-list")
+        response = authenticated_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert "count" in response.data
+        assert "results" in response.data
+        assert "total_pages" in response.data
+        assert response.data["count"] == 3
+        assert len(response.data["results"]) == 3
+
+    def test_get_invoices_list_pagination_limit(self, authenticated_client):
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory
+
+        PurchaseInvoiceFactory.create_batch(3)
+        url = reverse("purchase-invoice-list")
+        response = authenticated_client.get(f"{url}?limit=2")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 3
+        assert len(response.data["results"]) == 2
+
     def test_purchase_order_cancel_api_permission_check(self, authenticated_client, mock_permission_checker):
         order = PurchaseOrderFactory(status="pending")
         url = reverse("purchase-order-cancel", kwargs={"pk": order.id})

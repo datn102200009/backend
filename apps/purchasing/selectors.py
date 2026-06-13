@@ -10,14 +10,31 @@ def purchase_order_list() -> QuerySet:
     """
     Returns a queryset of PurchaseOrder, optimized with select_related.
     """
-    return PurchaseOrder.objects.select_related("vendor").order_by("-created_at", "id")
+    return (
+        PurchaseOrder.objects.select_related("vendor")
+        .prefetch_related("invoices", "stock_entries")
+        .order_by("-created_at", "id")
+    )
 
 
 def purchase_order_detail(*, order_id: str) -> PurchaseOrder:
     """
-    Returns a single PurchaseOrder instance, optimized with related lines.
+    Returns a single PurchaseOrder instance, optimized with related lines, invoices, stock_entries.
     """
-    return PurchaseOrder.objects.select_related("vendor").prefetch_related("lines__item").get(id=order_id)
+    return (
+        PurchaseOrder.objects.select_related("vendor")
+        .prefetch_related(
+            "lines__item",
+            "lines__item__stock_uom",
+            "invoices",
+            "stock_entries",
+            "stock_entries__details",
+            "stock_entries__details__item",
+            "stock_entries__details__target_warehouse",
+            "shipments__stock_entries",
+        )
+        .get(id=order_id)
+    )
 
 
 def purchase_invoice_list() -> QuerySet:
