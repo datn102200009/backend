@@ -323,7 +323,7 @@ class TestDashboardSelectors:
         emp = Employee.objects.create(employee_id="E-05", full_name="Employee 5", employment_status="active")
         Attendance.objects.create(employee=emp, date=date.today(), status="working")
         res = get_hrm_today_attendance_rate()
-        assert res["attendance_rate"] == 100.0
+        assert res["attendance_rate"] == Decimal("100.00")
         assert res["present_count"] == 1
         assert res["absent_count"] == 0
 
@@ -331,9 +331,15 @@ class TestDashboardSelectors:
         emp_absent = Employee.objects.create(employee_id="E-06", full_name="Employee 6", employment_status="active")
         Attendance.objects.create(employee=emp_absent, date=date.today(), status="paid_leave")
         res = get_hrm_today_attendance_rate()
-        assert res["attendance_rate"] == 50.0
+        assert res["attendance_rate"] == Decimal("50.00")
         assert res["present_count"] == 1
         assert res["absent_count"] == 1
+
+        # Test with 3 employees (1 working, 2 absent) -> 33.33%
+        emp_absent_2 = Employee.objects.create(employee_id="E-07", full_name="Employee 7", employment_status="active")
+        Attendance.objects.create(employee=emp_absent_2, date=date.today(), status="paid_leave")
+        res = get_hrm_today_attendance_rate()
+        assert res["attendance_rate"] == Decimal("33.33")
 
     def test_manufacturing_pending_wo_approval(self):
         item = ItemFactory()
@@ -663,6 +669,55 @@ class TestDashboardSelectors:
 
         # O(1) complexity: 1 count query + 1 query to fetch top 5 sales orders + 1 query for prefetched lines + 1 query for prefetched items
         assert len(ctx.captured_queries) <= 4
+
+    def test_unpaid_purchase_invoices_remaining_amount_is_decimal(self):
+        from apps.purchasing.models import PurchaseInvoice
+
+        supplier = SupplierFactory()
+        PurchaseInvoice.objects.create(
+            vendor=supplier,
+            status=PurchaseInvoice.Status.PARTIAL,
+            total_amount=Decimal("100000.50"),
+            paid_amount=Decimal("30000.25"),
+        )
+        res = get_finance_unpaid_purchase_invoices()
+        assert res["total_outstanding"] == "70000.25"
+        assert res["top_overdue"][0]["remaining_amount"] == "70000.25"
+
+    def test_unpaid_sales_invoices_remaining_amount_is_decimal(self):
+        from apps.sales.models import SalesInvoice
+
+        customer = CustomerFactory()
+        SalesInvoice.objects.create(
+            customer=customer,
+            status=SalesInvoice.Status.PARTIAL,
+            total_amount=Decimal("100000.50"),
+            paid_amount=Decimal("30000.25"),
+        )
+        res = get_finance_unpaid_sales_invoices()
+        assert res["total_outstanding"] == "70000.25"
+        assert res["top_overdue"][0]["remaining_amount"] == "70000.25"
+
+    def test_finance_cashflow_overview_decimal_format(self):
+        # Create transactions
+        CashFlowTransaction.objects.create(
+            name="TX-DEC-1",
+            payment_type="receive",
+            amount=Decimal("1500.50"),
+            payment_date=date.today(),
+            status="posted",
+        )
+        CashFlowTransaction.objects.create(
+            name="TX-DEC-2",
+            payment_type="pay",
+            amount=Decimal("800.25"),
+            payment_date=date.today(),
+            status="posted",
+        )
+        res = get_finance_cashflow_overview()
+        assert res["summary"]["receive_total"] == "1500.50"
+        assert res["summary"]["pay_total"] == "800.25"
+        assert res["summary"]["net_cashflow"] == "700.25"
 
 
 class TestFormatNum:

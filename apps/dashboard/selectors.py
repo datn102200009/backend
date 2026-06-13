@@ -604,33 +604,43 @@ def get_finance_cashflow_overview():
     today = timezone.localdate()
     start_date = today - timedelta(days=28)
 
-    # 1. Calculate summary for the last 28 days (posted transactions)
-    month_txs = CashFlowTransaction.objects.filter(
+    # 1. Summary - dùng aggregate với Sum để tránh load full queryset
+    month_txs_agg = CashFlowTransaction.objects.filter(
         payment_date__gte=start_date, payment_date__lte=today, status="posted"
+    ).aggregate(
+        receive_total=Sum(
+            "amount",
+            filter=Q(payment_type="receive"),
+            default=Decimal("0"),
+        ),
+        pay_total=Sum(
+            "amount",
+            filter=Q(payment_type="pay"),
+            default=Decimal("0"),
+        ),
+        tx_count=Count("id"),
     )
 
-    receive_total = Decimal("0")
-    pay_total = Decimal("0")
-    tx_count = month_txs.count()
+    receive_total = month_txs_agg["receive_total"] or Decimal("0")
+    pay_total = month_txs_agg["pay_total"] or Decimal("0")
+    tx_count = month_txs_agg["tx_count"]
 
-    for t in month_txs:
-        if t.payment_type == "receive":
-            receive_total += t.amount
-        elif t.payment_type == "pay":
-            pay_total += t.amount
+    # Đảm bảo Decimal, fix trường hợp DB trả về None hoặc float
+    receive_total = Decimal(str(receive_total)) if receive_total is not None else Decimal("0")
+    pay_total = Decimal(str(pay_total)) if pay_total is not None else Decimal("0")
 
     net_cashflow = receive_total - pay_total
 
     summary = {
-        "receive_total": str(receive_total),
-        "pay_total": str(pay_total),
-        "net_cashflow": str(net_cashflow),
+        "receive_total": f"{receive_total:.2f}",
+        "pay_total": f"{pay_total:.2f}",
+        "net_cashflow": f"{net_cashflow:.2f}",
         "tx_count": tx_count,
         "period_label": "4 tuần gần nhất",
     }
 
-    # 2. Calculate weekly data for the last 28 days
-    txs = (
+    # 2. Weekly data - aggregate với Sum trước, KHÔNG cast float trong Python
+    txs_agg = (
         CashFlowTransaction.objects.filter(payment_date__gte=start_date, status="posted")
         .annotate(week=TruncWeek("payment_date"))
         .values("week", "payment_type")
@@ -643,31 +653,49 @@ def get_finance_cashflow_overview():
         w_start = start_date + timedelta(weeks=i)
         w_start_monday = w_start - timedelta(days=w_start.weekday())
         label = f"Tuần {w_start_monday.strftime('%d/%m')}"
-        weeks_data[w_start_monday] = {"week_label": label, "receive": 0.0, "pay": 0.0}
+        weeks_data[w_start_monday] = {
+            "week_label": label,
+            "receive": Decimal("0"),
+            "pay": Decimal("0"),
+        }
 
-    for t in txs:
+    for t in txs_agg:
         w_date = t["week"]
         if w_date in weeks_data:
             ptype = t["payment_type"]
-            total = float(t["total"] or 0)
+            total = t["total"] or Decimal("0")
+            if not isinstance(total, Decimal):
+                total = Decimal(str(total))
             if ptype == "receive":
                 weeks_data[w_date]["receive"] = total
             elif ptype == "pay":
                 weeks_data[w_date]["pay"] = total
 
-    return {"summary": summary, "weeks": list(weeks_data.values())}
+    weeks_list = [
+        {
+            "week_label": w["week_label"],
+            "receive": float(w["receive"]),
+            "pay": float(w["pay"]),
+        }
+        for w in weeks_data.values()
+    ]
+
+    return {"summary": summary, "weeks": weeks_list}
 
 
 # 16. finance_unpaid_purchase_invoices
 def get_finance_unpaid_purchase_invoices():
-    from django.db.models import Case, ExpressionWrapper, Value, When, fields
+    from django.db.models import Case, DecimalField, ExpressionWrapper, Value, When, fields
 
     today = timezone.localdate()
     invoices_qs = (
         PurchaseInvoice.objects.filter(status__in=[PurchaseInvoice.Status.UNPAID, PurchaseInvoice.Status.PARTIAL])
         .select_related("vendor")
         .annotate(
-            remaining_amount=F("total_amount") - F("paid_amount"),
+            remaining_amount=ExpressionWrapper(
+                F("total_amount") - F("paid_amount"),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            ),
             overdue_duration=Case(
                 When(due_date__isnull=True, then=Value(timedelta(0))),
                 When(due_date__gte=today, then=Value(timedelta(0))),
@@ -736,7 +764,7 @@ def get_finance_unpaid_purchase_invoices():
 
 # 17. finance_unpaid_sales_invoices
 def get_finance_unpaid_sales_invoices():
-    from django.db.models import Case, ExpressionWrapper, Value, When, fields
+    from django.db.models import Case, DecimalField, ExpressionWrapper, Value, When, fields
     from django.db.models.functions import TruncDate
 
     today = timezone.localdate()
@@ -744,7 +772,10 @@ def get_finance_unpaid_sales_invoices():
         SalesInvoice.objects.filter(status__in=[SalesInvoice.Status.UNPAID, SalesInvoice.Status.PARTIAL])
         .select_related("customer")
         .annotate(
-            remaining_amount=F("total_amount") - F("paid_amount"),
+            remaining_amount=ExpressionWrapper(
+                F("total_amount") - F("paid_amount"),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            ),
             created_date=TruncDate("created_at"),
             overdue_duration=Case(
                 When(created_date__gte=today, then=Value(timedelta(0))),
@@ -986,13 +1017,16 @@ def get_hrm_today_attendance_rate():
     absent_count = total_active_employees - working_count
 
     if total_active_employees > 0:
-        attendance_rate = (working_count / total_active_employees) * 100
+        # Sử dụng Decimal để tránh floating point error
+        attendance_rate = (Decimal(working_count) / Decimal(total_active_employees)) * Decimal("100")
+        # Làm tròn 2 chữ số thập phân cho display
+        attendance_rate = attendance_rate.quantize(Decimal("0.01"))
     else:
-        attendance_rate = 100.0
+        attendance_rate = Decimal("100.00")
 
     return DashboardDict(
         {
-            "attendance_rate": float(attendance_rate),
+            "attendance_rate": attendance_rate,
             "present_count": working_count,
             "absent_count": absent_count,
             "total_active_employees": total_active_employees,
