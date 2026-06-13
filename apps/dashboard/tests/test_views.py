@@ -147,3 +147,48 @@ class TestDashboardViews:
         payload = data["finance_cashflow_overview"]["data"]
         assert "summary" in payload
         assert "weeks" in payload
+        assert payload["summary"]["period_label"] == "4 tuần gần nhất"
+
+    def test_widget_batch_data_manufacturing_pending_wo_approval(self, api_client, db):
+        role = RoleFactory(name="Planner")
+        user = UserFactory(username="planner", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(
+            code="manufacturing.work_order_approve", defaults={"name": "Duyệt lệnh SX"}
+        )
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-batch-data")
+        response = api_client.get(url, {"widgets": "manufacturing_pending_wo_approval"})
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.data
+        assert data["manufacturing_pending_wo_approval"]["success"] is True
+        payload = data["manufacturing_pending_wo_approval"]["data"]
+        assert "total_count" in payload
+        assert "top_items" in payload
+        assert isinstance(payload["top_items"], list)
+
+    def test_widget_batch_data_dict_total_count(self, authenticated_client_with_perms):
+        client, user = authenticated_client_with_perms
+        url = reverse("widget-batch-data")
+        response = client.get(url, {"widgets": "sales_draft_orders"})
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert data["sales_draft_orders"]["success"] is True
+        assert "total_count" in data["sales_draft_orders"]
+        assert isinstance(data["sales_draft_orders"]["total_count"], int)
+
+    def test_widget_data_detail_with_purpose_filter(self, api_client, db):
+        role = RoleFactory(name="Inventory Manager")
+        user = UserFactory(username="inv_mgr", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(code="inventory.stock_transfer", defaults={"name": "Chuyển kho"})
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-data-detail", kwargs={"widget_code": "inventory_pending_entries"})
+        response = api_client.get(url, {"purpose": "transfer"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["success"] is True
+        assert "data" in response.data
+        assert "total_count" in response.data
