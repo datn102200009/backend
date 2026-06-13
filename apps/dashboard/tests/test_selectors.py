@@ -8,8 +8,7 @@ from django.utils import timezone
 
 from apps.dashboard.selectors import (
     format_num,
-    get_finance_cashflow_chart,
-    get_finance_cashflow_summary,
+    get_finance_cashflow_overview,
     get_finance_depreciation_status,
     get_finance_unpaid_purchase_invoices,
     get_finance_unpaid_sales_invoices,
@@ -63,10 +62,11 @@ class TestDashboardSelectors:
         SalesOrder.objects.create(customer=customer, total_amount=Decimal("500.00"), status=SalesOrder.Status.DRAFT)
 
         res = get_sales_today_revenue()
-        assert len(res) == 2
-        assert res[0]["total_amount"] in ["150.00", "250.00"]
-        assert isinstance(res[0]["total_amount"], str)
-        assert "customer_name" in res[0]
+        assert "points" in res
+        assert len(res["points"]) == 7
+        today_str = timezone.localdate().isoformat()
+        today_point = [p for p in res["points"] if p["date"] == today_str][0]
+        assert float(today_point["revenue"]) == 400.0
 
     def test_sales_draft_orders(self):
         customer = CustomerFactory()
@@ -94,10 +94,8 @@ class TestDashboardSelectors:
         PurchaseOrder.objects.create(vendor=supplier, total_amount=Decimal("200.00"), status=PurchaseOrder.Status.DRAFT)
 
         res = get_purchasing_active_po_count()
-        assert len(res) == 1
-        assert res[0]["total_amount"] == "100.00"
-        assert isinstance(res[0]["total_amount"], str)
-        assert "supplier_name" in res[0]
+        assert res["active_po_count"] == 1
+        assert res["total_pending_amount"] == "100.00"
 
     def test_purchasing_draft_orders(self):
         supplier = SupplierFactory()
@@ -152,9 +150,7 @@ class TestDashboardSelectors:
     def test_inventory_pending_entry_count(self):
         StockEntry.objects.create(name="SE-DRAFT", purpose="receipt", posting_date=timezone.now(), status="draft")
         res = get_inventory_pending_entry_count()
-        assert len(res) == 1
-        assert res[0]["name"] == "SE-DRAFT"
-        assert "route_desc" in res[0]
+        assert res["pending_entry_count"] == 1
 
     def test_inventory_pending_entries(self):
         uom = UOMFactory()
@@ -176,31 +172,29 @@ class TestDashboardSelectors:
         assert res[0]["route_desc"] == "Kho Nguồn → Kho Đích"
         assert res[0]["item_count"] == 1
 
-    def test_finance_cashflow_chart(self):
+    def test_finance_cashflow_overview(self):
+        today = timezone.localdate()
         CashFlowTransaction.objects.create(
             name="TX-01",
             payment_type="receive",
-            amount=Decimal("1000.00"),
-            payment_date=timezone.now().date(),
+            amount=Decimal("1500.00"),
+            payment_date=today,
             status="posted",
         )
-        res = get_finance_cashflow_chart()
+        CashFlowTransaction.objects.create(
+            name="TX-02",
+            payment_type="pay",
+            amount=Decimal("500.00"),
+            payment_date=today,
+            status="posted",
+        )
+        res = get_finance_cashflow_overview()
+        assert "summary" in res
         assert "weeks" in res
+        assert res["summary"]["receive_total"] == "1500.00"
+        assert res["summary"]["pay_total"] == "500.00"
+        assert res["summary"]["net_cashflow"] == "1000.00"
         assert len(res["weeks"]) == 4
-
-    def test_finance_cashflow_summary(self):
-        today = timezone.now().date()
-        CashFlowTransaction.objects.create(
-            name="TX-02", payment_type="receive", amount=Decimal("1500.00"), payment_date=today, status="posted"
-        )
-        CashFlowTransaction.objects.create(
-            name="TX-03", payment_type="pay", amount=Decimal("500.00"), payment_date=today, status="posted"
-        )
-        res = get_finance_cashflow_summary()
-        assert len(res) == 2
-        assert res[0]["amount"] in ["1500.00", "500.00"]
-        assert isinstance(res[0]["amount"], str)
-        assert "payment_type" in res[0]
 
     def test_finance_unpaid_purchase_invoices(self):
         supplier = SupplierFactory()
@@ -208,9 +202,12 @@ class TestDashboardSelectors:
             vendor=supplier, status=PurchaseInvoice.Status.UNPAID, total_amount=Decimal("200.00")
         )
         res = get_finance_unpaid_purchase_invoices()
-        assert len(res) == 1
-        assert res[0]["remaining_amount"] == "200.00"
-        assert isinstance(res[0]["remaining_amount"], str)
+        assert "buckets" in res
+        assert res["total_outstanding"] == "200.00"
+        assert res["total_count"] == 1
+        assert len(res["buckets"]) == 4
+        fresh_bucket = [b for b in res["buckets"] if b["label"] == "0-30 ngày"][0]
+        assert float(fresh_bucket["value"]) == 200.00
 
     def test_finance_unpaid_sales_invoices(self):
         customer = CustomerFactory()
@@ -218,9 +215,12 @@ class TestDashboardSelectors:
             customer=customer, status=SalesInvoice.Status.UNPAID, total_amount=Decimal("300.00")
         )
         res = get_finance_unpaid_sales_invoices()
-        assert len(res) == 1
-        assert res[0]["remaining_amount"] == "300.00"
-        assert isinstance(res[0]["remaining_amount"], str)
+        assert "buckets" in res
+        assert res["total_outstanding"] == "300.00"
+        assert res["total_count"] == 1
+        assert len(res["buckets"]) == 4
+        fresh_bucket = [b for b in res["buckets"] if b["label"] == "0-30 ngày"][0]
+        assert float(fresh_bucket["value"]) == 300.00
 
     def test_finance_depreciation_status(self):
         asset = FixedAsset.objects.create(
@@ -235,10 +235,10 @@ class TestDashboardSelectors:
             asset=asset, period=timezone.now().strftime("%Y-%m"), depreciation_amount=Decimal("100.00")
         )
         res = get_finance_depreciation_status()
-        assert len(res) == 1
-        assert res[0]["asset_code"] == "M-01"
-        assert isinstance(res[0]["depreciation_amount"], str)
-        assert res[0]["status"] == "đã trích"
+        assert res["depreciated_assets_count"] == 1
+        assert res["pending_assets_count"] == 0
+        assert res["total_depreciation_amount"] == "100.00"
+        assert res["is_done"] is True
 
     def test_hrm_payroll_lifecycle_status(self):
         emp = Employee.objects.create(employee_id="E-01", full_name="Employee 1", employment_status="active")
@@ -252,10 +252,9 @@ class TestDashboardSelectors:
             status="calculated",
         )
         res = get_hrm_payroll_lifecycle_status()
-        assert len(res) == 1
-        assert res[0]["employee_name"] == "Employee 1"
-        assert res[0]["net_pay"] == "4500.00"
-        assert isinstance(res[0]["net_pay"], str)
+        assert res["status"] == "calculated"
+        assert res["calculated_slips_count"] == 1
+        assert res["net_pay_total"] == "4500.00"
 
     def test_hrm_pending_leave_requests(self):
         emp = Employee.objects.create(employee_id="E-02", full_name="Employee 2", employment_status="active")
@@ -282,23 +281,25 @@ class TestDashboardSelectors:
             status="active",
         )
         res = get_hrm_expiring_contracts()
-        assert len(res) == 1
-        assert res[0]["employee_name"] == "Employee 3"
+        assert res["expiring_count"] == 1
+        assert len(res["top_expiring"]) == 1
+        assert res["top_expiring"][0]["employee_name"] == "Employee 3"
 
     def test_hrm_today_attendance_rate(self):
         emp = Employee.objects.create(employee_id="E-05", full_name="Employee 5", employment_status="active")
-        # Attendance status is working, so they should not show up in absent list
         Attendance.objects.create(employee=emp, date=date.today(), status="working")
         res = get_hrm_today_attendance_rate()
-        assert len(res) == 0
+        assert res["attendance_rate"] == 100.0
+        assert res["present_count"] == 1
+        assert res["absent_count"] == 0
 
         # Now test with another employee who is absent
         emp_absent = Employee.objects.create(employee_id="E-06", full_name="Employee 6", employment_status="active")
         Attendance.objects.create(employee=emp_absent, date=date.today(), status="paid_leave")
         res = get_hrm_today_attendance_rate()
-        assert len(res) == 1
-        assert res[0]["employee_id"] == "E-06"
-        assert res[0]["status"] == "Nghỉ phép"
+        assert res["attendance_rate"] == 50.0
+        assert res["present_count"] == 1
+        assert res["absent_count"] == 1
 
     def test_manufacturing_pending_wo_approval(self):
         item = ItemFactory()
@@ -306,9 +307,7 @@ class TestDashboardSelectors:
             name="WO-01", production_item=item, quantity=10, planned_start_date=date.today(), status="pending_approval"
         )
         res = get_manufacturing_pending_wo_approval()
-        assert len(res) == 1
-        assert res[0]["name"] == "WO-01"
-        assert isinstance(res[0]["quantity"], str)
+        assert res["pending_count"] == 1
 
     def test_manufacturing_active_wos(self):
         item = ItemFactory()
@@ -360,9 +359,8 @@ class TestDashboardSelectors:
             target_warehouse=wh,
         )
         res = get_manufacturing_pending_completion()
-        assert len(res) == 1
-        assert res[0]["name"] == "WO-04"
-        assert res[0]["target_warehouse_name"] == "Kho Thành Phẩm"
+        assert res["pending_completion_count"] == 1
+        assert res["total_produced_qty"] == "10.00"
 
     # Specific tests for inventory_low_stock (DOS, Excluded Warehouses, UOM Fallback, O(1) query complexity)
     def test_inventory_low_stock_calculations(self):

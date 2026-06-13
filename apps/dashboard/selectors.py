@@ -3,7 +3,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Count, F, Q, Sum
-from django.db.models.functions import TruncWeek
+from django.db.models.functions import TruncDate, TruncWeek
 from django.utils import timezone
 
 from apps.finance.models import FixedAsset, FixedAssetDepreciationLog, SalarySlip
@@ -20,6 +20,12 @@ class DashboardList(list):
         self.total_count = total_count if total_count is not None else len(items)
 
 
+class DashboardDict(dict):
+    def __init__(self, data, total_count=None):
+        super().__init__(data)
+        self.total_count = total_count if total_count is not None else 0
+
+
 def format_num(val):
     if val is None:
         return "0"
@@ -29,26 +35,36 @@ def format_num(val):
     return f"{float(val):.1f}"
 
 
-# 1. sales_today_revenue (Đơn bán hàng hôm nay)
+# 1. sales_today_revenue (Doanh thu 7 ngày gần nhất)
 def get_sales_today_revenue():
     today = timezone.localdate()
-    orders_qs = (
-        SalesOrder.objects.filter(created_at__date=today)
+    start_date = today - timedelta(days=6)
+
+    orders = (
+        SalesOrder.objects.filter(
+            created_at__date__gte=start_date,
+            created_at__date__lte=today,
+        )
         .exclude(status__in=[SalesOrder.Status.DRAFT, SalesOrder.Status.CANCELLED])
-        .select_related("customer")
-        .order_by("-created_at")
+        .annotate(date=TruncDate("created_at"))
+        .values("date")
+        .annotate(total=Sum("total_amount"))
     )
-    total_count = orders_qs.count()
-    results = [
-        {
-            "id": str(o.id),
-            "customer_name": o.customer.customer_name,
-            "total_amount": str(o.total_amount),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+
+    revenue_map = {o["date"]: o["total"] for o in orders if o["date"] is not None}
+
+    points = []
+    for i in range(7):
+        current_date = start_date + timedelta(days=i)
+        revenue = revenue_map.get(current_date) or Decimal("0")
+        points.append(
+            {
+                "date": current_date.isoformat(),
+                "revenue": str(revenue),
+            }
+        )
+
+    return {"points": points}
 
 
 # 2. sales_draft_orders
@@ -114,28 +130,18 @@ def get_sales_pending_fulfillment():
 
 # 5. purchasing_active_po_count (Đơn mua hàng hoạt động)
 def get_purchasing_active_po_count():
-    orders_qs = (
-        PurchaseOrder.objects.filter(
-            status__in=[
-                PurchaseOrder.Status.PENDING,
-                PurchaseOrder.Status.PAID_UNSHIPPED,
-                PurchaseOrder.Status.SHIPPED_UNPAID,
-            ]
-        )
-        .select_related("vendor")
-        .order_by("-created_at")
+    orders_qs = PurchaseOrder.objects.filter(
+        status__in=[
+            PurchaseOrder.Status.PENDING,
+            PurchaseOrder.Status.PAID_UNSHIPPED,
+            PurchaseOrder.Status.SHIPPED_UNPAID,
+        ]
     )
     total_count = orders_qs.count()
-    results = [
-        {
-            "id": str(o.id),
-            "supplier_name": o.vendor.supplier_name,
-            "total_amount": str(o.total_amount),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+    total_pending_amount = orders_qs.aggregate(total=Sum("total_amount"))["total"] or Decimal("0")
+    return DashboardDict(
+        {"active_po_count": total_count, "total_pending_amount": f"{total_pending_amount:.2f}"}, total_count
+    )
 
 
 # 6. purchasing_draft_orders
@@ -242,45 +248,9 @@ def get_purchasing_blocked_invoices():
 
 # 11. inventory_pending_entry_count (Phiếu nhập kho chờ duyệt)
 def get_inventory_pending_entry_count():
-    from django.db.models import Prefetch
-
-    from apps.inventory.models import StockEntryDetail
-
-    entries_qs = (
-        StockEntry.objects.filter(status="draft", purpose="receipt")
-        .select_related("purchase_order", "sales_order", "work_order", "shipment")
-        .prefetch_related(
-            Prefetch(
-                "details", queryset=StockEntryDetail.objects.select_related("source_warehouse", "target_warehouse")
-            )
-        )
-        .order_by("-created_at")
-    )
+    entries_qs = StockEntry.objects.filter(status="draft", purpose="receipt")
     total_count = entries_qs.count()
-
-    results = []
-    for e in entries_qs[:5]:
-        route_desc = ""
-        if e.purchase_order:
-            route_desc = f"Từ PO: {e.purchase_order.id}"
-        elif e.shipment:
-            route_desc = f"Từ lô: {e.shipment.shipment_num}"
-        else:
-            route_desc = "Nhập kho"
-
-        results.append(
-            {
-                "id": str(e.id),
-                "name": e.name,
-                "purpose": e.purpose,
-                "remarks": e.remarks,
-                "route_desc": route_desc,
-                "item_count": e.details.count(),
-                "posting_date": e.posting_date.isoformat(),
-                "created_at": e.created_at.isoformat(),
-            }
-        )
-    return DashboardList(results, total_count)
+    return DashboardDict({"pending_entry_count": total_count}, total_count)
 
 
 # 12. inventory_low_stock (Optimized implementation from approved plan)
@@ -470,11 +440,39 @@ def get_inventory_pending_entries():
     return DashboardList(results, total_count)
 
 
-# 14. finance_cashflow_chart
-def get_finance_cashflow_chart():
+# 14. finance_cashflow_overview (Tổng quan & Xu hướng dòng tiền)
+def get_finance_cashflow_overview():
     from apps.finance.models import CashFlowTransaction
 
-    start_date = timezone.localdate() - timedelta(days=28)
+    today = timezone.localdate()
+    start_of_month = today.replace(day=1)
+
+    # 1. Calculate summary for the current month (posted transactions)
+    month_txs = CashFlowTransaction.objects.filter(
+        payment_date__gte=start_of_month, payment_date__lte=today, status="posted"
+    )
+
+    receive_total = Decimal("0")
+    pay_total = Decimal("0")
+    tx_count = month_txs.count()
+
+    for t in month_txs:
+        if t.payment_type == "receive":
+            receive_total += t.amount
+        elif t.payment_type == "pay":
+            pay_total += t.amount
+
+    net_cashflow = receive_total - pay_total
+
+    summary = {
+        "receive_total": str(receive_total),
+        "pay_total": str(pay_total),
+        "net_cashflow": str(net_cashflow),
+        "tx_count": tx_count,
+    }
+
+    # 2. Calculate weekly data for the last 28 days
+    start_date = today - timedelta(days=28)
     txs = (
         CashFlowTransaction.objects.filter(payment_date__gte=start_date, status="posted")
         .annotate(week=TruncWeek("payment_date"))
@@ -500,74 +498,156 @@ def get_finance_cashflow_chart():
             elif ptype == "pay":
                 weeks_data[w_date]["pay"] = total
 
-    return {"weeks": list(weeks_data.values())}
-
-
-# 15. finance_cashflow_summary (Giao dịch dòng tiền tháng)
-def get_finance_cashflow_summary():
-    from apps.finance.models import CashFlowTransaction
-
-    today = timezone.localdate()
-    start_of_month = today.replace(day=1)
-    txs_qs = CashFlowTransaction.objects.filter(
-        payment_date__gte=start_of_month, payment_date__lte=today, status="posted"
-    ).order_by("-payment_date", "-created_at")
-    total_count = txs_qs.count()
-    results = [
-        {
-            "id": str(t.id),
-            "name": t.name,
-            "category": t.category or "Khác",
-            "payment_type": t.payment_type,
-            "amount": str(t.amount),
-            "payment_date": t.payment_date.isoformat(),
-        }
-        for t in txs_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+    return {"summary": summary, "weeks": list(weeks_data.values())}
 
 
 # 16. finance_unpaid_purchase_invoices
 def get_finance_unpaid_purchase_invoices():
+    today = timezone.localdate()
     invoices_qs = (
         PurchaseInvoice.objects.filter(status__in=[PurchaseInvoice.Status.UNPAID, PurchaseInvoice.Status.PARTIAL])
         .select_related("vendor")
         .order_by("due_date", "-created_at")
     )
+
+    fresh_sum = Decimal("0")
+    fresh_count = 0
+    aging_sum = Decimal("0")
+    aging_count = 0
+    overdue_sum = Decimal("0")
+    overdue_count = 0
+    critical_sum = Decimal("0")
+    critical_count = 0
+
+    top_overdue_list = []
+
+    for i in invoices_qs:
+        rem = i.total_amount - i.paid_amount
+        if rem <= 0:
+            continue
+
+        due_date = i.due_date
+        if not due_date or due_date >= today:
+            overdue_days = 0
+        else:
+            overdue_days = (today - due_date).days
+
+        if overdue_days <= 30:
+            fresh_sum += rem
+            fresh_count += 1
+        elif overdue_days <= 60:
+            aging_sum += rem
+            aging_count += 1
+        elif overdue_days <= 90:
+            overdue_sum += rem
+            overdue_count += 1
+        else:
+            critical_sum += rem
+            critical_count += 1
+
+        top_overdue_list.append(
+            {
+                "id": str(i.id),
+                "supplier_name": i.vendor.supplier_name,
+                "remaining_amount": str(rem),
+                "due_date": due_date.isoformat() if due_date else None,
+                "created_at": i.created_at.isoformat(),
+                "overdue_days": overdue_days,
+            }
+        )
+
+    top_overdue_list.sort(key=lambda x: (-x["overdue_days"], -Decimal(x["remaining_amount"])))
+
+    total_outstanding = fresh_sum + aging_sum + overdue_sum + critical_sum
     total_count = invoices_qs.count()
-    results = [
-        {
-            "id": str(i.id),
-            "supplier_name": i.vendor.supplier_name,
-            "total_amount": str(i.total_amount),
-            "remaining_amount": str(i.total_amount - i.paid_amount),
-            "due_date": i.due_date.isoformat() if i.due_date else None,
-            "created_at": i.created_at.isoformat(),
-        }
-        for i in invoices_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+
+    data_payload = {
+        "buckets": [
+            {"label": "0-30 ngày", "value": str(fresh_sum), "count": fresh_count, "color_key": "fresh"},
+            {"label": "31-60 ngày", "value": str(aging_sum), "count": aging_count, "color_key": "aging"},
+            {"label": "61-90 ngày", "value": str(overdue_sum), "count": overdue_count, "color_key": "overdue"},
+            {"label": "> 90 ngày", "value": str(critical_sum), "count": critical_count, "color_key": "critical"},
+        ],
+        "total_outstanding": str(total_outstanding),
+        "total_count": total_count,
+        "top_overdue": top_overdue_list[:5],
+    }
+    return DashboardDict(data_payload, total_count)
 
 
 # 17. finance_unpaid_sales_invoices
 def get_finance_unpaid_sales_invoices():
+    today = timezone.localdate()
     invoices_qs = (
         SalesInvoice.objects.filter(status__in=[SalesInvoice.Status.UNPAID, SalesInvoice.Status.PARTIAL])
         .select_related("customer")
         .order_by("-created_at")
     )
+
+    fresh_sum = Decimal("0")
+    fresh_count = 0
+    aging_sum = Decimal("0")
+    aging_count = 0
+    overdue_sum = Decimal("0")
+    overdue_count = 0
+    critical_sum = Decimal("0")
+    critical_count = 0
+
+    top_overdue_list = []
+
+    for i in invoices_qs:
+        rem = i.total_amount - i.paid_amount
+        if rem <= 0:
+            continue
+
+        # Use created_at as baseline since SalesInvoice has no due_date
+        created_date = timezone.localdate(i.created_at)
+        if created_date >= today:
+            overdue_days = 0
+        else:
+            overdue_days = (today - created_date).days
+
+        if overdue_days <= 30:
+            fresh_sum += rem
+            fresh_count += 1
+        elif overdue_days <= 60:
+            aging_sum += rem
+            aging_count += 1
+        elif overdue_days <= 90:
+            overdue_sum += rem
+            overdue_count += 1
+        else:
+            critical_sum += rem
+            critical_count += 1
+
+        top_overdue_list.append(
+            {
+                "id": str(i.id),
+                "customer_name": i.customer.customer_name,
+                "remaining_amount": str(rem),
+                "due_date": created_date.isoformat(),
+                "created_at": i.created_at.isoformat(),
+                "overdue_days": overdue_days,
+            }
+        )
+
+    top_overdue_list.sort(key=lambda x: (-x["overdue_days"], -Decimal(x["remaining_amount"])))
+
+    total_outstanding = fresh_sum + aging_sum + overdue_sum + critical_sum
     total_count = invoices_qs.count()
-    results = [
-        {
-            "id": str(i.id),
-            "customer_name": i.customer.customer_name,
-            "total_amount": str(i.total_amount),
-            "remaining_amount": str(i.total_amount - i.paid_amount),
-            "created_at": i.created_at.isoformat(),
-        }
-        for i in invoices_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+
+    data_payload = {
+        "buckets": [
+            {"label": "0-30 ngày", "value": str(fresh_sum), "count": fresh_count, "color_key": "fresh"},
+            {"label": "31-60 ngày", "value": str(aging_sum), "count": aging_count, "color_key": "aging"},
+            {"label": "61-90 ngày", "value": str(overdue_sum), "count": overdue_count, "color_key": "overdue"},
+            {"label": "> 90 ngày", "value": str(critical_sum), "count": critical_count, "color_key": "critical"},
+        ],
+        "total_outstanding": str(total_outstanding),
+        "total_count": total_count,
+        "top_overdue": top_overdue_list[:5],
+    }
+    return DashboardDict(data_payload, total_count)
 
 
 # 18. finance_depreciation_status (Khấu hao tài sản cố định)
@@ -575,74 +655,76 @@ def get_finance_depreciation_status():
     current_period = timezone.now().strftime("%Y-%m")
 
     # 1. Tìm các tài sản đã chạy khấu hao trong kỳ này
-    depreciated_logs_qs = (
-        FixedAssetDepreciationLog.objects.filter(period=current_period).select_related("asset").order_by("-created_at")
+    depreciated_logs = FixedAssetDepreciationLog.objects.filter(period=current_period)
+    depreciated_assets_count = depreciated_logs.values("asset_id").distinct().count()
+    total_depreciation_amount = depreciated_logs.aggregate(total=Sum("depreciation_amount"))["total"] or Decimal("0")
+
+    # 2. Lấy danh sách tài sản chờ khấu hao (remaining_life_months > 0 và chưa chạy trong kỳ)
+    waiting_assets = FixedAsset.objects.filter(remaining_life_months__gt=0).exclude(
+        id__in=depreciated_logs.values_list("asset_id", flat=True)
     )
-    total_count_logs = depreciated_logs_qs.count()
+    pending_assets_count = waiting_assets.count()
+    is_done = pending_assets_count == 0
 
-    # 2. Nếu đã chạy khấu hao, hiển thị các tài sản đã trích
-    if total_count_logs > 0:
-        results = [
-            {
-                "asset_code": log.asset.asset_code,
-                "asset_name": log.asset.asset_name,
-                "depreciation_amount": str(log.depreciation_amount),
-                "status": "đã trích",
-            }
-            for log in depreciated_logs_qs[:5]
-        ]
-        return DashboardList(results, total_count_logs)
+    if not is_done and total_depreciation_amount == Decimal("0"):
+        # Ước lượng tiền khấu hao nếu chưa chạy
+        for asset in waiting_assets:
+            try:
+                dep_amount = (asset.original_value - asset.salvage_value) / Decimal(str(asset.useful_life_months))
+            except Exception:
+                dep_amount = Decimal("0")
+            total_depreciation_amount += dep_amount
 
-    # 3. Nếu chưa chạy, lấy danh sách 5 tài sản đang chờ khấu hao (các tài sản có remaining_life_months > 0)
-    waiting_assets_qs = FixedAsset.objects.filter(remaining_life_months__gt=0).order_by("asset_code")
-    total_count_waiting = waiting_assets_qs.count()
-    results = []
-    for asset in waiting_assets_qs[:5]:
-        try:
-            dep_amount = (asset.original_value - asset.salvage_value) / Decimal(str(asset.useful_life_months))
-        except Exception:
-            dep_amount = Decimal("0.00")
-
-        results.append(
-            {
-                "asset_code": asset.asset_code,
-                "asset_name": asset.asset_name,
-                "depreciation_amount": str(dep_amount),
-                "status": "chờ trích",
-            }
-        )
-    return DashboardList(results, total_count_waiting)
+    return DashboardDict(
+        {
+            "depreciated_assets_count": depreciated_assets_count,
+            "pending_assets_count": pending_assets_count,
+            "total_depreciation_amount": f"{total_depreciation_amount:.2f}",
+            "is_done": is_done,
+        },
+        depreciated_assets_count + pending_assets_count,
+    )
 
 
 # 19. hrm_payroll_lifecycle_status (Bảng lương nhân sự)
 def get_hrm_payroll_lifecycle_status():
     latest_slip = SalarySlip.objects.order_by("-salary_period").first()
     if not latest_slip:
-        return DashboardList([], 0)
+        return DashboardDict(
+            {"salary_period": "", "status": "draft", "calculated_slips_count": 0, "net_pay_total": "0"}, 0
+        )
 
     period = latest_slip.salary_period
-    slips_qs = SalarySlip.objects.filter(salary_period=period).select_related("employee").order_by("-net_pay")
+    slips_qs = SalarySlip.objects.filter(salary_period=period)
     total_count = slips_qs.count()
 
-    status_translation = {
-        "draft": "Bản nháp",
-        "calculated": "Đã tính toán",
-        "submitted": "Chờ duyệt",
-        "approved": "Đã phê duyệt",
-        "paid": "Đã thanh toán",
-    }
+    statuses = set(slips_qs.values_list("status", flat=True))
+    if not statuses:
+        status_val = "draft"
+    elif "draft" in statuses:
+        status_val = "draft"
+    elif "calculated" in statuses:
+        status_val = "calculated"
+    elif "submitted" in statuses:
+        status_val = "submitted"
+    elif "approved" in statuses:
+        status_val = "approved"
+    elif "paid" in statuses:
+        status_val = "paid"
+    else:
+        status_val = "draft"
 
-    results = [
+    net_pay_total = slips_qs.aggregate(total=Sum("net_pay"))["total"] or Decimal("0")
+
+    return DashboardDict(
         {
-            "id": str(s.id),
-            "employee_name": s.employee.full_name,
-            "salary_period": s.salary_period,
-            "net_pay": str(s.net_pay),
-            "status": status_translation.get(s.status, s.get_status_display()),
-        }
-        for s in slips_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+            "salary_period": period,
+            "status": status_val,
+            "calculated_slips_count": slips_qs.filter(status="calculated").count() or total_count,
+            "net_pay_total": f"{net_pay_total:.2f}",
+        },
+        total_count,
+    )
 
 
 # 20. hrm_pending_leave_requests
@@ -668,101 +750,103 @@ def get_hrm_pending_leave_requests():
 def get_hrm_expiring_contracts():
     today = timezone.localdate()
     thirty_days_later = today + timedelta(days=30)
+    seven_days_later = today + timedelta(days=7)
+
     contracts_qs = (
         EmploymentContract.objects.filter(status="active", end_date__gte=today, end_date__lte=thirty_days_later)
         .select_related("employee")
         .order_by("end_date")
     )
-    total_count = contracts_qs.count()
-    results = [
+    expiring_count = contracts_qs.count()
+    critical_count = contracts_qs.filter(end_date__lte=seven_days_later).count()
+
+    top_expiring = []
+    for c in contracts_qs[:5]:
+        days_left = (c.end_date - today).days
+        top_expiring.append(
+            {
+                "id": str(c.id),
+                "employee_name": c.employee.full_name,
+                "contract_no": c.contract_no,
+                "contract_type": c.get_contract_type_display(),
+                "end_date": c.end_date.isoformat(),
+                "days_left": days_left,
+            }
+        )
+
+    return DashboardDict(
         {
-            "id": str(c.id),
-            "employee_name": c.employee.full_name,
-            "contract_no": c.contract_no,
-            "contract_type": c.get_contract_type_display(),
-            "end_date": c.end_date.isoformat(),
-            "created_at": c.created_at.isoformat(),
-        }
-        for c in contracts_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+            "expiring_count": expiring_count,
+            "critical_count": critical_count,
+            "top_expiring": top_expiring,
+        },
+        expiring_count,
+    )
 
 
 # 23. hrm_today_attendance_rate (Nhân viên vắng mặt hôm nay)
 def get_hrm_today_attendance_rate():
     today = timezone.localdate()
-    working_employee_ids = Attendance.objects.filter(date=today, status="working").values_list("employee_id", flat=True)
+    total_active_employees = Employee.objects.filter(employment_status="active").count()
+    working_count = Attendance.objects.filter(date=today, status="working").count()
+    absent_count = total_active_employees - working_count
 
-    # Lấy tối đa 5 nhân sự không đi làm (vắng mặt hoặc nghỉ phép)
-    absent_employees_qs = (
-        Employee.objects.filter(employment_status="active").exclude(id__in=working_employee_ids).order_by("employee_id")
+    if total_active_employees > 0:
+        attendance_rate = (working_count / total_active_employees) * 100
+    else:
+        attendance_rate = 100.0
+
+    return DashboardDict(
+        {
+            "attendance_rate": float(attendance_rate),
+            "present_count": working_count,
+            "absent_count": absent_count,
+            "total_active_employees": total_active_employees,
+        },
+        total_active_employees,
     )
-    total_count = absent_employees_qs.count()
-
-    # Lấy thông tin chi tiết attendance để biết lý do nghỉ phép nếu có
-    absent_employees_slice = absent_employees_qs[:5]
-    employee_ids = [str(e.id) for e in absent_employees_slice]
-    attendances = {
-        str(a.employee_id): a.status for a in Attendance.objects.filter(date=today, employee_id__in=employee_ids)
-    }
-
-    results = []
-    for e in absent_employees_slice:
-        att_status = attendances.get(str(e.id))
-        status_desc = "Vắng mặt"
-        if att_status in ["paid_leave", "unpaid_leave"]:
-            status_desc = "Nghỉ phép"
-        elif att_status == "holiday":
-            status_desc = "Nghỉ lễ"
-
-        results.append(
-            {
-                "id": str(e.id),
-                "employee_id": e.employee_id,
-                "full_name": e.full_name,
-                "department": e.department or "Chưa xếp",
-                "status": status_desc,
-            }
-        )
-    return DashboardList(results, total_count)
 
 
 # 24. manufacturing_pending_wo_approval
 def get_manufacturing_pending_wo_approval():
-    orders_qs = (
-        WorkOrder.objects.filter(status="pending_approval").select_related("production_item").order_by("-created_at")
+    orders_qs = WorkOrder.objects.filter(status="pending_approval")
+    pending_count = orders_qs.count()
+
+    earliest_wo = orders_qs.order_by("planned_start_date").first()
+    earliest_planned_start = (
+        earliest_wo.planned_start_date.isoformat() if earliest_wo and earliest_wo.planned_start_date else None
     )
-    total_count = orders_qs.count()
-    results = [
+
+    return DashboardDict(
         {
-            "id": str(o.id),
-            "name": o.name,
-            "production_item_name": o.production_item.item_name,
-            "quantity": str(o.quantity),
-            "planned_start_date": o.planned_start_date.isoformat(),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+            "pending_count": pending_count,
+            "earliest_planned_start": earliest_planned_start,
+        },
+        pending_count,
+    )
 
 
 # 25. manufacturing_active_wos
 def get_manufacturing_active_wos():
     orders_qs = WorkOrder.objects.filter(status="in_progress").select_related("production_item").order_by("-created_at")
     total_count = orders_qs.count()
-    results = [
-        {
-            "id": str(o.id),
-            "name": o.name,
-            "production_item_name": o.production_item.item_name,
-            "quantity": str(o.quantity),
-            "produced_qty": str(o.produced_qty),
-            "planned_start_date": o.planned_start_date.isoformat(),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
+    results = []
+    for o in orders_qs[:5]:
+        qty = o.quantity
+        prod = o.produced_qty
+        pct = float((prod / qty) * 100) if qty > 0 else 0.0
+        results.append(
+            {
+                "id": str(o.id),
+                "name": o.name,
+                "production_item_name": o.production_item.item_name,
+                "quantity": str(qty),
+                "produced_qty": str(prod),
+                "progress_pct": pct,
+                "planned_start_date": o.planned_start_date.isoformat(),
+                "created_at": o.created_at.isoformat(),
+            }
+        )
     return DashboardList(results, total_count)
 
 
@@ -805,26 +889,17 @@ def get_manufacturing_pending_declarations():
 
 # 27. manufacturing_pending_completion
 def get_manufacturing_pending_completion():
-    orders_qs = (
-        WorkOrder.objects.filter(status="in_progress", produced_qty__gte=F("quantity"))
-        .select_related("production_item", "target_warehouse")
-        .order_by("-created_at")
-    )
-    total_count = orders_qs.count()
-    results = [
+    orders_qs = WorkOrder.objects.filter(status="in_progress", produced_qty__gte=F("quantity"))
+    pending_completion_count = orders_qs.count()
+    total_produced_qty = orders_qs.aggregate(total=Sum("produced_qty"))["total"] or Decimal("0")
+
+    return DashboardDict(
         {
-            "id": str(o.id),
-            "name": o.name,
-            "production_item_name": o.production_item.item_name,
-            "quantity": str(o.quantity),
-            "produced_qty": str(o.produced_qty),
-            "target_warehouse_name": o.target_warehouse.name if o.target_warehouse else None,
-            "planned_start_date": o.planned_start_date.isoformat(),
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders_qs[:5]
-    ]
-    return DashboardList(results, total_count)
+            "pending_completion_count": pending_completion_count,
+            "total_produced_qty": f"{total_produced_qty:.2f}",
+        },
+        pending_completion_count,
+    )
 
 
 # Map widget_code to selector function
@@ -842,8 +917,7 @@ SELECTORS_MAP = {
     "inventory_pending_entry_count": get_inventory_pending_entry_count,
     "inventory_low_stock": get_warehouse_low_stock_alerts,
     "inventory_pending_entries": get_inventory_pending_entries,
-    "finance_cashflow_chart": get_finance_cashflow_chart,
-    "finance_cashflow_summary": get_finance_cashflow_summary,
+    "finance_cashflow_overview": get_finance_cashflow_overview,
     "finance_unpaid_purchase_invoices": get_finance_unpaid_purchase_invoices,
     "finance_unpaid_sales_invoices": get_finance_unpaid_sales_invoices,
     "finance_depreciation_status": get_finance_depreciation_status,
