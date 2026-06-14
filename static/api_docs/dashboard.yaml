@@ -79,12 +79,10 @@ components:
                   - $ref: '#/components/schemas/SalesPendingFulfillmentLine'
                   - $ref: '#/components/schemas/ActivePOCountLine'
                   - $ref: '#/components/schemas/PurchasingDraftOrderLine'
-                  - $ref: '#/components/schemas/PurchasingPendingDeliveryLine'
                   - $ref: '#/components/schemas/PurchasingPendingQCLine'
                   - $ref: '#/components/schemas/PurchasingPendingLogisticLine'
                   - $ref: '#/components/schemas/PurchasingBlockedInvoiceLine'
                   - $ref: '#/components/schemas/InventoryLowStockLine'
-                  - $ref: '#/components/schemas/InventoryPendingEntryLine'
                   - $ref: '#/components/schemas/FinanceCashflowSummaryLine'
                   - $ref: '#/components/schemas/FinanceUnpaidAPLine'
                   - $ref: '#/components/schemas/FinanceUnpaidARLine'
@@ -191,6 +189,13 @@ components:
           type: string
         total_amount:
           type: string
+        expected_delivery_date:
+          type: string
+          nullable: true
+        receipt_fulfillment_rate:
+          type: string
+        payment_fulfillment_rate:
+          type: string
         created_at:
           type: string
     FinanceCashflowSummaryLine:
@@ -280,6 +285,10 @@ components:
           type: string
         total_amount:
           type: string
+        receipt_fulfillment_rate:
+          type: string
+        payment_fulfillment_rate:
+          type: string
         created_at:
           type: string
     PurchasingDraftOrderLine:
@@ -290,24 +299,6 @@ components:
         supplier_name:
           type: string
         total_amount:
-          type: string
-        created_at:
-          type: string
-    PurchasingPendingDeliveryLine:
-      type: object
-      properties:
-        id:
-          type: string
-        supplier_name:
-          type: string
-        total_amount:
-          type: string
-        expected_delivery_date:
-          type: string
-          nullable: true
-        receipt_fulfillment_rate:
-          type: string
-        payment_fulfillment_rate:
           type: string
         created_at:
           type: string
@@ -331,6 +322,17 @@ components:
           type: string
         name:
           type: string
+        status:
+          type: string
+        purchase_order_id:
+          type: string
+          nullable: true
+        purchase_order_name:
+          type: string
+          nullable: true
+        remarks:
+          type: string
+          nullable: true
         created_at:
           type: string
     PurchasingBlockedInvoiceLine:
@@ -360,26 +362,6 @@ components:
         status:
           type: string
         reason:
-          type: string
-    InventoryPendingEntryLine:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        purpose:
-          type: string
-        remarks:
-          type: string
-          nullable: true
-        route_desc:
-          type: string
-        item_count:
-          type: integer
-        posting_date:
-          type: string
-        created_at:
           type: string
     FinanceUnpaidAPLine:
       type: object

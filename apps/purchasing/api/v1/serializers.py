@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine
+from apps.purchasing.models import PurchaseOrder, PurchaseOrderLine
 
 
 # --- ORDER SERIALIZERS ---
@@ -100,115 +100,6 @@ class PurchaseOrderCancelInputSerializer(serializers.Serializer):
     keep_goods = serializers.BooleanField(required=False, default=False)
 
 
-# --- INVOICE SERIALIZERS ---
-class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
-    item_name = serializers.CharField(source="item.item_name", read_only=True)
-    item_code = serializers.CharField(source="item.item_code", read_only=True)
-    qc_status = serializers.SerializerMethodField()
-    latest_cert = serializers.SerializerMethodField()
-
-    class Meta:
-        model = PurchaseInvoiceLine
-        fields = [
-            "id",
-            "item",
-            "item_name",
-            "item_code",
-            "quantity",
-            "unit_price",
-            "import_tax",
-            "vat_tax",
-            "line_total",
-            "qty_fulfillment_rate",
-            "qc_status",
-            "latest_cert",
-        ]
-        read_only_fields = ["id", "line_total"]
-
-    def get_qc_status(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        stock_entry = obj.invoice.stock_entry
-        if not stock_entry:
-            return "PENDING"
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=stock_entry)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return cert.result
-        return "PENDING"
-
-    def get_latest_cert(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        stock_entry = obj.invoice.stock_entry
-        if not stock_entry:
-            return None
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=stock_entry)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return {
-                "id": str(cert.id),
-                "cert_id": cert.cert_id,
-                "result": cert.result,
-                "remarks": cert.remarks,
-                "issue_date": cert.issue_date.isoformat() if cert.issue_date else None,
-            }
-        return None
-
-
-class PurchaseInvoiceSerializer(serializers.ModelSerializer):
-    vendor_name = serializers.CharField(source="vendor.supplier_name", read_only=True)
-    lines = PurchaseInvoiceLineSerializer(many=True, read_only=True)
-    stock_entry_name = serializers.CharField(source="stock_entry.name", read_only=True)
-
-    class Meta:
-        model = PurchaseInvoice
-        fields = [
-            "id",
-            "order",
-            "stock_entry",
-            "stock_entry_name",
-            "vendor",
-            "vendor_name",
-            "status",
-            "total_amount",
-            "paid_amount",
-            "block_reason",
-            "due_date",
-            "qty_fulfillment_rate",
-            "created_at",
-            "updated_at",
-            "lines",
-        ]
-        read_only_fields = [
-            "id",
-            "order",
-            "stock_entry",
-            "vendor",
-            "status",
-            "total_amount",
-            "paid_amount",
-            "block_reason",
-            "due_date",
-            "qty_fulfillment_rate",
-            "created_at",
-            "updated_at",
-        ]
-
-
-class PayInvoiceInputSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
-    payment_method = serializers.ChoiceField(
-        choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản ngân hàng")], default="bank_transfer"
-    )
-
-
 class LandedCostAllocationInputSerializer(serializers.Serializer):
     shipment_id = serializers.UUIDField()
     total_logistic_fees = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
@@ -217,6 +108,7 @@ class LandedCostAllocationInputSerializer(serializers.Serializer):
 class ShipmentSerializer(serializers.ModelSerializer):
     stock_entries = serializers.SerializerMethodField()
     stock_entries_details = serializers.SerializerMethodField()
+    purchase_order_lines = serializers.SerializerMethodField()
 
     class Meta:
         from apps.purchasing.models import Shipment
@@ -226,6 +118,8 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "id",
             "shipment_num",
             "name",
+            "purchase_order",
+            "purchase_order_lines",
             "total_logistic_fees",
             "status",
             "remarks",
@@ -254,48 +148,40 @@ class ShipmentSerializer(serializers.ModelSerializer):
                 details_data.append(serialized)
         return details_data
 
-
-class TechnicalCertificationSerializer(serializers.ModelSerializer):
-    item_name = serializers.CharField(source="item.item_name", read_only=True)
-    item_code = serializers.CharField(source="item.item_code", read_only=True)
-    stock_entry_name = serializers.CharField(source="stock_entry.name", read_only=True)
-
-    class Meta:
-        from apps.finance.models import TechnicalCertification
-
-        model = TechnicalCertification
-        fields = [
-            "id",
-            "cert_id",
-            "item",
-            "item_name",
-            "item_code",
-            "stock_entry",
-            "stock_entry_name",
-            "cert_type",
-            "assessment_fee",
-            "expiry_date",
-            "issue_date",
-            "result",
-            "remarks",
+    def get_purchase_order_lines(self, obj):
+        po = obj.purchase_order
+        if not po:
+            return []
+        return [
+            {
+                "id": str(line.id),
+                "item_id": str(line.item.id),
+                "item_code": line.item.item_code,
+                "item_name": line.item.item_name,
+                "quantity": str(line.quantity),
+                "unit": line.item.stock_uom.name if line.item.stock_uom else "",
+            }
+            for line in po.lines.all()
         ]
-        read_only_fields = ["id", "issue_date"]
 
 
-class TechnicalCertificationCreateInputSerializer(serializers.Serializer):
+class ShipmentDetailCompleteSerializer(serializers.Serializer):
+    po_line_id = serializers.UUIDField()
     item_id = serializers.UUIDField()
-    stock_entry_id = serializers.UUIDField()
-    cert_type = serializers.CharField(max_length=100)
-    assessment_fee = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    expiry_date = serializers.DateField(required=False, allow_null=True)
-    result = serializers.ChoiceField(choices=[("PASSED", "Đạt"), ("FAILED", "Không đạt")], default="PASSED")
-    remarks = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    quantity = serializers.DecimalField(max_digits=15, decimal_places=2)
+    target_warehouse_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class ShipmentCompleteInputSerializer(serializers.Serializer):
+    total_logistic_fees = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0)
+    details = ShipmentDetailCompleteSerializer(many=True)
 
 
 class ShipmentInputSerializer(serializers.Serializer):
     shipment_num = serializers.CharField(max_length=100)
     name = serializers.CharField(max_length=255)
     remarks = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    purchase_order_id = serializers.UUIDField(required=False, allow_null=True)
     stock_entry_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
 
 

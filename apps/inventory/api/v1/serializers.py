@@ -23,8 +23,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
     source_warehouse_name = serializers.CharField(source="source_warehouse.name", read_only=True)
     target_warehouse_id = serializers.UUIDField(read_only=True, allow_null=True)
     target_warehouse_name = serializers.CharField(source="target_warehouse.name", read_only=True)
-    qc_status = serializers.SerializerMethodField()
-    latest_cert = serializers.SerializerMethodField()
 
     class Meta:
         model = StockEntryDetail
@@ -39,8 +37,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "source_warehouse_name",
             "target_warehouse_id",
             "target_warehouse_name",
-            "qc_status",
-            "latest_cert",
         ]
         read_only_fields = [
             "id",
@@ -53,36 +49,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "target_warehouse_id",
             "target_warehouse_name",
         ]
-
-    def get_qc_status(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return cert.result
-        return "PENDING"
-
-    def get_latest_cert(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return {
-                "id": str(cert.id),
-                "cert_id": cert.cert_id,
-                "result": cert.result,
-                "remarks": cert.remarks,
-                "issue_date": cert.issue_date.isoformat() if cert.issue_date else None,
-            }
-        return None
 
 
 class StockEntryDetailCreateSerializer(serializers.Serializer):

@@ -91,11 +91,13 @@ class TestDashboardViews:
         role = RoleFactory(name="Warehouse Keeper")
         user = UserFactory(username="keeper", password_hash="testpass", role=role)
 
-        # Give inventory.stock_issue and inventory.stock_in permissions
-        perm_issue, _ = Permission.objects.get_or_create(code="inventory.stock_issue", defaults={"name": "Xuất kho"})
-        perm_in, _ = Permission.objects.get_or_create(code="inventory.stock_in", defaults={"name": "Nhập kho"})
-        RolePermission.objects.get_or_create(role=role, permission=perm_issue)
-        RolePermission.objects.get_or_create(role=role, permission=perm_in)
+        # Give inventory.view and inventory.stock_transfer permissions
+        perm_view, _ = Permission.objects.get_or_create(code="inventory.view", defaults={"name": "Xem kho"})
+        perm_transfer, _ = Permission.objects.get_or_create(
+            code="inventory.stock_transfer", defaults={"name": "Chuyển kho"}
+        )
+        RolePermission.objects.get_or_create(role=role, permission=perm_view)
+        RolePermission.objects.get_or_create(role=role, permission=perm_transfer)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-metadata-list")
@@ -105,12 +107,12 @@ class TestDashboardViews:
         data = response.data
         codes = [item["code"] for item in data]
 
-        # Warehouse keeper should see logistics cards
-        assert "sales_pending_fulfillment" in codes
-        assert "purchasing_pending_delivery" in codes
-        # But not sales metadata they are not permitted for
-        assert "sales_today_revenue" not in codes
-        assert "sales_draft_orders" not in codes
+        # Warehouse keeper should see inventory cards they have permissions for
+        assert "inventory_low_stock" in codes
+        assert "inventory_pending_entries" in codes
+        # But not sales or purchasing cards they are not permitted for
+        assert "sales_pending_fulfillment" not in codes
+        assert "purchasing_active_po_count" not in codes
 
     def test_widget_batch_and_detail_total_count(self, authenticated_client_with_perms):
         client, user = authenticated_client_with_perms

@@ -177,10 +177,15 @@ class TestPurchaseOrderServices:
         from apps.finance.models import CashFlowTransaction
         from apps.finance.services import cash_flow_approve
         from apps.inventory.models import StockEntry
-        from apps.inventory.services import stock_entry_update, stock_in_approve
         from apps.inventory.tests.factories import WarehouseFactory
         from apps.purchasing.models import PurchaseInvoice
-        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+        from apps.purchasing.services import (
+            purchase_order_approve,
+            purchase_order_cancel,
+            shipment_complete,
+            shipment_create_from_po,
+            shipment_update,
+        )
 
         user, vendor, item = setup_data
         warehouse = WarehouseFactory()
@@ -193,31 +198,36 @@ class TestPurchaseOrderServices:
             advance_paid_amount=Decimal("100.00"),
         )
 
-        # 2. Approve PO -> creates draft stock entry, invoice, and deposit cash flow
+        # 2. Approve PO -> creates invoice and deposit cash flow (no stock entry yet)
         purchase_order_approve(user=user, order_id=str(order.id))
-
-        # Check that we have a draft stock entry
-        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
-        assert stock_entry is not None
 
         # Approve deposit cash flow to credit PO and invoice
         cf_dep = CashFlowTransaction.objects.filter(purchase_order=order, payment_type="pay").first()
         cash_flow_approve(user=user, tx_id=str(cf_dep.id))
 
-        # 3. Complete the stock entry (posted)
-        # Update target warehouse first
-        stock_entry_update(
+        # 3. Create shipment and complete it (posted stock entry)
+        shipment = shipment_create_from_po(
             user=user,
-            stock_entry_id=str(stock_entry.id),
-            details=[
-                {
-                    "detail_id": str(stock_entry.details.first().id),
-                    "target_warehouse_id": str(warehouse.id),
-                    "quantity": Decimal("10.00"),
-                }
-            ],
+            shipment_num="SH-TEST-CANCEL-1",
+            name="Shipment for cancel test",
+            purchase_order_id=str(order.id),
         )
-        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        details = [
+            {
+                "po_line_id": str(order.lines.first().id),
+                "item_id": str(item.id),
+                "quantity": Decimal("10.00"),
+                "target_warehouse_id": str(warehouse.id),
+            }
+        ]
+        shipment_complete(
+            user=user,
+            shipment_id=str(shipment.id),
+            details=details,
+            total_logistic_fees=Decimal("0.00"),
+        )
 
         # 4. Pay remaining amount on invoice
         invoice = PurchaseInvoice.objects.filter(order=order).first()
@@ -354,11 +364,15 @@ class TestPurchaseOrderServices:
     def test_purchase_order_cancel_with_goods_keep_goods_diff_positive(self, setup_data):
         from apps.finance.models import CashFlowTransaction
         from apps.finance.services import cash_flow_approve
-        from apps.inventory.models import StockEntry
-        from apps.inventory.services import stock_entry_update, stock_in_approve
         from apps.inventory.tests.factories import WarehouseFactory
         from apps.purchasing.models import PurchaseInvoice
-        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+        from apps.purchasing.services import (
+            purchase_order_approve,
+            purchase_order_cancel,
+            shipment_complete,
+            shipment_create_from_po,
+            shipment_update,
+        )
 
         user, vendor, item = setup_data
         warehouse = WarehouseFactory()
@@ -375,20 +389,29 @@ class TestPurchaseOrderServices:
         cf_dep = CashFlowTransaction.objects.filter(purchase_order=order, payment_type="pay").first()
         cash_flow_approve(user=user, tx_id=str(cf_dep.id))
 
-        # Receive 6 items (received value = 6 * 50 = 300)
-        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
-        stock_entry_update(
+        # Receive 6 items (received value = 6 * 50 = 300) via shipment
+        shipment = shipment_create_from_po(
             user=user,
-            stock_entry_id=str(stock_entry.id),
-            details=[
-                {
-                    "detail_id": str(stock_entry.details.first().id),
-                    "target_warehouse_id": str(warehouse.id),
-                    "quantity": Decimal("6.00"),
-                }
-            ],
+            shipment_num="SH-TEST-CANCEL-2",
+            name="Shipment for cancel positive diff",
+            purchase_order_id=str(order.id),
         )
-        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        details = [
+            {
+                "po_line_id": str(order.lines.first().id),
+                "item_id": str(item.id),
+                "quantity": Decimal("6.00"),
+                "target_warehouse_id": str(warehouse.id),
+            }
+        ]
+        shipment_complete(
+            user=user,
+            shipment_id=str(shipment.id),
+            details=details,
+            total_logistic_fees=Decimal("0.00"),
+        )
 
         # Re-fetch state: received_value=300, total_paid=200. diff = 300 - 200 = 100 > 0.
         # Cancel with keep_goods=True -> transitions to CANCEL_PENDING
@@ -422,11 +445,15 @@ class TestPurchaseOrderServices:
     def test_purchase_order_cancel_with_goods_keep_goods_diff_negative(self, setup_data):
         from apps.finance.models import CashFlowTransaction
         from apps.finance.services import cash_flow_approve
-        from apps.inventory.models import StockEntry
-        from apps.inventory.services import stock_entry_update, stock_in_approve
         from apps.inventory.tests.factories import WarehouseFactory
         from apps.purchasing.models import PurchaseInvoice
-        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+        from apps.purchasing.services import (
+            purchase_order_approve,
+            purchase_order_cancel,
+            shipment_complete,
+            shipment_create_from_po,
+            shipment_update,
+        )
 
         user, vendor, item = setup_data
         warehouse = WarehouseFactory()
@@ -444,19 +471,28 @@ class TestPurchaseOrderServices:
         cash_flow_approve(user=user, tx_id=str(cf_dep.id))
 
         # Receive 6 items (received value = 6 * 50 = 300)
-        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
-        stock_entry_update(
+        shipment = shipment_create_from_po(
             user=user,
-            stock_entry_id=str(stock_entry.id),
-            details=[
-                {
-                    "detail_id": str(stock_entry.details.first().id),
-                    "target_warehouse_id": str(warehouse.id),
-                    "quantity": Decimal("6.00"),
-                }
-            ],
+            shipment_num="SH-TEST-CANCEL-3",
+            name="Shipment for cancel negative diff",
+            purchase_order_id=str(order.id),
         )
-        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        details = [
+            {
+                "po_line_id": str(order.lines.first().id),
+                "item_id": str(item.id),
+                "quantity": Decimal("6.00"),
+                "target_warehouse_id": str(warehouse.id),
+            }
+        ]
+        shipment_complete(
+            user=user,
+            shipment_id=str(shipment.id),
+            details=details,
+            total_logistic_fees=Decimal("0.00"),
+        )
 
         # Re-fetch state: received_value=300, total_paid=400. diff = 300 - 400 = -100 < 0.
         # Cancel with keep_goods=True -> transitions to CANCEL_PENDING
@@ -487,10 +523,15 @@ class TestPurchaseOrderServices:
         from apps.finance.models import CashFlowTransaction
         from apps.finance.services import cash_flow_approve
         from apps.inventory.models import StockEntry
-        from apps.inventory.services import stock_entry_update, stock_in_approve
         from apps.inventory.tests.factories import WarehouseFactory
         from apps.purchasing.models import PurchaseInvoice
-        from apps.purchasing.services import purchase_order_approve, purchase_order_cancel
+        from apps.purchasing.services import (
+            purchase_order_approve,
+            purchase_order_cancel,
+            shipment_complete,
+            shipment_create_from_po,
+            shipment_update,
+        )
 
         user, vendor, item = setup_data
         warehouse = WarehouseFactory()
@@ -508,19 +549,28 @@ class TestPurchaseOrderServices:
         cash_flow_approve(user=user, tx_id=str(cf_dep.id))
 
         # Receive 6 items (received value = 6 * 50 = 300)
-        stock_entry = StockEntry.objects.filter(purchase_order=order, status="draft").first()
-        stock_entry_update(
+        shipment = shipment_create_from_po(
             user=user,
-            stock_entry_id=str(stock_entry.id),
-            details=[
-                {
-                    "detail_id": str(stock_entry.details.first().id),
-                    "target_warehouse_id": str(warehouse.id),
-                    "quantity": Decimal("6.00"),
-                }
-            ],
+            shipment_num="SH-TEST-CANCEL-4",
+            name="Shipment for cancel reverse all",
+            purchase_order_id=str(order.id),
         )
-        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        details = [
+            {
+                "po_line_id": str(order.lines.first().id),
+                "item_id": str(item.id),
+                "quantity": Decimal("6.00"),
+                "target_warehouse_id": str(warehouse.id),
+            }
+        ]
+        shipment_complete(
+            user=user,
+            shipment_id=str(shipment.id),
+            details=details,
+            total_logistic_fees=Decimal("0.00"),
+        )
 
         # Cancel with keep_goods=False (Default/Reverse all) -> transitions to CANCEL_PENDING
         purchase_order_cancel(user=user, order_id=str(order.id), keep_goods=False)
@@ -559,3 +609,17 @@ class TestPurchaseOrderServices:
             pass  # We only care that check_permission was called
 
         mock_permission_checker.assert_called_with(user, "purchasing.cancel_order")
+
+    def test_purchase_order_approve_log_no_stock_entry_id(self, setup_data):
+        """Log approve KHÔNG chứa stock_entry_id vì không còn tạo StockEntry nháp."""
+        from apps.accounts.models import SystemLog
+        from apps.purchasing.services import purchase_order_approve
+
+        user, vendor, item = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        purchase_order_approve(user=user, order_id=str(order.id))
+        log = SystemLog.objects.filter(table_name="purchase_order", record_id=str(order.id), action="approve").first()
+        assert log is not None
+        assert "stock_entry_id" not in log.new_value
+        assert log.new_value.get("invoice_id") is not None

@@ -1,8 +1,6 @@
 from django.urls import path
 
 from .views import (
-    SalesInvoiceDetailAPIView,
-    SalesInvoiceListAPIView,
     SalesOrderApproveAPIView,
     SalesOrderApproveCreditBypassAPIView,
     SalesOrderCancelAPIView,
@@ -23,7 +21,4 @@ urlpatterns = [
         name="sales-order-approve-credit-bypass",
     ),
     path("orders/<uuid:pk>/cancel/", SalesOrderCancelAPIView.as_view(), name="sales-order-cancel"),
-    # Invoices
-    path("invoices/", SalesInvoiceListAPIView.as_view(), name="sales-invoice-list"),
-    path("invoices/<uuid:pk>/", SalesInvoiceDetailAPIView.as_view(), name="sales-invoice-detail"),
 ]

@@ -4,6 +4,10 @@ Services for finance app.
 All write operations (Create, Update, Delete) should be defined here.
 Never receive request objects, only primitive types or DTOs.
 Always ensure atomic transactions.
+
+ARCHITECTURE NOTE (2026-06):
+collect_sales_invoice và pay_purchase_invoice thao tác trên SalesInvoice/PurchaseInvoice
+của apps.sales/apps.purchasing. Xem apps/finance/selectors.py để biết lý do và quy ước.
 """
 
 import datetime
@@ -666,6 +670,41 @@ def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, paymen
         payment_method=payment_method,
         purchase_invoice_id=str(invoice.id),
         remarks=f"Thanh toán cho hóa đơn mua hàng {invoice.id} (NCC: {invoice.vendor.supplier_name}).",
+    )
+
+    return tx
+
+
+@transaction.atomic
+def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
+    """
+    Thu tiền hóa đơn bán hàng (Sales Invoice - AR collection).
+    Tạo CashFlow transaction pending_approval, tương tự pay_purchase_invoice.
+    """
+    PermissionChecker.check_permission(user, "finance.collect_sales_invoice")
+
+    from apps.sales.models import SalesInvoice
+
+    invoice = SalesInvoice.objects.select_for_update().filter(id=invoice_id).first()
+    if not invoice:
+        raise NotFoundException("Hóa đơn bán hàng không tồn tại.")
+
+    if invoice.status in [SalesInvoice.Status.PAID, SalesInvoice.Status.CANCELLED]:
+        raise ValidationException("Hóa đơn bán không hợp lệ hoặc đã hoàn tất thanh toán.")
+
+    from django.utils import timezone
+
+    payment_date_str = timezone.now().date().isoformat()
+
+    tx = cash_flow_create(
+        user=user,
+        payment_type="receive",
+        amount=amount,
+        payment_date=payment_date_str,
+        category="Thu tiền hóa đơn bán hàng",
+        payment_method=payment_method,
+        sales_invoice_id=str(invoice.id),
+        remarks=f"Thu tiền HĐ bán {str(invoice.id)[:8].upper()} (Khách hàng: {invoice.customer.customer_name}).",
     )
 
     return tx
