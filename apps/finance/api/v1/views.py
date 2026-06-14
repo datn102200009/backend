@@ -347,7 +347,7 @@ class SalesInvoiceCollectAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
-        PermissionChecker.check_permission(request.user, "finance.collect_invoice")
+        PermissionChecker.check_permission(request.user, "finance.collect_sales_invoice")
         serializer = CollectInvoiceInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

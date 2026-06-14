@@ -4,6 +4,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.xlib.permissions import PermissionChecker
+
+# Import chéo có chủ đích: Sau PR refactor, PurchaseInvoice thuộc purchasing.models
+# nhưng serializer được expose từ finance module (xem kiến trúc tại finance/selectors.py).
+# Purchasing view `PurchaseOrderReceiveAPIView` trả về PurchaseInvoice → dùng serializer ở finance.
 from apps.finance.api.v1.serializers import PurchaseInvoiceSerializer
 from apps.purchasing.selectors import get_supplier_ap_aging, purchase_order_detail, purchase_order_list
 from apps.purchasing.services import (

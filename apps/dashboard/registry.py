@@ -79,7 +79,7 @@ WIDGETS_REGISTRY = {
         "quick_links": ["/finance?tab=purchase_invoices&status=unpaid,partial"],
     },
     "finance_unpaid_sales_invoices": {
-        "permission": "finance.collect_invoice",
+        "permission": "finance.collect_sales_invoice",
         "type": "donut_chart",
         "size": "1x2",
         "title": "Hóa đơn bán chưa thanh toán",

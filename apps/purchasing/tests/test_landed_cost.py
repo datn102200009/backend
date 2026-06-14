@@ -129,3 +129,144 @@ class TestLandedCost:
                 details=details,
                 total_logistic_fees=Decimal("-50.00"),
             )
+
+    def test_shipment_complete_cumulative_exceed_po_quantity(self, setup_data):
+        """Tổng lũy kế nhiều shipment KHÔNG được vượt SL đặt."""
+        user, vendor, item, warehouse = setup_data
+
+        lines = [{"item_id": str(item.id), "quantity": Decimal("5.00"), "unit_price": Decimal("100.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Shipment 1: nhập 3/5
+        s1 = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-CUM-1",
+            name="cumulative 1",
+            purchase_order_id=str(order.id),
+        )
+        shipment_update(user=user, shipment_id=str(s1.id), status="inspecting")
+        shipment_complete(
+            user=user,
+            shipment_id=str(s1.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("3.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+
+        # Shipment 2: thử nhập 3/5 nữa → tổng 6 > 5 → phải lỗi
+        s2 = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-CUM-2",
+            name="cumulative 2",
+            purchase_order_id=str(order.id),
+        )
+        shipment_update(user=user, shipment_id=str(s2.id), status="inspecting")
+        with pytest.raises(ValidationException) as excinfo:
+            shipment_complete(
+                user=user,
+                shipment_id=str(s2.id),
+                details=[
+                    {
+                        "po_line_id": str(order.lines.first().id),
+                        "item_id": str(item.id),
+                        "quantity": Decimal("3.00"),
+                        "target_warehouse_id": str(warehouse.id),
+                    }
+                ],
+                total_logistic_fees=Decimal("0"),
+            )
+        assert "vượt quá SL đặt" in str(excinfo.value)
+
+    def test_shipment_complete_partial_acceptance_remaining(self, setup_data):
+        """Nhập 3/5 đợt 1, 2/5 đợt 2: tổng = 5, KHÔNG lỗi."""
+        user, vendor, item, warehouse = setup_data
+
+        lines = [{"item_id": str(item.id), "quantity": Decimal("5.00"), "unit_price": Decimal("100.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+
+        s1 = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-PART-1",
+            name="partial 1",
+            purchase_order_id=str(order.id),
+        )
+        shipment_update(user=user, shipment_id=str(s1.id), status="inspecting")
+        shipment_complete(
+            user=user,
+            shipment_id=str(s1.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("3.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+
+        s2 = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-PART-2",
+            name="partial 2",
+            purchase_order_id=str(order.id),
+        )
+        shipment_update(user=user, shipment_id=str(s2.id), status="inspecting")
+        updated = shipment_complete(
+            user=user,
+            shipment_id=str(s2.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("2.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+        assert updated.status == Shipment.Status.COMPLETED
+
+    def test_shipment_complete_emits_log(self, setup_data, caplog):
+        """Kiểm tra log được sinh ra khi hoàn tất lô hàng."""
+        import logging
+
+        user, vendor, item, warehouse = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("5.00"), "unit_price": Decimal("100.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+        s = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-LOG-1",
+            name="log test",
+            purchase_order_id=str(order.id),
+        )
+        shipment_update(user=user, shipment_id=str(s.id), status="inspecting")
+
+        with caplog.at_level(logging.INFO, logger="apps.purchasing.services"):
+            shipment_complete(
+                user=user,
+                shipment_id=str(s.id),
+                details=[
+                    {
+                        "po_line_id": str(order.lines.first().id),
+                        "item_id": str(item.id),
+                        "quantity": Decimal("5.00"),
+                        "target_warehouse_id": str(warehouse.id),
+                    }
+                ],
+                total_logistic_fees=Decimal("0"),
+            )
+
+        messages = [r.message for r in caplog.records]
+        assert any("shipment_complete: start" in m for m in messages)
+        assert any("created StockEntry" in m for m in messages)
+        assert any("completed shipment_id" in m for m in messages)

@@ -3,6 +3,10 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
+
+# ARCHITECTURE NOTE:
+# PurchaseInvoice/SalesInvoice được re-export từ purchasing/sales models.
+# Xem chi tiết tại apps/finance/selectors.py docstring.
 from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine
 from apps.sales.models import SalesInvoice, SalesInvoiceLine
 

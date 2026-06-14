@@ -4,6 +4,10 @@ Services for finance app.
 All write operations (Create, Update, Delete) should be defined here.
 Never receive request objects, only primitive types or DTOs.
 Always ensure atomic transactions.
+
+ARCHITECTURE NOTE (2026-06):
+collect_sales_invoice và pay_purchase_invoice thao tác trên SalesInvoice/PurchaseInvoice
+của apps.sales/apps.purchasing. Xem apps/finance/selectors.py để biết lý do và quy ước.
 """
 
 import datetime
@@ -677,7 +681,7 @@ def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payme
     Thu tiền hóa đơn bán hàng (Sales Invoice - AR collection).
     Tạo CashFlow transaction pending_approval, tương tự pay_purchase_invoice.
     """
-    PermissionChecker.check_permission(user, "finance.collect_invoice")
+    PermissionChecker.check_permission(user, "finance.collect_sales_invoice")
 
     from apps.sales.models import SalesInvoice
 

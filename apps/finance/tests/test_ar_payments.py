@@ -94,7 +94,7 @@ class TestARPayments:
         invoice.refresh_from_db()
         assert invoice.status == SalesInvoice.Status.PARTIAL
         assert invoice.paid_amount == Decimal("200.00")
-        mock_permission_checker.assert_any_call(user, "finance.collect_invoice")
+        mock_permission_checker.assert_any_call(user, "finance.collect_sales_invoice")
 
     def test_collect_sales_invoice_api_forbidden(self, mock_permission_checker, setup_data):
         user, customer, item, warehouse = setup_data

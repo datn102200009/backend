@@ -3,6 +3,17 @@ Selectors for finance app.
 
 All read operations and complex queries should be defined here.
 Always optimize with select_related() and prefetch_related() to avoid N+1 queries.
+
+ARCHITECTURE NOTE (2026-06):
+PurchaseInvoice và SalesInvoice vẫn được định nghĩa ở apps.purchasing.models và
+apps.sales.models (tương ứng) do các ràng buộc FK với PurchaseOrder/SalesOrder
+và các business rule nghiệp vụ mua/bán. apps/finance đóng vai trò "shell"
+(cung cấp selectors, serializers, services cho view CashFlow/Reporting) và
+import model từ purchasing/sales theo quy ước một chiều:
+    purchasing/sales (data) -> finance (shell)
+KHÔNG được import ngược lại từ finance vào purchasing/sales để tránh vòng phụ thuộc.
+Khi schema PurchaseInvoice/SalesInvoice thay đổi, cần đồng bộ serializers/selectors
+tại finance tương ứng.
 """
 
 from django.db.models import QuerySet

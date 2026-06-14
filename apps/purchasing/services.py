@@ -4,6 +4,7 @@ Services for purchasing app.
 All write operations for Purchase Orders and Purchase Invoices.
 """
 
+import logging
 import uuid
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,8 @@ from apps.inventory.services import stock_in_approve, stock_in_create
 from apps.master_data.models import Item
 from apps.procurement.models import Supplier
 from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, Shipment
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
@@ -345,7 +348,7 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
         action="approve",
         table_name="purchase_order",
         record_id=str(order.id),
-        new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": None},
+        new_value={"status": order.status, "invoice_id": str(invoice.id)},
     )
 
     return order
@@ -800,6 +803,7 @@ def shipment_complete(
     PermissionChecker.check_permission(user, "purchasing.allocate_landed_cost")
     import uuid
 
+    from django.db.models import Sum
     from django.utils import timezone
 
     from apps.finance.models import CashFlowTransaction
@@ -808,17 +812,41 @@ def shipment_complete(
 
     shipment = Shipment.objects.select_for_update().filter(id=shipment_id).first()
     if not shipment:
+        logger.warning("shipment_complete: shipment_id=%s not found", shipment_id)
         raise NotFoundException("Lô hàng không tồn tại.")
 
+    logger.info(
+        "shipment_complete: start shipment_id=%s status=%s",
+        shipment.id,
+        shipment.status,
+        extra={"shipment_id": str(shipment.id), "user_id": str(user.id)},
+    )
+
     if shipment.status != Shipment.Status.INSPECTING:
+        logger.warning(
+            "shipment_complete: invalid status transition shipment_id=%s status=%s",
+            shipment.id,
+            shipment.status,
+        )
         raise ValidationException("Chỉ có thể hoàn tất lô hàng đang ở trạng thái Đang tiếp nhận.")
 
     po = shipment.purchase_order
     if not po:
+        logger.warning("shipment_complete: shipment_id=%s is not linked to any PO", shipment.id)
         raise ValidationException("Lô hàng chưa liên kết PO.")
 
     if total_logistic_fees < 0:
         raise ValidationException("Chi phí logistic không được âm.")
+
+    # Tính trước tổng đã nhập cho toàn bộ các dòng trong PO
+    already_received_map: dict[str, Decimal] = {}
+    received_rows = (
+        StockEntryDetail.objects.filter(parent__purchase_order=po, parent__status="posted")
+        .values("item_id")
+        .annotate(total_qty=Sum("quantity"))
+    )
+    for row in received_rows:
+        already_received_map[str(row["item_id"])] = row["total_qty"] or Decimal("0.00")
 
     # Validate details
     for d in details:
@@ -831,57 +859,108 @@ def shipment_complete(
             raise ValidationException("Dòng sản phẩm không khớp với PO.")
 
         if qty > po_line.quantity:
-            raise ValidationException("Số lượng đạt chuẩn vượt quá số lượng đặt.")
+            raise ValidationException(
+                f"Số lượng nhận ({qty}) vượt quá số lượng đặt ({po_line.quantity}) cho sản phẩm {po_line.item.item_code}."
+            )
 
-        if qty > 0 and not d.get("target_warehouse_id"):
-            raise ValidationException(f"Sản phẩm {d['item_id']} có số lượng đạt >0 phải chỉ định kho.")
+        already_received = already_received_map.get(str(d["item_id"]), Decimal("0.00"))
+        if already_received + qty > po_line.quantity:
+            raise ValidationException(
+                f"Tổng SL đã nhập ({already_received}) + SL lần này ({qty}) "
+                f"vượt quá SL đặt ({po_line.quantity}) cho sản phẩm {po_line.item.item_code}."
+            )
+
+        if qty == 0:
+            d["target_warehouse_id"] = None
+        elif qty > 0 and not d.get("target_warehouse_id"):
+            raise ValidationException(f"Sản phẩm {po_line.item.item_code} có số lượng nhận >0 phải chỉ định kho.")
 
     # Bước 1: Tạo StockEntry posted trực tiếp
-    stock_name = f"IN-PUR-SHIP-{str(shipment.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
-    stock_entry = StockEntry.objects.create(
-        name=stock_name,
-        purpose="receipt",
-        posting_date=timezone.now(),
-        remarks=f"Nhập kho từ lô hàng {shipment.shipment_num}",
-        status="posted",
-        purchase_order=po,
-        shipment=shipment,
-    )
+    try:
+        stock_name = f"IN-PUR-SHIP-{str(shipment.id)[:8].upper()}-{str(uuid.uuid4())[:4]}"
+        stock_entry = StockEntry.objects.create(
+            name=stock_name,
+            purpose="receipt",
+            posting_date=timezone.now(),
+            remarks=f"Nhập kho từ lô hàng {shipment.shipment_num}",
+            status="posted",
+            purchase_order=po,
+            shipment=shipment,
+        )
+        logger.info(
+            "shipment_complete: created StockEntry id=%s name=%s",
+            stock_entry.id,
+            stock_name,
+            extra={"shipment_id": str(shipment.id), "stock_entry_id": str(stock_entry.id)},
+        )
+    except Exception:
+        logger.exception("shipment_complete: failed to create StockEntry for shipment_id=%s", shipment.id)
+        raise
 
     for d in details:
         qty = Decimal(str(d["quantity"]))
         if qty > 0:
-            StockEntryDetail.objects.create(
-                parent=stock_entry,
-                item_id=d["item_id"],
-                quantity=qty,
-                target_warehouse_id=d["target_warehouse_id"],
-            )
-            StockLedger.objects.create(
-                item_id=d["item_id"],
-                warehouse_id=d["target_warehouse_id"],
-                posting_date=stock_entry.posting_date,
-                actual_quantity=qty,
-                voucher_number=stock_entry.name,
-                voucher_type="Stock In",
-            )
+            try:
+                StockEntryDetail.objects.create(
+                    parent=stock_entry,
+                    item_id=d["item_id"],
+                    quantity=qty,
+                    target_warehouse_id=d["target_warehouse_id"],
+                )
+                StockLedger.objects.create(
+                    item_id=d["item_id"],
+                    warehouse_id=d["target_warehouse_id"],
+                    posting_date=stock_entry.posting_date,
+                    actual_quantity=qty,
+                    voucher_number=stock_entry.name,
+                    voucher_type="Stock In",
+                )
+            except Exception:
+                logger.exception(
+                    "shipment_complete: failed to create StockEntryDetail/Ledger item_id=%s qty=%s",
+                    d.get("item_id"),
+                    qty,
+                )
+                raise
+
+    logger.info(
+        "shipment_complete: created StockEntryDetails for shipment_id=%s",
+        shipment.id,
+    )
 
     # Bước 2: Cập nhật PurchaseInvoice liên kết với StockEntry
-    PurchaseInvoice.objects.filter(order=po, stock_entry__isnull=True).update(stock_entry=stock_entry)
+    updated_invoices = PurchaseInvoice.objects.filter(order=po, stock_entry__isnull=True).update(
+        stock_entry=stock_entry
+    )
+    logger.info(
+        "shipment_complete: linked %d PurchaseInvoices to StockEntry %s",
+        updated_invoices,
+        stock_entry.id,
+    )
 
     # Bước 3: Tạo CashFlowTransaction cho chi phí logistic
     if total_logistic_fees > 0:
-        CashFlowTransaction.objects.create(
-            name=f"CF-PAY-LOG-{shipment.shipment_num[:10]}-{str(uuid.uuid4())[:4]}",
-            payment_type="pay",
-            category="Chi phí vận chuyển lô hàng",
-            payment_method="bank_transfer",
-            amount=total_logistic_fees,
-            payment_date=timezone.now().date(),
-            purchase_order=po,
-            status="pending_approval",
-            remarks=f"Thanh toán chi phí logistic dồn tích cho Lô Hàng {shipment.shipment_num}",
-        )
+        try:
+            cf = CashFlowTransaction.objects.create(
+                name=f"CF-PAY-LOG-{shipment.shipment_num[:10]}-{str(uuid.uuid4())[:4]}",
+                payment_type="pay",
+                category="Chi phí vận chuyển lô hàng",
+                payment_method="bank_transfer",
+                amount=total_logistic_fees,
+                payment_date=timezone.now().date(),
+                purchase_order=po,
+                status="pending_approval",
+                remarks=f"Thanh toán chi phí logistic dồn tích cho Lô Hàng {shipment.shipment_num}",
+            )
+            logger.info(
+                "shipment_complete: created CashFlow id=%s amount=%s for shipment_id=%s",
+                cf.id,
+                total_logistic_fees,
+                shipment.id,
+            )
+        except Exception:
+            logger.exception("shipment_complete: failed to create CashFlow for shipment_id=%s", shipment.id)
+            raise
 
     # Bước 4: Cập nhật Shipment status
     shipment.status = Shipment.Status.COMPLETED
@@ -890,6 +969,12 @@ def shipment_complete(
 
     # Bước 5: Cập nhật PO status
     purchase_order_update_status(po)
+
+    logger.info(
+        "shipment_complete: completed shipment_id=%s total_logistic_fees=%s",
+        shipment.id,
+        total_logistic_fees,
+    )
 
     create_system_log(
         user=user,

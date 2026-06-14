@@ -73,6 +73,32 @@ class TestPurchaseAPIViews:
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.data == {"error": "Không có quyền"}
 
+    def test_purchase_order_receive_api_returns_invoice_payload(self, authenticated_client):
+        """Đảm bảo cross-module import PurchaseInvoiceSerializer vẫn hoạt động sau khi tài liệu hóa."""
+        import uuid
+        from unittest.mock import patch
+
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory, PurchaseOrderFactory
+
+        order = PurchaseOrderFactory(status="approved")
+        invoice = PurchaseInvoiceFactory(order=order)
+
+        with patch("apps.purchasing.api.v1.views.purchase_order_receive_goods") as mock_receive:
+            mock_receive.return_value = invoice
+
+            url = reverse("purchase-order-receive", kwargs={"pk": order.id})
+            data = {"target_warehouse_id": str(uuid.uuid4())}
+
+            response = authenticated_client.post(url, data, format="json")
+            assert response.status_code == status.HTTP_200_OK
+            mock_receive.assert_called_once_with(
+                user=authenticated_client.handler._force_user,
+                order_id=str(order.id),
+                target_warehouse_id=data["target_warehouse_id"],
+            )
+            assert "total_amount" in response.data
+            assert "id" in response.data
+
 
 class TestShipmentAPIViews:
     @pytest.fixture

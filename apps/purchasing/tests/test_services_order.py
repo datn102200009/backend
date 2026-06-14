@@ -609,3 +609,17 @@ class TestPurchaseOrderServices:
             pass  # We only care that check_permission was called
 
         mock_permission_checker.assert_called_with(user, "purchasing.cancel_order")
+
+    def test_purchase_order_approve_log_no_stock_entry_id(self, setup_data):
+        """Log approve KHÔNG chứa stock_entry_id vì không còn tạo StockEntry nháp."""
+        from apps.accounts.models import SystemLog
+        from apps.purchasing.services import purchase_order_approve
+
+        user, vendor, item = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        purchase_order_approve(user=user, order_id=str(order.id))
+        log = SystemLog.objects.filter(table_name="purchase_order", record_id=str(order.id), action="approve").first()
+        assert log is not None
+        assert "stock_entry_id" not in log.new_value
+        assert log.new_value.get("invoice_id") is not None
