@@ -216,10 +216,12 @@ class TestDashboardSelectors:
         res = get_finance_depreciation_status()
         assert res["depreciated_assets_count"] == 1
         assert res["pending_assets_count"] == 0
-        assert res["total_depreciation_amount"] == "100.00"
+        assert "total_depreciation_amount" not in res
         assert res["is_done"] is True
         assert res["total_count"] == 1
         assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["latest_depreciation_amount"] == "100.00"
+        assert res["top_items"][0]["estimated_depreciation_amount"] == "0.00"
 
     def test_hrm_payroll_lifecycle_status(self):
         emp = Employee.objects.create(employee_id="E-01", full_name="Employee 1", employment_status="active")
@@ -233,11 +235,15 @@ class TestDashboardSelectors:
             status="calculated",
         )
         res = get_hrm_payroll_lifecycle_status()
-        assert res["status"] == "calculated"
-        assert res["calculated_slips_count"] == 1
-        assert res["net_pay_total"] == "4500.00"
         assert res["total_count"] == 1
+        assert res["is_empty"] is False
         assert len(res["top_items"]) == 1
+        item = res["top_items"][0]
+        assert item["salary_period"] == timezone.now().strftime("%Y-%m")
+        assert item["status"] == "calculated"
+        assert item["status_label"] == "Đã tính toán"
+        assert item["net_pay_total"] == "4500.00"
+        assert item["slip_count"] == 1
 
     def test_hrm_pending_leave_requests(self):
         emp = Employee.objects.create(employee_id="E-02", full_name="Employee 2", employment_status="active")
@@ -668,6 +674,56 @@ class TestDashboardSelectors:
         assert res["summary"]["receive_total"] == "1500.50"
         assert res["summary"]["pay_total"] == "800.25"
         assert res["summary"]["net_cashflow"] == "700.25"
+
+    def test_low_stock_returns_all_products_with_balance(self):
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Low Stock Test")
+        uom_pcs = UOMFactory(name="cái")
+        item_normal = ItemFactory(stock_uom=uom_pcs, item_code="RAW-NORM", item_name="Bulong Normal")
+        # normal balance 300 pieces (above fallback threshold of 200, status should be normal)
+        StockLedger.objects.create(
+            item=item_normal,
+            warehouse=wh_raw,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("300.00"),
+            voucher_type="Stock In",
+        )
+        res = get_warehouse_low_stock_alerts()
+        # verify the item is returned even though its status is normal
+        assert res["total_count"] >= 1
+        item_data = [i for i in res["items"] if i["item_code"] == "RAW-NORM"][0]
+        assert item_data["status"] == "normal"
+        assert item_data["reason"] == ""
+        assert float(item_data["shortage_ratio"]) == 0.0
+
+    def test_low_stock_sort_by_shortage_ratio(self):
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Sort Test")
+        uom_pcs = UOMFactory(name="cái")
+        item_a = ItemFactory(stock_uom=uom_pcs, item_code="RAW-A", item_name="Bulong A")
+        item_b = ItemFactory(stock_uom=uom_pcs, item_code="RAW-B", item_name="Bulong B")
+
+        # item_a has balance 50/200 -> shortage_ratio = 1 - 50/200 = 0.75 (critical)
+        StockLedger.objects.create(
+            item=item_a,
+            warehouse=wh_raw,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("50.00"),
+            voucher_type="Stock In",
+        )
+        # item_b has balance 150/200 -> shortage_ratio = 1 - 150/200 = 0.25 (critical)
+        StockLedger.objects.create(
+            item=item_b,
+            warehouse=wh_raw,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("150.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        # Find raw-a and raw-b in the response items
+        items = [i for i in res["items"] if i["item_code"] in ["RAW-A", "RAW-B"]]
+        # Since both are critical, RAW-A should be sorted before RAW-B because it has higher shortage_ratio
+        assert items[0]["item_code"] == "RAW-A"
+        assert items[1]["item_code"] == "RAW-B"
 
 
 class TestFormatNum:

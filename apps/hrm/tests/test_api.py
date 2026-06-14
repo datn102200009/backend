@@ -646,3 +646,47 @@ class TestHrmAPI:
             assert response_next.status_code == 200
             assert len(response_next.data) == 1
             assert response_next.data[0]["name"] == "Tết Tây Liên Năm"
+
+    def test_salary_periods_list_view(self, mock_check, auth_client):
+        from decimal import Decimal
+
+        from apps.finance.models import SalarySlip
+        from apps.hrm.tests.factories import EmployeeFactory
+
+        emp1 = EmployeeFactory()
+        emp2 = EmployeeFactory()
+        # Clean up existing salary slips
+        SalarySlip.objects.all().delete()
+
+        SalarySlip.objects.create(
+            name="SLIP-1",
+            employee=emp1,
+            salary_period="2026-05",
+            base_salary=Decimal("5000.00"),
+            gross_pay=Decimal("5000.00"),
+            net_pay=Decimal("4500.00"),
+            status="draft",
+        )
+        SalarySlip.objects.create(
+            name="SLIP-2",
+            employee=emp1,
+            salary_period="2026-06",
+            base_salary=Decimal("5000.00"),
+            gross_pay=Decimal("5000.00"),
+            net_pay=Decimal("4500.00"),
+            status="draft",
+        )
+        SalarySlip.objects.create(
+            name="SLIP-3",
+            employee=emp2,
+            salary_period="2026-05",
+            base_salary=Decimal("5000.00"),
+            gross_pay=Decimal("5000.00"),
+            net_pay=Decimal("4500.00"),
+            status="draft",
+        )
+
+        url = "/api/v1/hrm/salary-periods/"
+        response = auth_client.get(url)
+        assert response.status_code == 200
+        assert response.data == ["2026-06", "2026-05"]
