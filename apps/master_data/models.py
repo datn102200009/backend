@@ -235,6 +235,43 @@ class WorkOrder(BaseModel):
         return self.name
 
 
+class WorkOrderFixedAsset(BaseModel):
+    """
+    Bảng trung gian (N-N) giữa WorkOrder và FixedAsset.
+    Một WorkOrder có thể dùng 0, 1 hoặc nhiều tài sản UOP.
+    Một FixedAsset có thể được dùng cho nhiều WorkOrder.
+    """
+
+    work_order = models.ForeignKey(
+        "WorkOrder",
+        on_delete=models.CASCADE,
+        related_name="fixed_asset_links",
+    )
+    fixed_asset = models.ForeignKey(
+        "finance.FixedAsset",
+        on_delete=models.PROTECT,
+        related_name="work_order_links",
+    )
+
+    class Meta:
+        db_table = "work_order_fixed_asset"
+        verbose_name = "Work Order - Fixed Asset Link"
+        verbose_name_plural = "Work Order - Fixed Asset Links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["work_order", "fixed_asset"],
+                name="unique_work_order_fixed_asset",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["work_order"]),
+            models.Index(fields=["fixed_asset"]),
+        ]
+
+    def __str__(self):
+        return f"WO:{self.work_order_id} ↔ FA:{self.fixed_asset_id}"
+
+
 class BOM(BaseModel):
     """
     Bill of Materials (Định mức vật tư).
@@ -251,14 +288,6 @@ class BOM(BaseModel):
         help_text="Số lượng thành phẩm tiêu chuẩn cho định mức này",
     )
     description = models.TextField(null=True, blank=True)
-    mold = models.ForeignKey(
-        "finance.FixedAsset",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        db_index=True,
-        related_name="boms",
-    )
 
     class Meta:
         db_table = "bom"

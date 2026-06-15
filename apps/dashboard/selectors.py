@@ -862,64 +862,80 @@ def get_finance_unpaid_sales_invoices():
 def get_finance_depreciation_status():
     current_period = timezone.now().strftime("%Y-%m")
 
-    # 1. Tìm các tài sản đã chạy khấu hao trong kỳ này
     depreciated_logs = FixedAssetDepreciationLog.objects.filter(period=current_period)
-    depreciated_assets_count = depreciated_logs.values("asset_id").distinct().count()
+    depreciated_asset_ids = set(depreciated_logs.values_list("asset_id", flat=True))
 
-    # 2. Lấy danh sách tài sản chờ khấu hao (remaining_life_months > 0 và chưa chạy trong kỳ)
-    waiting_assets = FixedAsset.objects.filter(remaining_life_months__gt=0).exclude(
-        id__in=depreciated_logs.values_list("asset_id", flat=True)
+    waiting_assets = FixedAsset.objects.filter(is_active=True, status="active", remaining_life_months__gt=0).exclude(
+        id__in=depreciated_asset_ids
     )
     pending_assets_count = waiting_assets.count()
     is_done = pending_assets_count == 0
 
-    total_count = depreciated_assets_count + pending_assets_count
+    all_assets = FixedAsset.objects.filter(is_active=True).prefetch_related("work_order_links").order_by("-created_at")
+    total_count = all_assets.count()
 
-    top_assets = FixedAsset.objects.all().order_by("-created_at")[:5]
-    depreciated_asset_ids = set(depreciated_logs.values_list("asset_id", flat=True))
+    items_list = []
+    for asset in all_assets:
+        depreciable_value = asset.original_value - asset.salvage_value
+        remaining = depreciable_value - asset.accumulated_depreciation
+        if remaining < 0:
+            remaining = Decimal("0.00")
 
-    top_asset_ids = [a.id for a in top_assets]
-    logs = (
-        FixedAssetDepreciationLog.objects.filter(asset_id__in=top_asset_ids)
-        .exclude(period__gt=current_period)
-        .order_by("asset_id", "-period")
-    )
+        alerts = []
+        if asset.status == "disposed":
+            alerts.append(
+                {
+                    "category": "disposed",
+                    "level": "normal",
+                    "reason": f"Tài sản đã thanh lý vào ngày {asset.disposal_date.strftime('%d/%m/%Y') if asset.disposal_date else ''}.",
+                }
+            )
+        else:
+            if remaining <= Decimal("0.00"):
+                alerts.append(
+                    {"category": "fully_depreciated", "level": "critical", "reason": "Tài sản đã khấu hao hết giá trị."}
+                )
+            elif asset.remaining_life_months <= 2:
+                alerts.append(
+                    {
+                        "category": "near_end",
+                        "level": "warning",
+                        "reason": f"Còn {asset.remaining_life_months} tháng là hết hạn sử dụng.",
+                    }
+                )
 
-    latest_logs_map = {}
-    for log in logs:
-        if log.asset_id not in latest_logs_map:
-            latest_logs_map[log.asset_id] = log
+            if asset.depreciation_method == "unit_of_production":
+                if not asset.work_order_links.exists():
+                    alerts.append(
+                        {
+                            "category": "uop_unassigned",
+                            "level": "warning",
+                            "reason": "Tài sản UOP chưa được gán cho lệnh sản xuất nào.",
+                        }
+                    )
 
-    top_items = []
-    for a in top_assets:
-        latest_log = latest_logs_map.get(a.id)
-        latest = latest_log.depreciation_amount if latest_log else None
-
-        estimated = Decimal("0")
-        if a.id not in depreciated_asset_ids:
-            try:
-                if a.useful_life_months > 0:
-                    estimated = (a.original_value - a.salvage_value) / Decimal(str(a.useful_life_months))
-            except Exception:
-                pass
-
-        top_items.append(
+        items_list.append(
             {
-                "id": str(a.id),
-                "asset_code": a.asset_code,
-                "asset_name": a.asset_name,
-                "status": "Đã hoàn tất" if a.id in depreciated_asset_ids else "Chờ khấu hao",
-                "latest_depreciation_amount": f"{latest:.2f}" if latest is not None else None,
-                "estimated_depreciation_amount": f"{estimated:.2f}",
+                "id": str(asset.id),
+                "asset_code": asset.asset_code,
+                "asset_name": asset.asset_name,
+                "depreciation_method": asset.depreciation_method,
+                "original_value": f"{asset.original_value:.2f}",
+                "salvage_value": f"{asset.salvage_value:.2f}",
+                "accumulated_depreciation": f"{asset.accumulated_depreciation:.2f}",
+                "remaining_value": f"{remaining:.2f}",
+                "status": asset.status,
+                "alerts": alerts,
             }
         )
 
     return {
+        "items": items_list,
         "total_count": total_count,
-        "top_items": top_items,
-        "depreciated_assets_count": depreciated_assets_count,
-        "pending_assets_count": pending_assets_count,
+        "current_period": current_period,
         "is_done": is_done,
+        "depreciated_assets_count": len(depreciated_asset_ids),
+        "pending_assets_count": pending_assets_count,
     }
 
 

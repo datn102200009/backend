@@ -17,6 +17,7 @@ from apps.manufacturing.api.v1.views import (
     work_order_create_view,
     work_order_declare_production_view,
     work_order_detail_view,
+    work_order_fixed_assets_update_view,
     work_order_list_view,
 )
 
@@ -55,5 +56,10 @@ urlpatterns = [
         "work-order/<uuid:work_order_id>/",
         work_order_detail_view,
         name="work-order-detail",
+    ),
+    path(
+        "work-order/<uuid:work_order_id>/fixed-assets/",
+        work_order_fixed_assets_update_view,
+        name="work-order-fixed-assets-update",
     ),
 ]

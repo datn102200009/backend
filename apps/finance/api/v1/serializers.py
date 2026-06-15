@@ -111,6 +111,12 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             "remaining_value",
             "department",
             "is_active",
+            "status",
+            "purchase_date",
+            "disposal_date",
+            "disposal_value",
+            "vendor_name",
+            "payment_method",
             "created_at",
             "updated_at",
         ]
@@ -128,8 +134,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         return str(value.quantize(Decimal("0.01")))
 
 
-class FixedAssetCreateInputSerializer(serializers.Serializer):
-    asset_code = serializers.CharField(max_length=100)
+class FixedAssetPurchaseInputSerializer(serializers.Serializer):
     asset_name = serializers.CharField(max_length=255)
     original_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
     salvage_value = serializers.DecimalField(
@@ -138,25 +143,57 @@ class FixedAssetCreateInputSerializer(serializers.Serializer):
     depreciation_method = serializers.ChoiceField(
         choices=[("straight_line", "Đường thẳng"), ("unit_of_production", "Sản lượng")]
     )
-    useful_life_months = serializers.IntegerField(min_value=1)
+    useful_life_months = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     designed_capacity = serializers.DecimalField(
         max_digits=15, decimal_places=2, min_value=0.01, required=False, allow_null=True
     )
-    department = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    purchase_date = serializers.DateField()
+    vendor_name = serializers.CharField(max_length=255)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")], default="bank_transfer"
+    )
+
+    def validate(self, attrs):
+        depreciation_method = attrs.get("depreciation_method")
+        useful_life_months = attrs.get("useful_life_months")
+        designed_capacity = attrs.get("designed_capacity")
+
+        if depreciation_method == "straight_line":
+            if useful_life_months is None:
+                raise serializers.ValidationError(
+                    {"useful_life_months": "Thời gian khấu hao là bắt buộc đối với phương pháp khấu hao đường thẳng."}
+                )
+            if designed_capacity is not None:
+                raise serializers.ValidationError(
+                    {
+                        "designed_capacity": "Công suất thiết kế không được cung cấp đối với phương pháp khấu hao đường thẳng."
+                    }
+                )
+        elif depreciation_method == "unit_of_production":
+            if useful_life_months is not None:
+                raise serializers.ValidationError(
+                    {
+                        "useful_life_months": "Thời gian khấu hao không được cung cấp đối với phương pháp khấu hao theo sản lượng."
+                    }
+                )
+            if not designed_capacity or designed_capacity <= 0:
+                raise serializers.ValidationError(
+                    {
+                        "designed_capacity": "Công suất thiết kế là bắt buộc và phải lớn hơn 0 đối với phương pháp khấu hao theo sản lượng."
+                    }
+                )
+        return attrs
+
+
+class FixedAssetRequestDisposeInputSerializer(serializers.Serializer):
+    disposal_date = serializers.DateField()
+    disposal_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0, default=Decimal("0.00"))
+    remarks = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class FixedAssetUpdateInputSerializer(serializers.Serializer):
     asset_name = serializers.CharField(max_length=255, required=False)
-    original_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01, required=False)
-    salvage_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0, required=False)
-    depreciation_method = serializers.ChoiceField(
-        choices=[("straight_line", "Đường thẳng"), ("unit_of_production", "Sản lượng")], required=False
-    )
     useful_life_months = serializers.IntegerField(min_value=1, required=False)
-    designed_capacity = serializers.DecimalField(
-        max_digits=15, decimal_places=2, min_value=0.01, required=False, allow_null=True
-    )
-    department = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
 
 
 class RunDepreciationInputSerializer(serializers.Serializer):

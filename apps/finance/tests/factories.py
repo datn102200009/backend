@@ -28,11 +28,31 @@ class FixedAssetFactory(factory.django.DjangoModelFactory):
     original_value = fuzzy.FuzzyDecimal(1000.00, 10000.00, 2)
     salvage_value = fuzzy.FuzzyDecimal(0.00, 500.00, 2)
     depreciation_method = "straight_line"
-    useful_life_months = fuzzy.FuzzyInteger(6, 60)
-    remaining_life_months = factory.SelfAttribute("useful_life_months")
-    designed_capacity = fuzzy.FuzzyDecimal(1000, 5000, 2)
+
+    @factory.lazy_attribute
+    def useful_life_months(self):
+        if self.depreciation_method == "unit_of_production":
+            return None
+        return 24
+
+    @factory.lazy_attribute
+    def remaining_life_months(self):
+        if self.depreciation_method == "unit_of_production":
+            return None
+        return self.useful_life_months
+
+    @factory.lazy_attribute
+    def designed_capacity(self):
+        if self.depreciation_method == "straight_line":
+            return None
+        return 10000
+
     accumulated_depreciation = fuzzy.FuzzyDecimal(0, 0, 2)
     department = factory.Faker("word")
+    status = "active"
+    purchase_date = factory.LazyFunction(lambda: timezone.now().date())
+    disposal_date = None
+    disposal_value = None
 
 
 class FixedAssetDepreciationLogFactory(factory.django.DjangoModelFactory):

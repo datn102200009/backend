@@ -80,16 +80,6 @@ components:
           nullable: true
         is_active:
           type: boolean
-        mold:
-          type: string
-          format: uuid
-          nullable: true
-        mold_code:
-          type: string
-          nullable: true
-        mold_name:
-          type: string
-          nullable: true
         items_count:
           type: integer
         items:
@@ -118,10 +108,6 @@ components:
           type: number
         description:
           type: string
-          nullable: true
-        mold_id:
-          type: string
-          format: uuid
           nullable: true
         items:
           type: array
@@ -220,6 +206,23 @@ components:
         remarks:
           type: string
           nullable: true
+        fixed_assets:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              fixed_asset_id:
+                type: string
+                format: uuid
+              asset_code:
+                type: string
+              asset_name:
+                type: string
+              depreciation_method:
+                type: string
         created_at:
           type: string
           format: date-time
@@ -263,6 +266,21 @@ components:
         remarks:
           type: string
           nullable: true
+        fixed_asset_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+    WorkOrderFixedAssetsUpdateInput:
+      type: object
+      properties:
+        fixed_asset_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
     WorkOrderDeclareInput:
       type: object
       required:
@@ -664,6 +682,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkOrder'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /manufacturing/work-order/{work_order_id}/fixed-assets/:
+    put:
+      summary: Cập nhật danh sách tài sản cố định (UOP) cho Work Order
+      description: Gán/thay thế toàn bộ danh sách tài sản cố định (UOP) cho Lệnh sản xuất.
+      tags:
+        - Work Orders
+      parameters:
+        - in: path
+          name: work_order_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkOrderFixedAssetsUpdateInput'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkOrder'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '401':

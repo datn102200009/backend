@@ -87,9 +87,9 @@ WIDGETS_REGISTRY = {
     },
     "finance_depreciation_status": {
         "permission": "finance.view_fixed_asset",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Khấu hao tài sản cố định",
+        "type": "donut_chart",
+        "size": "2x2",
+        "title": "Theo dõi khấu hao tài sản",
         "quick_links": ["/finance/fixed-assets"],
     },
     "hrm_payroll_lifecycle_status": {

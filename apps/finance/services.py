@@ -15,8 +15,8 @@ import re
 from decimal import Decimal
 from typing import Any, Optional
 
-from django.db import transaction
-from django.db.models import Sum
+from django.db import models, transaction
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -264,12 +264,56 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
         raise ValidationException("Chỉ có thể phê duyệt phiếu chi ở trạng thái Chờ duyệt.")
 
     # Kích hoạt cập nhật công nợ/ứng trước của Hóa đơn/Đơn hàng liên quan
-    _apply_cash_flow_effect(tx, tx.amount)
+    if not tx.fixed_asset_id:
+        _apply_cash_flow_effect(tx, tx.amount)
 
     tx.status = "posted"
     tx.approved_by = user
     tx.approved_at = timezone.now()
     tx.save()
+
+    if tx.fixed_asset_id:
+        asset = tx.fixed_asset
+        if tx.payment_type == "pay":
+            if asset.status == "pending_receive":
+                asset.status = "idle"
+                if not asset.purchase_date:
+                    asset.purchase_date = tx.payment_date
+                asset.save()
+                create_system_log(
+                    user=user,
+                    action="auto_activate",
+                    table_name="fixed_asset",
+                    record_id=str(asset.id),
+                    new_value={"status": "idle", "purchase_date": str(asset.purchase_date)},
+                )
+            else:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Hook auto_activate skip: asset {asset.id} status is {asset.status}, expected pending_receive"
+                )
+        elif tx.payment_type == "receive":
+            if asset.status == "pending_dispose":
+                asset.status = "disposed"
+                if not asset.disposal_date:
+                    asset.disposal_date = tx.payment_date
+                asset.save()
+                create_system_log(
+                    user=user,
+                    action="auto_dispose",
+                    table_name="fixed_asset",
+                    record_id=str(asset.id),
+                    new_value={"status": "disposed", "disposal_date": str(asset.disposal_date)},
+                )
+            else:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Hook auto_dispose skip: asset {asset.id} status is {asset.status}, expected pending_dispose"
+                )
 
     create_system_log(
         user=user,
@@ -279,6 +323,83 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
         new_value={"status": tx.status, "approved_by": str(user.id)},
     )
 
+    return tx
+
+
+@transaction.atomic
+def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTransaction:
+    """
+    Từ chối phiếu dòng tiền. Nếu CF liên quan đến TSCĐ, revert asset status.
+    """
+    PermissionChecker.check_permission(user, "finance.approve_cash_flow")
+
+    tx = CashFlowTransaction.objects.select_for_update().filter(id=tx_id).first()
+    if not tx:
+        raise NotFoundException("Phiếu chi dòng tiền không tồn tại.")
+    if tx.status != "pending_approval":
+        raise ValidationException("Chỉ có thể từ chối phiếu ở trạng thái Chờ duyệt.")
+
+    if tx.fixed_asset_id:
+        asset = tx.fixed_asset
+        if tx.payment_type == "pay" and asset.status == "pending_receive":
+            # Không duyệt mua: xóa asset + PO/PI liên quan
+            # Clear FK trên CF trước khi xóa PO/PI
+            po_id = tx.purchase_order_id
+            pi_id = tx.purchase_invoice_id
+
+            tx.purchase_order = None
+            tx.purchase_invoice = None
+            tx.save(update_fields=["purchase_order", "purchase_invoice"])
+
+            from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
+
+            if po_id:
+                po = PurchaseOrder.objects.filter(id=po_id).first()
+                if po:
+                    po.delete()
+            if pi_id:
+                pi = PurchaseInvoice.objects.filter(id=pi_id).first()
+                if pi:
+                    pi.delete()
+
+            asset.delete()
+            tx.fixed_asset = None
+
+            create_system_log(
+                user=user,
+                action="reject_purchase",
+                table_name="fixed_asset",
+                record_id=str(asset.id),
+                new_value={"deleted": True, "reason": "Từ chối đơn duyệt mua"},
+            )
+        elif tx.payment_type == "receive" and asset.status == "pending_dispose":
+            # Không duyệt thanh lý: trở về idle
+            asset.status = "idle"
+            asset.disposal_date = None
+            asset.disposal_value = None
+            asset.save()
+            create_system_log(
+                user=user,
+                action="reject_dispose",
+                table_name="fixed_asset",
+                record_id=str(asset.id),
+                new_value={"status": "idle", "reverted_from": "pending_dispose"},
+            )
+
+    tx.status = "rejected"
+    tx.approved_by = user
+    tx.approved_at = timezone.now()
+    if remarks:
+        tx.remarks = (tx.remarks or "") + f"\n[Từ chối] {remarks}"
+    tx.save()
+
+    create_system_log(
+        user=user,
+        action="reject",
+        table_name="cash_flow_transaction",
+        record_id=str(tx.id),
+        new_value={"status": "rejected", "rejected_by": str(user.id)},
+    )
     return tx
 
 
@@ -331,17 +452,81 @@ def cash_flow_reverse(
     return reverse_tx
 
 
+def _create_po_pi_for_asset(asset: FixedAsset):
+    """Tạo PO + PI PAID cho asset (mua tài sản cố định)."""
+    from apps.master_data.models import Item
+    from apps.procurement.models import Supplier
+    from apps.purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine
+
+    if asset.vendor_name:
+        vendor, _ = Supplier.objects.get_or_create(
+            name=asset.vendor_name, defaults={"supplier_name": asset.vendor_name, "is_active": True}
+        )
+    else:
+        vendor = Supplier.objects.filter(name="NCC_TSCĐ").first() or Supplier.objects.first()
+        if not vendor:
+            vendor = Supplier.objects.create(
+                name="NCC_TSCĐ", supplier_name="Nhà cung cấp tài sản cố định", is_active=True
+            )
+
+    item = Item.objects.filter(item_code="FA_PLACEHOLDER").first() or Item.objects.first()
+    if not item:
+        item = Item.objects.create(
+            item_code="FA_PLACEHOLDER", item_name="Tài sản cố định", is_active=True, is_import=False, status="active"
+        )
+
+    p_date = asset.purchase_date or timezone.now().date()
+
+    po = PurchaseOrder.objects.create(
+        vendor=vendor,
+        status=PurchaseOrder.Status.COMPLETED,
+        total_amount=asset.original_value,
+        advance_paid_amount=asset.original_value,
+        payment_fulfillment_rate=Decimal("100.00"),
+        receipt_fulfillment_rate=Decimal("100.00"),
+        expected_delivery_date=p_date,
+    )
+    PurchaseOrderLine.objects.create(
+        order=po,
+        item=item,
+        quantity=Decimal("1.00"),
+        unit_price=asset.original_value,
+        line_total=asset.original_value,
+    )
+
+    pi = PurchaseInvoice.objects.create(
+        order=po,
+        vendor=vendor,
+        status=PurchaseInvoice.Status.PAID,
+        total_amount=asset.original_value,
+        paid_amount=asset.original_value,
+        due_date=p_date,
+    )
+    PurchaseInvoiceLine.objects.create(
+        invoice=pi,
+        item=item,
+        quantity=Decimal("1.00"),
+        unit_price=asset.original_value,
+        line_total=asset.original_value,
+    )
+    return po, pi
+
+
 @transaction.atomic
 def fixed_asset_create(
     *,
     user: User,
-    asset_code: str,
     asset_name: str,
     original_value: Decimal,
     salvage_value: Decimal = Decimal("0.00"),
     depreciation_method: str,
-    useful_life_months: int,
+    useful_life_months: Optional[int] = None,
     designed_capacity: Optional[Decimal] = None,
+    purchase_date: Optional[str] = None,
+    vendor_name: Optional[str] = None,
+    payment_method: str = "bank_transfer",
+    # Kept for compatibility:
+    asset_code: Optional[str] = None,
     department: Optional[str] = None,
 ) -> FixedAsset:
     PermissionChecker.check_permission(user, "finance.create_fixed_asset")
@@ -356,13 +541,24 @@ def fixed_asset_create(
         raise ValidationException("Phương pháp khấu hao không hợp lệ.")
 
     if depreciation_method == "straight_line":
-        if useful_life_months <= 0:
+        if useful_life_months is None or useful_life_months <= 0:
             raise ValidationException("Số tháng khấu hao hữu ích phải lớn hơn 0 đối với phương pháp đường thẳng.")
+        if designed_capacity is not None:
+            raise ValidationException(
+                "Công suất thiết kế không được cung cấp đối với phương pháp khấu hao đường thẳng."
+            )
     elif depreciation_method == "unit_of_production":
         if not designed_capacity or designed_capacity <= Decimal("0.00"):
             raise ValidationException("Công suất thiết kế phải lớn hơn 0 đối với phương pháp sản lượng.")
-        if useful_life_months <= 0:
-            raise ValidationException("Số tháng khấu hao hữu ích phải lớn hơn 0 đối với phương pháp sản lượng.")
+        if useful_life_months is not None:
+            raise ValidationException(
+                "Thời gian khấu hao không được cung cấp đối với phương pháp khấu hao theo sản lượng."
+            )
+
+    if not asset_code:
+        import uuid
+
+        asset_code = f"FA-{str(uuid.uuid4())}"
 
     # Check unique asset code
     if FixedAsset.objects.filter(asset_code=asset_code).exists():
@@ -379,6 +575,10 @@ def fixed_asset_create(
         designed_capacity=designed_capacity,
         accumulated_depreciation=Decimal("0.00"),
         department=department,
+        status="pending_receive",
+        purchase_date=purchase_date,
+        vendor_name=vendor_name,
+        payment_method=payment_method,
     )
 
     create_system_log(
@@ -388,7 +588,147 @@ def fixed_asset_create(
         record_id=str(asset.id),
         new_value={"asset_code": asset_code, "original_value": str(original_value)},
     )
+
+    # Tự tạo PO + PI + CF pending_approval
+    po, pi = _create_po_pi_for_asset(asset)
+
+    import uuid as uuid_lib
+
+    cf_name = f"CF-PAY-FA-{asset.asset_code}-{str(uuid_lib.uuid4())[:8].upper()}"
+    CashFlowTransaction.objects.create(
+        name=cf_name,
+        payment_type="pay",
+        category="Mua tài sản cố định",
+        payment_method=asset.payment_method or "bank_transfer",
+        purchase_order=po,
+        purchase_invoice=pi,
+        amount=asset.original_value,
+        payment_date=asset.purchase_date or timezone.now().date(),
+        status="pending_approval",
+        fixed_asset=asset,
+        remarks=f"Phiếu chi mua tài sản cố định: {asset.asset_name} ({asset.asset_code})",
+    )
     return asset
+
+
+@transaction.atomic
+def fixed_asset_request_dispose(
+    *,
+    user: User,
+    asset_id: str,
+    disposal_date: str,
+    disposal_value: Decimal,
+    remarks: Optional[str] = None,
+) -> FixedAsset:
+    PermissionChecker.check_permission(user, "finance.update_fixed_asset")
+
+    asset = FixedAsset.objects.select_for_update().filter(id=asset_id).first()
+    if not asset:
+        raise NotFoundException("Tài sản cố định không tồn tại.")
+
+    if asset.status == "active":
+        raise ValidationException("Tài sản đang hoạt động không thể yêu cầu thanh lý. Vui lòng kết thúc sử dụng trước.")
+
+    if asset.status != "idle":
+        raise ValidationException("Chỉ có thể yêu cầu thanh lý tài sản đang ở trạng thái nhàn rỗi.")
+
+    if disposal_value < Decimal("0.00"):
+        raise ValidationException("Giá trị thanh lý không được âm.")
+
+    if disposal_value > Decimal("0.00"):
+        asset.status = "pending_dispose"
+        asset.disposal_date = disposal_date
+        asset.disposal_value = disposal_value
+        asset.save()
+
+        import uuid
+
+        cf_name = f"CF-REV-FA-{asset.asset_code}-{str(uuid.uuid4())[:8].upper()}"
+        CashFlowTransaction.objects.create(
+            name=cf_name,
+            payment_type="receive",
+            category="Thanh lý tài sản cố định",
+            payment_method="bank_transfer",
+            amount=disposal_value,
+            payment_date=disposal_date,
+            status="pending_approval",
+            fixed_asset=asset,
+            remarks=f"Phiếu thu thanh lý tài sản cố định: {asset.asset_name} ({asset.asset_code})",
+        )
+
+        create_system_log(
+            user=user,
+            action="request_dispose",
+            table_name="fixed_asset",
+            record_id=str(asset.id),
+            new_value={"status": "pending_dispose", "disposal_value": str(disposal_value)},
+        )
+    else:
+        # Nhánh 0 đồng: set disposed ngay
+        asset.status = "disposed"
+        asset.disposal_date = disposal_date
+        asset.disposal_value = disposal_value
+        asset.save()
+
+        create_system_log(
+            user=user,
+            action="request_dispose",
+            table_name="fixed_asset",
+            record_id=str(asset.id),
+            new_value={"status": "disposed", "disposal_value": "0.00"},
+        )
+    return asset
+
+
+@transaction.atomic
+def set_fixed_asset_status_for_workorder(*, asset_ids: list[str], target_status: str, source: str) -> int:
+    """
+    Set FixedAsset status khi WorkOrder chuyển trạng thái.
+    CHỈ set nếu asset hiện ở idle (chuyển sang active) hoặc active (chuyển về idle).
+    Bảo vệ các trạng thái khác (pending_receive, pending_dispose, disposed).
+    """
+    if not asset_ids:
+        return 0
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Bảo vệ: KHÔNG đè status pending_receive / pending_dispose / disposed
+    protected_statuses = ["pending_receive", "pending_dispose", "disposed"]
+
+    if target_status == "active":
+        queryset = FixedAsset.objects.filter(id__in=asset_ids, status="idle")
+    elif target_status == "idle":
+        queryset = FixedAsset.objects.filter(id__in=asset_ids, status="active")
+    else:
+        queryset = FixedAsset.objects.filter(id__in=asset_ids).exclude(status__in=protected_statuses)
+
+    count = queryset.update(status=target_status, updated_at=timezone.now())
+    logger.info(f"[finance] Auto-set {count} FixedAsset to {target_status} (source={source})")
+    return count
+
+
+@transaction.atomic
+def validate_fixed_assets_for_workorder_start(*, asset_ids: list[str]) -> None:
+    """
+    Validate tất cả asset đều ở trạng thái idle trước khi WO chuyển in_progress.
+    Raise ValidationException với danh sách asset vi phạm nếu có.
+    """
+    if not asset_ids:
+        return
+
+    invalid_assets = (
+        FixedAsset.objects.filter(id__in=asset_ids).exclude(status="idle").values("asset_code", "asset_name", "status")
+    )
+
+    invalid_list = list(invalid_assets)
+    if invalid_list:
+        details = "\n".join(f"- [{a['asset_code']}] {a['asset_name']} (hiện tại: {a['status']})" for a in invalid_list)
+        raise ValidationException(
+            "Không thể chuyển WorkOrder sang 'in_progress' vì có tài sản "
+            f"chưa ở trạng thái 'idle'. Vui lòng đổi các tài sản sau:\n{details}"
+        )
 
 
 @transaction.atomic
@@ -397,71 +737,43 @@ def fixed_asset_update(
     user: User,
     asset_id: str,
     asset_name: Optional[str] = None,
-    original_value: Optional[Decimal] = None,
-    salvage_value: Optional[Decimal] = None,
-    depreciation_method: Optional[str] = None,
     useful_life_months: Optional[int] = None,
-    designed_capacity: Optional[Decimal] = None,
-    department: Optional[str] = None,
+    **kwargs,
 ) -> FixedAsset:
     PermissionChecker.check_permission(user, "finance.update_fixed_asset")
+
+    forbidden_keys = {"original_value", "salvage_value", "depreciation_method", "designed_capacity", "department"}
+    passed_forbidden = set(kwargs.keys()) & forbidden_keys
+    for k in forbidden_keys:
+        if kwargs.get(k) is not None:
+            passed_forbidden.add(k)
+
+    if passed_forbidden:
+        raise ValidationException(
+            f"Chỉ được phép cập nhật các trường: asset_name, useful_life_months. Gặp trường không hợp lệ: {', '.join(passed_forbidden)}."
+        )
 
     asset = FixedAsset.objects.select_for_update().filter(id=asset_id).first()
     if not asset:
         raise NotFoundException("Tài sản cố định không tồn tại.")
 
-    # If already depreciated, block modifying core values
+    if asset.status != "idle":
+        raise ValidationException("Chỉ được phép chỉnh sửa thông tin tài sản cố định đang ở trạng thái 'idle'.")
+
     has_depreciated = asset.depreciation_logs.exists()
 
     if asset_name is not None:
         asset.asset_name = asset_name
 
-    if department is not None:
-        asset.department = department
-
-    if original_value is not None:
-        if has_depreciated:
-            raise ValidationException("Không thể sửa nguyên giá của tài sản đã phát sinh khấu hao.")
-        if original_value <= Decimal("0.00"):
-            raise ValidationException("Nguyên giá tài sản phải lớn hơn 0.")
-        asset.original_value = original_value
-
-    if salvage_value is not None:
-        if has_depreciated:
-            raise ValidationException("Không thể sửa giá trị thanh lý của tài sản đã phát sinh khấu hao.")
-        if salvage_value < Decimal("0.00"):
-            raise ValidationException("Giá trị thanh lý ước tính không được âm.")
-        asset.salvage_value = salvage_value
-
-    if depreciation_method is not None:
-        if has_depreciated:
-            raise ValidationException("Không thể sửa phương pháp khấu hao của tài sản đã phát sinh khấu hao.")
-        if depreciation_method not in ["straight_line", "unit_of_production"]:
-            raise ValidationException("Phương pháp khấu hao không hợp lệ.")
-        asset.depreciation_method = depreciation_method
-
     if useful_life_months is not None:
+        if asset.depreciation_method == "unit_of_production":
+            raise ValidationException("Không thể sửa số tháng sử dụng hữu ích của tài sản khấu hao theo sản lượng.")
         if has_depreciated:
             raise ValidationException("Không thể sửa số tháng sử dụng hữu ích của tài sản đã phát sinh khấu hao.")
         if useful_life_months <= 0:
             raise ValidationException("Số tháng khấu hao hữu ích phải lớn hơn 0.")
         asset.useful_life_months = useful_life_months
         asset.remaining_life_months = useful_life_months
-
-    if designed_capacity is not None:
-        if has_depreciated:
-            raise ValidationException("Không thể sửa công suất thiết kế của tài sản đã phát sinh khấu hao.")
-        if designed_capacity <= Decimal("0.00"):
-            raise ValidationException("Công suất thiết kế phải lớn hơn 0.")
-        asset.designed_capacity = designed_capacity
-
-    # Double validation based on chosen method
-    if asset.depreciation_method == "straight_line":
-        if asset.useful_life_months <= 0:
-            raise ValidationException("Số tháng khấu hao hữu ích phải lớn hơn 0 đối với phương pháp đường thẳng.")
-    elif asset.depreciation_method == "unit_of_production":
-        if not asset.designed_capacity or asset.designed_capacity <= Decimal("0.00"):
-            raise ValidationException("Công suất thiết kế phải lớn hơn 0 đối với phương pháp sản lượng.")
 
     asset.save()
 
@@ -470,35 +782,39 @@ def fixed_asset_update(
         action="update",
         table_name="fixed_asset",
         record_id=str(asset.id),
-        new_value={"asset_name": asset.asset_name, "original_value": str(asset.original_value)},
+        new_value={"asset_name": asset.asset_name, "useful_life_months": asset.useful_life_months},
     )
     return asset
 
 
 @transaction.atomic
 def fixed_asset_delete(*, user: User, asset_id: str) -> None:
-    PermissionChecker.check_permission(user, "finance.delete_fixed_asset")
+    raise ValidationException("Tài sản cố định chỉ có thể thanh lý, không thể xóa.")
 
-    asset = FixedAsset.objects.filter(id=asset_id).first()
-    if not asset:
-        raise NotFoundException("Tài sản cố định không tồn tại.")
 
-    if asset.depreciation_logs.exists():
-        raise ValidationException("Không thể xóa tài sản cố định đã phát sinh lịch sử khấu hao.")
+def auto_run_depreciation_for_period(*, period: str, user: User) -> None:
+    """
+    Gọi run_fixed_asset_depreciation một cách im lặng.
+    Bắt lỗi NotFoundException/ValidationException để không ảnh hưởng API.
+    """
+    try:
+        if not PermissionChecker.has_permission(user, "finance.run_depreciation"):
+            return
 
-    # Check if linked to any BOM
-    if asset.boms.exists():
-        bom_names = ", ".join(asset.boms.values_list("name", flat=True))
-        raise ValidationException(f"Không thể xóa tài sản cố định đang liên kết với định mức BOM: {bom_names}.")
+        if FixedAssetDepreciationLog.objects.filter(period=period).exists():
+            return
 
-    create_system_log(
-        user=user,
-        action="delete",
-        table_name="fixed_asset",
-        record_id=str(asset.id),
-        new_value={"asset_code": asset.asset_code, "asset_name": asset.asset_name},
-    )
-    asset.delete()
+        run_fixed_asset_depreciation(user=user, period=period)
+    except (NotFoundException, ValidationException) as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Auto-depreciation skip for period {period}: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(f"Auto-depreciation error for period {period}: {e}", exc_info=True)
 
 
 @transaction.atomic
@@ -526,21 +842,24 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             microseconds=1
         )
 
-    # Process active assets in chunks using keyset pagination (Batch size: 500)
     chunk_size = 500
     last_id = None
 
     from django.db import OperationalError, connection
 
     while True:
-        qs = FixedAsset.objects.filter(
-            is_active=True,
-            remaining_life_months__gt=0,
+        from django.db.models import F
+
+        qs = FixedAsset.objects.filter(is_active=True, status="active").filter(
+            models.Q(depreciation_method="straight_line", remaining_life_months__gt=0)
+            | models.Q(
+                depreciation_method="unit_of_production",
+                accumulated_depreciation__lt=F("original_value") - F("salvage_value"),
+            )
         )
         if last_id:
             qs = qs.filter(id__gt=last_id)
 
-        # Select for update to lock the rows
         try:
             if connection.vendor == "postgresql":
                 chunk = list(qs.order_by("id")[:chunk_size].select_for_update(nowait=True))
@@ -560,9 +879,16 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
         for asset in chunk:
             last_id = asset.id
 
-            # Remainder depreciable amount
             depreciable_value = asset.original_value - asset.salvage_value
             remaining_value = depreciable_value - asset.accumulated_depreciation
+
+            if asset.depreciation_method == "straight_line" and asset.remaining_life_months == 0:
+                continue
+            if (
+                asset.depreciation_method == "unit_of_production"
+                and asset.accumulated_depreciation >= depreciable_value
+            ):
+                continue
 
             if remaining_value <= Decimal("0.00"):
                 continue
@@ -575,40 +901,32 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
                 remarks = f"Khấu hao đường thẳng kỳ {period}. (Hữu ích: {asset.useful_life_months} tháng)"
 
             elif asset.depreciation_method == "unit_of_production":
-                # Get finished products using this mold via BOM
-                product_ids = asset.boms.filter(is_active=True).values_list("item_id", flat=True)
-
-                if not product_ids:
-                    # Mold not linked to any active BOM, skip
-                    continue
-
-                # Query actual manufactured receipt quantity in StockEntryDetail
                 prod_qty_result = StockEntryDetail.objects.filter(
-                    item_id__in=product_ids,
                     target_warehouse__isnull=False,
                     parent__purpose="manufacture",
                     parent__status="posted",
+                    parent__work_order__fixed_asset_links__fixed_asset=asset,
                     parent__posting_date__range=(start_datetime, end_datetime),
                 ).aggregate(total=Sum("quantity"))
 
                 prod_qty = prod_qty_result["total"] or Decimal("0.00")
 
                 if prod_qty <= Decimal("0.00"):
-                    continue
+                    depreciation_amount = Decimal("0.00")
+                    remarks = "Không có WorkOrder nào sản xuất trong kỳ sử dụng tài sản này."
+                else:
+                    depreciation_amount = prod_qty * (depreciable_value / asset.designed_capacity)
+                    remarks = f"Khấu hao sản lượng kỳ {period} (Sản lượng thực tế: {prod_qty:.2f} cái, CS thiết kế: {asset.designed_capacity:.2f} cái)."
 
-                depreciation_amount = prod_qty * (depreciable_value / asset.designed_capacity)
-                remarks = f"Khấu hao sản lượng kỳ {period} (Sản lượng thực tế: {prod_qty:.2f} cái, CS thiết kế: {asset.designed_capacity:.2f} cái)."
-
-            # Cap depreciation amount to remaining value
             if depreciation_amount > remaining_value:
                 depreciation_amount = remaining_value
 
             depreciation_amount = depreciation_amount.quantize(Decimal("0.01"))
 
-            if depreciation_amount <= Decimal("0.00"):
+            # Save UOP logs even if amount is 0.00 (with special remarks)
+            if depreciation_amount <= Decimal("0.00") and asset.depreciation_method != "unit_of_production":
                 continue
 
-            # Save log to bulk create list
             log = FixedAssetDepreciationLog(
                 asset=asset,
                 period=period,
@@ -617,9 +935,9 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             )
             logs_to_create.append(log)
 
-            # Update asset properties
             asset.accumulated_depreciation += depreciation_amount
-            asset.remaining_life_months = max(0, asset.remaining_life_months - 1)
+            if asset.depreciation_method == "straight_line":
+                asset.remaining_life_months = max(0, asset.remaining_life_months - 1)
             assets_to_update.append(asset)
 
         if logs_to_create:
@@ -627,7 +945,6 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
         if assets_to_update:
             FixedAsset.objects.bulk_update(assets_to_update, ["accumulated_depreciation", "remaining_life_months"])
 
-    # Fetch logs from DB using select_related("asset") to prevent downstream N+1
     logs = list(
         FixedAssetDepreciationLog.objects.filter(period=period).select_related("asset").order_by("created_at", "id")
     )

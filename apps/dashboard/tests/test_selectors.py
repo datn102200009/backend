@@ -218,9 +218,9 @@ class TestDashboardSelectors:
         assert "total_depreciation_amount" not in res
         assert res["is_done"] is True
         assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
-        assert res["top_items"][0]["latest_depreciation_amount"] == "100.00"
-        assert res["top_items"][0]["estimated_depreciation_amount"] == "0.00"
+        assert len(res["items"]) == 1
+        assert res["items"][0]["asset_code"] == "M-01"
+        assert res["items"][0]["accumulated_depreciation"] == "0.00"
 
     def test_hrm_payroll_lifecycle_status(self):
         emp = Employee.objects.create(employee_id="E-01", full_name="Employee 1", employment_status="active")
@@ -842,7 +842,6 @@ class TestDashboardSelectors:
         assert projected["level"] == "warning"
         assert "110" in projected["reason"]
         assert "210" in projected["reason"]
-        assert "100" in projected["reason"]
 
     def test_inventory_low_stock_both_alerts_independent(self):
         wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")

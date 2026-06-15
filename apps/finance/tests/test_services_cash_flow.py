@@ -52,7 +52,9 @@ class TestCashFlowServices:
             )
 
     def test_cash_flow_sales_invoice_settlement(self, user):
-        invoice = SalesInvoiceFactory(total_amount=Decimal("500.00"), paid_amount=0)
+        invoice = SalesInvoiceFactory(
+            total_amount=Decimal("500.00"), paid_amount=0, order__total_amount=Decimal("500.00")
+        )
 
         tx = cash_flow_create(
             user=user,
@@ -91,3 +93,27 @@ class TestCashFlowServices:
                 payment_date="2023-10-01",
                 sales_invoice_id=str(invoice.id),
             )
+
+    def test_cash_flow_reject_non_asset_success(self, user):
+        from apps.finance.services import cash_flow_reject
+
+        po = PurchaseOrderFactory(total_amount=Decimal("1000.00"), advance_paid_amount=0)
+
+        tx = cash_flow_create(
+            user=user,
+            payment_type="pay",
+            amount=Decimal("200.00"),
+            payment_date="2023-10-01",
+            purchase_order_id=str(po.id),
+        )
+        assert tx.status == "pending_approval"
+
+        cash_flow_reject(user=user, tx_id=str(tx.id), remarks="Không duyệt")
+
+        tx.refresh_from_db()
+        assert tx.status == "rejected"
+        assert "[Từ chối] Không duyệt" in tx.remarks
+
+        # Verify no advance_paid_amount updated
+        po.refresh_from_db()
+        assert po.advance_paid_amount == 0
