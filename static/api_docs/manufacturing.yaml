@@ -633,6 +633,7 @@ paths:
   /manufacturing/work-order/list/:
     get:
       summary: Lấy danh sách lệnh sản xuất
+      description: Trả về danh sách lệnh sản xuất, được sắp xếp ưu tiên theo trạng thái (in_progress -> pending_production_complete -> pending_approval -> completed -> cancelled) rồi đến ngày tạo giảm dần (-created_at) và ID.
       parameters:
         - in: query
           name: search

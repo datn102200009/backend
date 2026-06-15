@@ -2,7 +2,7 @@ import re
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import F, QuerySet, Sum
+from django.db.models import Case, F, IntegerField, QuerySet, Sum, Value, When
 from django.utils import timezone
 
 from apps.crm.models import Customer
@@ -12,8 +12,34 @@ from apps.sales.models import SalesInvoice, SalesOrder
 def sales_order_list() -> QuerySet:
     """
     Returns a queryset of SalesOrder, optimized with select_related.
+    Sắp xếp theo độ ưu tiên trạng thái:
+    1. pending
+    2. pending_credit_approval
+    3. paid_unshipped
+    4. shipped_unpaid
+    5. cancel_pending
+    6. draft
+    7. completed
+    8. cancelled
+    Sau đó sắp xếp theo -created_at, id.
     """
-    return SalesOrder.objects.select_related("customer").order_by("-created_at", "id")
+    return (
+        SalesOrder.objects.select_related("customer")
+        .annotate(
+            status_priority=Case(
+                When(status="pending", then=Value(1)),
+                When(status="pending_credit_approval", then=Value(2)),
+                When(status="paid_unshipped", then=Value(3)),
+                When(status="shipped_unpaid", then=Value(4)),
+                When(status="cancel_pending", then=Value(5)),
+                When(status="draft", then=Value(6)),
+                When(status="completed", then=Value(7)),
+                default=Value(8),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
+    )
 
 
 def sales_order_detail(*, order_id: str) -> SalesOrder:

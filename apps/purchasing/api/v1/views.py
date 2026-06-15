@@ -131,18 +131,9 @@ class ShipmentListCreateAPIView(APIView):
 
     def get(self, request, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "purchasing.allocate_landed_cost")
-        from apps.purchasing.models import Shipment
+        from apps.purchasing.selectors import shipment_list
 
-        shipments = (
-            Shipment.objects.select_related("purchase_order")
-            .prefetch_related(
-                "purchase_order__lines__item",
-                "purchase_order__lines__item__stock_uom",
-                "stock_entries__details__item",
-                "stock_entries__details__target_warehouse",
-            )
-            .order_by("-created_at", "id")
-        )
+        shipments = shipment_list()
         return Response(ShipmentSerializer(shipments, many=True).data)
 
     def post(self, request, *args, **kwargs):
@@ -177,19 +168,9 @@ class ShipmentDetailAPIView(APIView):
 
     def get(self, request, pk, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "purchasing.allocate_landed_cost")
-        from apps.purchasing.models import Shipment
+        from apps.purchasing.selectors import shipment_detail
 
-        shipment = (
-            Shipment.objects.select_related("purchase_order")
-            .prefetch_related(
-                "purchase_order__lines__item",
-                "purchase_order__lines__item__stock_uom",
-                "stock_entries__details__item",
-                "stock_entries__details__target_warehouse",
-            )
-            .filter(id=pk)
-            .first()
-        )
+        shipment = shipment_detail(shipment_id=str(pk))
         if not shipment:
             return Response({"detail": "Lô hàng không tồn tại"}, status=status.HTTP_404_NOT_FOUND)
         return Response(ShipmentSerializer(shipment).data)

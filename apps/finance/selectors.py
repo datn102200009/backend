@@ -98,7 +98,19 @@ def sales_invoice_list() -> QuerySet:
     """Di chuyển từ apps.sales.selectors."""
     from apps.sales.models import SalesInvoice
 
-    return SalesInvoice.objects.select_related("customer", "order").order_by("-created_at", "id")
+    return (
+        SalesInvoice.objects.select_related("customer", "order")
+        .annotate(
+            status_priority=Case(
+                When(status="unpaid", then=Value(1)),
+                When(status="partial", then=Value(2)),
+                When(status="paid", then=Value(3)),
+                default=Value(4),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
+    )
 
 
 def sales_invoice_detail(*, invoice_id: str) -> SalesInvoice:
@@ -112,7 +124,19 @@ def purchase_invoice_list() -> QuerySet:
     """Di chuyển từ apps.purchasing.selectors."""
     from apps.purchasing.models import PurchaseInvoice
 
-    return PurchaseInvoice.objects.select_related("vendor", "order").order_by("-created_at", "id")
+    return (
+        PurchaseInvoice.objects.select_related("vendor", "order")
+        .annotate(
+            status_priority=Case(
+                When(status="unpaid", then=Value(1)),
+                When(status="partial", then=Value(2)),
+                When(status="paid", then=Value(3)),
+                default=Value(4),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
+    )
 
 
 def purchase_invoice_detail(*, invoice_id: str) -> PurchaseInvoice:

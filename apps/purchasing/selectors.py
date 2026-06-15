@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from django.db.models import QuerySet
+from django.db.models import Case, IntegerField, QuerySet, Value, When
 
 from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
 
@@ -13,7 +13,19 @@ def purchase_order_list() -> QuerySet:
     return (
         PurchaseOrder.objects.select_related("vendor")
         .prefetch_related("invoices", "stock_entries")
-        .order_by("-created_at", "id")
+        .annotate(
+            status_priority=Case(
+                When(status="pending", then=Value(1)),
+                When(status="paid_unshipped", then=Value(2)),
+                When(status="shipped_unpaid", then=Value(3)),
+                When(status="cancel_pending", then=Value(4)),
+                When(status="draft", then=Value(5)),
+                When(status="completed", then=Value(6)),
+                default=Value(7),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
     )
 
 
@@ -108,3 +120,54 @@ def get_supplier_ap_aging(*, supplier_id: Optional[str] = None) -> List[Dict[str
             }
         )
     return result
+
+
+def shipment_list() -> QuerySet:
+    """
+    Returns a queryset of Shipments sorted by status priority:
+    1. inspecting
+    2. draft
+    3. completed
+    4. others
+    Then by -created_at, id.
+    """
+    from apps.purchasing.models import Shipment
+
+    return (
+        Shipment.objects.select_related("purchase_order")
+        .prefetch_related(
+            "purchase_order__lines__item",
+            "purchase_order__lines__item__stock_uom",
+            "stock_entries__details__item",
+            "stock_entries__details__target_warehouse",
+        )
+        .annotate(
+            status_priority=Case(
+                When(status="inspecting", then=Value(1)),
+                When(status="draft", then=Value(2)),
+                When(status="completed", then=Value(3)),
+                default=Value(4),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
+    )
+
+
+def shipment_detail(*, shipment_id: str) -> Optional[Any]:
+    """
+    Returns a single Shipment optimized with related fields, or None.
+    """
+    from apps.purchasing.models import Shipment
+
+    return (
+        Shipment.objects.select_related("purchase_order")
+        .prefetch_related(
+            "purchase_order__lines__item",
+            "purchase_order__lines__item__stock_uom",
+            "stock_entries__details__item",
+            "stock_entries__details__target_warehouse",
+        )
+        .filter(id=shipment_id)
+        .first()
+    )

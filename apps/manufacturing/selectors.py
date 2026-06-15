@@ -8,7 +8,7 @@ Always optimize with select_related() and prefetch_related() to avoid N+1 querie
 from decimal import Decimal
 from typing import Optional
 
-from django.db.models import Q, QuerySet, Sum
+from django.db.models import Case, IntegerField, Q, QuerySet, Sum, Value, When
 
 from apps.inventory.models import StockLedger
 from apps.master_data.models import BOM, WorkOrder
@@ -77,10 +77,23 @@ def work_order_list(
     Returns:
         Optimized QuerySet
     """
-    qs = WorkOrder.objects.select_related(
-        "bom",
-        "production_item",
-    ).order_by("-created_at", "id")
+    qs = (
+        WorkOrder.objects.select_related(
+            "bom",
+            "production_item",
+        )
+        .annotate(
+            status_priority=Case(
+                When(status="in_progress", then=Value(1)),
+                When(status="pending_production_complete", then=Value(2)),
+                When(status="pending_approval", then=Value(3)),
+                When(status="completed", then=Value(4)),
+                default=Value(5),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("status_priority", "-created_at", "id")
+    )
 
     if status:
         qs = qs.filter(status=status)
