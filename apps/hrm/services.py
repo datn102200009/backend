@@ -55,7 +55,6 @@ def employee_create_with_user(
         department=data.get("department"),
         position_title=data.get("position_title"),
         salary_base=data.get("salary_base"),
-        is_union_member=data.get("is_union_member", False),
         email=data.get("email"),
         phone=data.get("phone"),
         gender=data.get("gender"),
@@ -146,7 +145,6 @@ def employee_update(
         "department",
         "position_title",
         "salary_base",
-        "is_union_member",
         "email",
         "phone",
         "gender",
@@ -367,7 +365,6 @@ def contract_terminate(
             "allowance_amount": Decimal("0.00"),
             "reward_amount_total": Decimal("0.00"),
             "discipline_deduction_total": Decimal("0.00"),
-            "union_fee_2pct": Decimal("0.00"),
             "gross_pay": Decimal("0.00"),
             "deductions": Decimal("0.00"),
             "net_pay": Decimal("0.00"),
@@ -466,10 +463,6 @@ def contract_terminate(
     overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount + ot_compensatory_amount
     overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
-    union_fee = Decimal("0.00")
-    if employee.is_union_member:
-        union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
-
     import calendar
 
     from django.db.models import Q
@@ -501,7 +494,7 @@ def contract_terminate(
 
     # 2.8. Tổng quyết toán
     gross_pay = base_salary_earned + overtime_amount_earned + allowance_amount + unused_leave_compensation
-    deductions = union_fee + discipline_total + social_insurance_deduction + resignation_fine
+    deductions = discipline_total + social_insurance_deduction + resignation_fine
     net_pay = gross_pay + reward_total - deductions
 
     remarks = (
@@ -522,7 +515,6 @@ def contract_terminate(
     slip.allowance_amount = allowance_amount
     slip.reward_amount_total = reward_total
     slip.discipline_deduction_total = discipline_total
-    slip.union_fee_2pct = union_fee
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
@@ -593,7 +585,6 @@ def contract_terminate(
         "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
-            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
             {"name": "Khấu trừ BHXH (10.5% lương)", "amount": float(social_insurance_deduction)},
         ],
     }
@@ -1493,7 +1484,6 @@ def payroll_initialize_period(
                     allowance_amount=Decimal("0.00"),
                     reward_amount_total=Decimal("0.00"),
                     discipline_deduction_total=Decimal("0.00"),
-                    union_fee_2pct=Decimal("0.00"),
                     gross_pay=Decimal("0.00"),
                     deductions=Decimal("0.00"),
                     net_pay=Decimal("0.00"),
@@ -1625,10 +1615,6 @@ def payroll_calculate_salary(
         overtime_amount_earned = Decimal("0.00")
     overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
 
-    union_fee = Decimal("0.00")
-    if employee.is_union_member:
-        union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
-
     from django.db.models import Q
 
     # Định nghĩa ngày bắt đầu của kỳ lương
@@ -1672,7 +1658,7 @@ def payroll_calculate_salary(
     allowance_amount = Decimal("0.00")
 
     gross_pay = base_salary_earned + overtime_amount_earned + allowance_amount
-    deductions = union_fee + discipline_total
+    deductions = discipline_total
     net_pay = gross_pay + reward_total - deductions
 
     remarks = slip.remarks or ""
@@ -1687,7 +1673,6 @@ def payroll_calculate_salary(
         "allowance_amount": str(slip.allowance_amount),
         "reward_amount_total": str(slip.reward_amount_total),
         "discipline_deduction_total": str(slip.discipline_deduction_total),
-        "union_fee_2pct": str(slip.union_fee_2pct),
         "gross_pay": str(slip.gross_pay),
         "deductions": str(slip.deductions),
         "net_pay": str(slip.net_pay),
@@ -1699,7 +1684,6 @@ def payroll_calculate_salary(
     slip.allowance_amount = allowance_amount
     slip.reward_amount_total = reward_total
     slip.discipline_deduction_total = discipline_total
-    slip.union_fee_2pct = union_fee
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
@@ -1766,7 +1750,6 @@ def payroll_calculate_salary(
         "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
-            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
         ],
     }
     slip.save()
@@ -1783,7 +1766,6 @@ def payroll_calculate_salary(
             "allowance_amount": str(slip.allowance_amount),
             "reward_amount_total": str(slip.reward_amount_total),
             "discipline_deduction_total": str(slip.discipline_deduction_total),
-            "union_fee_2pct": str(slip.union_fee_2pct),
             "gross_pay": str(slip.gross_pay),
             "deductions": str(slip.deductions),
             "net_pay": str(slip.net_pay),

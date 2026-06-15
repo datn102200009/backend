@@ -17,7 +17,6 @@ class SalarySlip(BaseModel):
     allowance_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     reward_amount_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     discipline_deduction_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, default=0, null=True, blank=True)
     gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     net_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)

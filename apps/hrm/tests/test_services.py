@@ -65,7 +65,6 @@ class TestEmployeeServices:
             "department": "IT",
             "position_title": "Developer",
             "salary_base": Decimal("15000000.00"),
-            "is_union_member": True,
             "create_user": False,
         }
 
@@ -98,7 +97,6 @@ class TestEmployeeServices:
             "department": "Sales",
             "position_title": "Sales Agent",
             "salary_base": Decimal("12000000.00"),
-            "is_union_member": False,
             "create_user": True,
             "username": "tranthib",
             "password": "SecurePassword123",
@@ -659,7 +657,6 @@ class TestPayrollAndRewardDisciplineServices:
         employee = EmployeeFactory(
             employee_id="EMP7006",
             salary_base=Decimal("13000000.00"),
-            is_union_member=True,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll")
@@ -721,17 +718,15 @@ class TestPayrollAndRewardDisciplineServices:
         assert calculated_slip.overtime_amount == Decimal("937500.00")
         assert calculated_slip.reward_amount_total == Decimal("1500000.00")
         assert calculated_slip.discipline_deduction_total == Decimal("500000.00")
-        assert calculated_slip.union_fee_2pct == Decimal("260000.00")
         assert calculated_slip.gross_pay == Decimal("11937500.00")
-        assert calculated_slip.deductions == Decimal("760000.00")
-        assert calculated_slip.net_pay == Decimal("12677500.00")
+        assert calculated_slip.deductions == Decimal("500000.00")
+        assert calculated_slip.net_pay == Decimal("12937500.00")
 
     def test_payroll_cash_payment_warning(self):
         # Arrange
         employee = EmployeeFactory(
             employee_id="EMP7007",
             salary_base=Decimal("12000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll")
@@ -909,7 +904,6 @@ class TestPayrollAndRewardDisciplineServices:
         employee = EmployeeFactory(
             employee_id="EMP9999",
             salary_base=Decimal("10000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll")
@@ -978,7 +972,6 @@ class TestPayrollAndRewardDisciplineServices:
         employee = EmployeeFactory(
             employee_id="EMP9998",
             salary_base=Decimal("10000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll_within")
@@ -1050,7 +1043,7 @@ class TestPayrollAndRewardDisciplineServices:
     def test_contract_terminate_lawful_resignation_with_bhxh(self):
         # Arrange
         employee = EmployeeFactory(
-            employee_id="EMP9003", salary_base=Decimal("13000000.00"), employment_status="active", is_union_member=False
+            employee_id="EMP9003", salary_base=Decimal("13000000.00"), employment_status="active"
         )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9003", status="active")
         admin = UserFactory(username="admin_test_3")
@@ -1101,7 +1094,7 @@ class TestPayrollAndRewardDisciplineServices:
     def test_contract_terminate_unlawful_resignation_without_bhxh(self):
         # Arrange
         employee = EmployeeFactory(
-            employee_id="EMP9004", salary_base=Decimal("26000000.00"), employment_status="active", is_union_member=False
+            employee_id="EMP9004", salary_base=Decimal("26000000.00"), employment_status="active"
         )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9004", status="active")
         admin = UserFactory(username="admin_test_4")
@@ -1242,7 +1235,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8800",
             salary_base=Decimal("13000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll")
@@ -1279,7 +1271,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8801",
             salary_base=Decimal("13000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll_multi")
@@ -1306,7 +1297,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8802",
             salary_base=Decimal("13000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll_spanning")
@@ -1334,7 +1324,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8803",
             salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll_ot")
@@ -1408,7 +1397,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8804",
             salary_base=Decimal("10400000.00"),  # 400.000 / day
-            is_union_member=False,
             employment_status="active",
         )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8804", status="active")
@@ -1482,7 +1470,6 @@ class TestHrmPermissionAndBypass:
         employee = EmployeeFactory(
             employee_id="EMP8809",
             salary_base=Decimal("13000000.00"),
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_payroll_simple")
@@ -1644,7 +1631,6 @@ class TestHrmCompensatoryHolidayRules:
         employee = EmployeeFactory(
             employee_id="EMP8805",
             salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
-            is_union_member=False,
             employment_status="active",
         )
         admin = UserFactory(username="admin_comp_ot")
@@ -1687,7 +1673,6 @@ class TestHrmCompensatoryHolidayRules:
         employee = EmployeeFactory(
             employee_id="EMP8806",
             salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
-            is_union_member=False,
             employment_status="active",
         )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8806", status="active")

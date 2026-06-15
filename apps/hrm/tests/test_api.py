@@ -56,7 +56,6 @@ class TestHrmAPI:
             "department": "IT",
             "position_title": "Developer",
             "salary_base": 15000000.00,
-            "is_union_member": True,
             "email": "testemail8888@example.com",
             "phone": "0123456789",
             "gender": "male",
@@ -329,7 +328,7 @@ class TestHrmAPI:
         assert SalarySlip.objects.filter(salary_period="2026-06").exists()
 
     def test_calculate_salary_slip(self, mock_check, auth_client):
-        employee = EmployeeFactory(salary_base=13000000.00, is_union_member=True)
+        employee = EmployeeFactory(salary_base=13000000.00)
         slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
 
         # Add 10 working days
@@ -341,7 +340,6 @@ class TestHrmAPI:
 
         assert response.status_code == status.HTTP_200_OK
         assert float(response.data["base_salary"]) > 0
-        assert float(response.data["union_fee_2pct"]) == 260000.00  # 2% of 13m
 
     def test_approve_salary_slip_success(self, mock_check, auth_client):
         employee = EmployeeFactory()

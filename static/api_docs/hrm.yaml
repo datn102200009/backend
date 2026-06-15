@@ -72,8 +72,6 @@ components:
           type: string
           description: Lương cơ bản dạng Decimal
           nullable: true
-        is_union_member:
-          type: boolean
         email:
           type: string
           format: email
@@ -355,8 +353,6 @@ components:
           type: string
         discipline_deduction_total:
           type: string
-        union_fee_2pct:
-          type: string
         gross_pay:
           type: string
         deductions:
@@ -593,9 +589,6 @@ paths:
                   type: number
                   format: float
                   example: 25000000.00
-                is_union_member:
-                  type: boolean
-                  example: true
                 email:
                   type: string
                   format: email
@@ -1234,6 +1227,24 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/SalarySlip'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-periods/:
+    get:
+      summary: Lấy danh sách các kỳ lương đã có
+      description: Lấy danh sách tất cả các kỳ lương duy nhất (định dạng YYYY-MM) từ các phiếu lương trong hệ thống.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':

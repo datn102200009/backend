@@ -27,7 +27,6 @@ class EmployeeFactory(factory.django.DjangoModelFactory):
     department = "HR"
     position_title = "Staff"
     salary_base = Decimal("10000000.00")
-    is_union_member = False
     email = factory.Sequence(lambda n: f"emp{n}@example.com")
     phone = "0987654321"
     gender = "male"
@@ -104,7 +103,6 @@ class SalarySlipFactory(factory.django.DjangoModelFactory):
     allowance_amount = Decimal("0.00")
     reward_amount_total = Decimal("0.00")
     discipline_deduction_total = Decimal("0.00")
-    union_fee_2pct = Decimal("0.00")
     gross_pay = Decimal("0.00")
     deductions = Decimal("0.00")
     net_pay = Decimal("0.00")

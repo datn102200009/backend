@@ -71,7 +71,6 @@ class Employee(BaseModel):
     department = models.CharField(max_length=255, null=True, blank=True)
     position_title = models.CharField(max_length=255, null=True, blank=True)
     salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    is_union_member = models.BooleanField(default=False)
     email = models.EmailField(null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
     gender = models.CharField(

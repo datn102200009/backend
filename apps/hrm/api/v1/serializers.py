@@ -168,7 +168,6 @@ class EmployeeOutputSerializer(serializers.ModelSerializer):
             "department",
             "position_title",
             "salary_base",
-            "is_union_member",
             "email",
             "phone",
             "gender",
@@ -282,7 +281,6 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
             "allowance_amount",
             "reward_amount_total",
             "discipline_deduction_total",
-            "union_fee_2pct",
             "gross_pay",
             "deductions",
             "net_pay",
@@ -307,7 +305,6 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
             ],
             "deductions": [
                 {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(obj.discipline_deduction_total or 0)},
-                {"name": "Phí công đoàn (2%)", "amount": float(obj.union_fee_2pct or 0)},
             ],
         }
 
@@ -345,7 +342,6 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
     department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    is_union_member = serializers.BooleanField(default=False)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
@@ -384,7 +380,6 @@ class EmployeeUpdateInputSerializer(serializers.Serializer):
     department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    is_union_member = serializers.BooleanField(required=False)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
