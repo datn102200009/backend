@@ -746,7 +746,7 @@ class TestPayrollAndRewardDisciplineServices:
         assert calculated_slip.remarks is not None
         assert "cảnh báo" in calculated_slip.remarks.lower() or "tiền mặt" in calculated_slip.remarks.lower()
 
-    def test_payroll_initialize_period_uses_employee_salary_base(self):
+    def test_payroll_initialize_period_sets_zero_base_salary(self):
         # Arrange
         EmployeeFactory(employee_id="EMP9001", salary_base=Decimal("15000000.00"), employment_status="active")
         admin = UserFactory(username="admin_test_1")
@@ -756,7 +756,7 @@ class TestPayrollAndRewardDisciplineServices:
 
         # Assert
         assert len(slips) == 1
-        assert slips[0].base_salary == Decimal("15000000.00")
+        assert slips[0].base_salary == Decimal("0.00")
 
     def test_payroll_calculate_salary_with_late_reward_and_discipline(self):
         from apps.finance.models import SalarySlip
@@ -1642,3 +1642,151 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Act & Assert
         with pytest.raises(ProtectedError):
             employee.delete()
+
+    def test_calculate_blocked_on_paid_slip(self):
+        from apps.common.xlib.exceptions import ValidationException
+        from apps.finance.models import SalarySlip
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMPP_PAID_BLOCKED", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="paid")
+        admin = UserFactory(username="admin_paid_blocked")
+
+        # Act & Assert
+        with pytest.raises(ValidationException) as exc_info:
+            payroll_calculate_salary(salary_slip_id=str(slip.id), creator=admin)
+        assert "Không thể tính lại phiếu lương đã thanh toán" in str(exc_info.value)
+
+    def test_salary_timeline_no_change(self):
+        from apps.hrm.selectors import get_salary_timeline
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP_TIMELINE_1", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        period_start = date(2026, 6, 1)
+        period_end = date(2026, 6, 30)
+
+        # Act
+        timeline = get_salary_timeline(employee, period_start, period_end)
+
+        # Assert
+        assert len(timeline) == 1
+        assert timeline[0] == (period_start, Decimal("10000000.00"))
+
+    def test_salary_timeline_single_change_mid_month(self):
+        from apps.hrm.selectors import get_salary_timeline
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP_TIMELINE_2", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        # Thay đổi lương có hiệu lực ngày 16
+        EmploymentHistoryFactory(
+            employee=employee,
+            new_salary_base=Decimal("12000000.00"),
+            effective_date=date(2026, 6, 16),
+            status="approved",
+        )
+        period_start = date(2026, 6, 1)
+        period_end = date(2026, 6, 30)
+
+        # Act
+        timeline = get_salary_timeline(employee, period_start, period_end)
+
+        # Assert
+        assert len(timeline) == 2
+        assert timeline[0] == (period_start, Decimal("10000000.00"))
+        assert timeline[1] == (date(2026, 6, 16), Decimal("12000000.00"))
+
+    def test_salary_timeline_multiple_changes_in_period(self):
+        from apps.hrm.selectors import get_salary_timeline, split_into_segments
+
+        # Arrange
+        employee = EmployeeFactory(
+            employee_id="EMP_TIMELINE_3", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        # Thay đổi lương 1: ngày 10
+        EmploymentHistoryFactory(
+            employee=employee,
+            new_salary_base=Decimal("12000000.00"),
+            effective_date=date(2026, 6, 10),
+            status="approved",
+        )
+        # Thay đổi lương 2: ngày 20
+        EmploymentHistoryFactory(
+            employee=employee,
+            new_salary_base=Decimal("15000000.00"),
+            effective_date=date(2026, 6, 20),
+            status="approved",
+        )
+        period_start = date(2026, 6, 1)
+        period_end = date(2026, 6, 30)
+
+        # Act
+        timeline = get_salary_timeline(employee, period_start, period_end)
+        segments = split_into_segments(timeline, period_start, period_end)
+
+        # Assert
+        assert len(timeline) == 3
+        assert timeline[0] == (period_start, Decimal("10000000.00"))
+        assert timeline[1] == (date(2026, 6, 10), Decimal("12000000.00"))
+        assert timeline[2] == (date(2026, 6, 20), Decimal("15000000.00"))
+
+        assert len(segments) == 3
+        assert segments[0] == (date(2026, 6, 1), date(2026, 6, 9), Decimal("10000000.00"))
+        assert segments[1] == (date(2026, 6, 10), date(2026, 6, 19), Decimal("12000000.00"))
+        assert segments[2] == (date(2026, 6, 20), date(2026, 6, 30), Decimal("15000000.00"))
+
+    def test_breakdown_contains_salary_segments(self):
+        from apps.finance.models import SalarySlip
+
+        # Arrange
+        # Tạo nhân viên với hợp đồng active
+        employee = EmployeeFactory(
+            employee_id="EMP_SEG_1", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        EmploymentContractFactory(
+            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 12, 31), status="active"
+        )
+        # Tăng lương ngày 16
+        EmploymentHistoryFactory(
+            employee=employee,
+            new_salary_base=Decimal("12000000.00"),
+            effective_date=date(2026, 6, 16),
+            status="approved",
+        )
+
+        admin = UserFactory(username="admin_seg_test")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="draft")
+
+        # Mock attendance cho toàn bộ 30 ngày
+        for d in range(1, 31):
+            day = date(2026, 6, d)
+            if day.weekday() not in [5, 6]:  # Không phải thứ Bảy, Chủ Nhật
+                AttendanceFactory(employee=employee, date=day, status="working", work_hours=Decimal("8.00"))
+
+        # Act
+        calculated_slip = payroll_calculate_salary(salary_slip_id=str(slip.id), creator=admin)
+
+        # Assert
+        assert calculated_slip.status == "calculated"
+        assert "salary_segments" in calculated_slip.breakdown
+        segments = calculated_slip.breakdown["salary_segments"]
+        assert len(segments) == 2
+
+        # Segment 1: từ ngày 1 đến ngày 15
+        assert segments[0]["start_date"] == "2026-06-01"
+        assert segments[0]["end_date"] == "2026-06-15"
+        assert segments[0]["salary_base"] == 10000000.0
+
+        # Segment 2: từ ngày 16 đến ngày 30
+        assert segments[1]["start_date"] == "2026-06-16"
+        assert segments[1]["end_date"] == "2026-06-30"
+        assert segments[1]["salary_base"] == 12000000.0
+
+        # Tổng base_salary của slip phải bằng tổng earned của 2 segment
+        expected_total = Decimal(str(segments[0]["earned"])) + Decimal(str(segments[1]["earned"]))
+        assert calculated_slip.base_salary == expected_total

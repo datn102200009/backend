@@ -22,6 +22,7 @@ from apps.hrm.models import (
     PublicHoliday,
     RewardRecord,
 )
+from apps.hrm.selectors import get_salary_at_date, get_salary_for_day, get_salary_timeline, split_into_segments
 from apps.master_data.models import Employee
 
 logger = logging.getLogger(__name__)
@@ -1430,7 +1431,7 @@ def payroll_initialize_period(
                     employee=employee,
                     salary_period=salary_period,
                     name=name,
-                    base_salary=employee.salary_base or Decimal("0.00"),
+                    base_salary=Decimal("0.00"),
                     overtime_amount=Decimal("0.00"),
                     allowance_amount=Decimal("0.00"),
                     reward_amount_total=Decimal("0.00"),
@@ -1490,15 +1491,20 @@ def payroll_calculate_salary(
     except SalarySlip.DoesNotExist:
         raise ValidationException("Phiếu lương không tồn tại")
 
+    if slip.status == "paid":
+        raise ValidationException("Không thể tính lại phiếu lương đã thanh toán.")
+
     employee = slip.employee
-    salary_base = employee.salary_base or Decimal("0.00")
 
     # 1. Tính toán ngày công từ Attendance trong kỳ
     year, month = map(int, slip.salary_period.split("-"))
     import calendar
 
     last_day = calendar.monthrange(year, month)[1]
+    period_start_date = date(year, month, 1)
     period_end_date = date(year, month, last_day)
+
+    salary_base = get_salary_at_date(employee, period_end_date) or Decimal("0.00")
 
     attendances = Attendance.objects.filter(employee=employee, date__year=year, date__month=month)
 
@@ -1513,37 +1519,77 @@ def payroll_calculate_salary(
     ot_holiday_hours = Decimal("0.00")
     ot_compensatory_hours = Decimal("0.00")
 
-    recorded_dates = set()
-    for att in attendances:
-        recorded_dates.add(att.date)
-        if att.status == "working" and (att.work_hours or 0) > 0:
-            working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "holiday"]:
-            paid_leave_days += Decimal("1.00")
+    # Chuẩn bị Attendance dict
+    attendance_dict = {att.date: att for att in attendances}
 
-        ot_h = att.overtime_hours or Decimal("0.00")
-        if ot_h > 0:
-            if att.date in official_holiday_dates:
-                ot_holiday_hours += ot_h
-            elif att.date in compensatory_holiday_dates:
-                ot_compensatory_hours += ot_h
-            elif att.date.weekday() in weekly_rest_days:
-                ot_weekend_hours += ot_h
-            else:
-                ot_normal_hours += ot_h
+    # 2. Tính lương Prorated theo các segment
+    timeline = get_salary_timeline(employee, period_start_date, period_end_date)
+    segments = split_into_segments(timeline, period_start_date, period_end_date)
 
-    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
-    credited_holiday_dates = set()
-    for h_date in all_holiday_dates:
-        if h_date not in recorded_dates and h_date not in credited_holiday_dates:
-            credited_holiday_dates.add(h_date)
-            paid_leave_days += Decimal("1.00")
+    salary_segments_breakdown = []
+    base_salary_earned = Decimal("0.00")
 
-    if standard_days > 0:
-        base_salary_earned = salary_base * ((working_days + paid_leave_days) / Decimal(str(standard_days)))
-    else:
-        base_salary_earned = Decimal("0.00")
-    base_salary_earned = base_salary_earned.quantize(Decimal("0.01"))
+    total_working_days = Decimal("0.00")
+    total_paid_leave_days = Decimal("0.00")
+
+    for seg_start, seg_end, seg_salary in segments:
+        seg_working_days = Decimal("0.00")
+        seg_paid_leave_days = Decimal("0.00")
+
+        current_date = seg_start
+        while current_date <= seg_end:
+            # Kiểm tra quan hệ lao động
+            day_salary, day_contract = get_salary_for_day(employee, current_date)
+            if day_contract is not None:
+                att = attendance_dict.get(current_date)
+                if att:
+                    if att.status == "working" and (att.work_hours or 0) > 0:
+                        seg_working_days += Decimal("1.00")
+                    elif att.status in ["paid_leave", "holiday"]:
+                        seg_paid_leave_days += Decimal("1.00")
+
+                    # Tính OT cho ngày này
+                    ot_h = att.overtime_hours or Decimal("0.00")
+                    if ot_h > 0:
+                        if current_date in official_holiday_dates:
+                            ot_holiday_hours += ot_h
+                        elif current_date in compensatory_holiday_dates:
+                            ot_compensatory_hours += ot_h
+                        elif current_date.weekday() in weekly_rest_days:
+                            ot_weekend_hours += ot_h
+                        else:
+                            ot_normal_hours += ot_h
+                else:
+                    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
+                    if current_date in all_holiday_dates:
+                        seg_paid_leave_days += Decimal("1.00")
+
+            current_date += timedelta(days=1)
+
+        seg_total_days = seg_working_days + seg_paid_leave_days
+        total_working_days += seg_working_days
+        total_paid_leave_days += seg_paid_leave_days
+
+        if standard_days > 0:
+            seg_earned = seg_salary * (seg_total_days / Decimal(str(standard_days)))
+        else:
+            seg_earned = Decimal("0.00")
+        seg_earned = seg_earned.quantize(Decimal("0.01"))
+
+        base_salary_earned += seg_earned
+
+        salary_segments_breakdown.append(
+            {
+                "start_date": seg_start.strftime("%Y-%m-%d"),
+                "end_date": seg_end.strftime("%Y-%m-%d"),
+                "salary_base": float(seg_salary),
+                "work_days": float(seg_total_days),
+                "earned": float(seg_earned),
+            }
+        )
+
+    working_days = total_working_days
+    paid_leave_days = total_paid_leave_days
 
     if standard_days > 0:
         hourly_rate = salary_base / Decimal(str(standard_days)) / Decimal("8.00")
@@ -1702,6 +1748,7 @@ def payroll_calculate_salary(
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
         ],
+        "salary_segments": salary_segments_breakdown,
     }
     slip.save()
 
