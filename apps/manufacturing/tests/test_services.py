@@ -555,3 +555,43 @@ class TestWorkOrderServices:
         # Assert
         assert approved_wo.status == "in_progress"
         assert approved_wo.planned_start_date == timezone.now().date()
+
+    def test_concurrent_approve_wo_locks_stock(self, production_user):
+        """
+        Verify: work_order_approve locks StockLedger using select_for_update to serialize transactions.
+        """
+        from unittest.mock import patch
+
+        from apps.inventory.models import StockLedger
+
+        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        item1 = ItemFactory()
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("1.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        StockLedgerFactory(
+            item=item1,
+            warehouse=source,
+            actual_quantity=Decimal("10.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            quantity=5,
+            status="pending_approval",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        with patch.object(
+            StockLedger.objects, "select_for_update", wraps=StockLedger.objects.select_for_update
+        ) as mock_sfu:
+            work_order_approve(user=production_user, work_order_id=str(wo.id))
+            assert mock_sfu.called

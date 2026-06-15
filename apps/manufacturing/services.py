@@ -445,9 +445,26 @@ def work_order_approve(
     if not bom_items:
         raise ValidationException(f"Định mức '{work_order.bom.name}' không có linh kiện nào.")
 
-    # 1. Lock Items liên quan (ngăn TOCTOU race condition) sắp xếp theo ID để tránh deadlock
+    # 1. Khóa các dòng StockLedger của các item trong source_warehouse (ngăn race condition khi 2 transaction cùng sum balance)
+    # Sắp xếp theo item_id và id để tránh deadlock
     item_ids = sorted(list(set(str(bi.item_id) for bi in bom_items)))
-    Item.objects.select_for_update().filter(id__in=item_ids).order_by("id")
+
+    from django.db import connection
+
+    if connection.vendor == "postgresql":
+        # nowait=False để tránh exception khi lock bận; lock timeout mặc định của PG
+        locked_rows = list(
+            StockLedger.objects.select_for_update(nowait=False)
+            .filter(item_id__in=item_ids, warehouse=work_order.source_warehouse)
+            .order_by("item_id", "id")
+        )
+    else:
+        # SQLite/MySQL/other: dùng FOR UPDATE cơ bản
+        locked_rows = list(
+            StockLedger.objects.select_for_update()
+            .filter(item_id__in=item_ids, warehouse=work_order.source_warehouse)
+            .order_by("item_id", "id")
+        )
 
     # 2. Tính tồn kho khả dụng (1 query duy nhất)
     stock_balances = (

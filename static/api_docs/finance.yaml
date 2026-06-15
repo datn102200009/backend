@@ -94,6 +94,13 @@ components:
           type: string
           format: uuid
           nullable: true
+        fixed_asset:
+          type: string
+          format: uuid
+          nullable: true
+        fixed_asset_code:
+          type: string
+          nullable: true
         status:
           type: string
           enum: [draft, pending_approval, posted, rejected]
@@ -674,6 +681,13 @@ paths:
           description: If true, only returns idle assets.
           schema:
             type: boolean
+        - name: depreciation_method
+          in: query
+          required: false
+          description: Depreciation method to filter by.
+          schema:
+            type: string
+            enum: [straight_line, unit_of_production]
       responses:
         '200':
           description: A paginated list of fixed assets.

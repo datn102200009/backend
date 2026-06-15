@@ -871,7 +871,20 @@ def get_finance_depreciation_status():
     pending_assets_count = waiting_assets.count()
     is_done = pending_assets_count == 0
 
-    all_assets = FixedAsset.objects.filter(is_active=True).prefetch_related("work_order_links").order_by("-created_at")
+    from django.db.models import Prefetch
+
+    from apps.master_data.models import WorkOrderFixedAsset
+
+    all_assets = (
+        FixedAsset.objects.filter(is_active=True)
+        .prefetch_related(
+            Prefetch(
+                "work_order_links",
+                queryset=WorkOrderFixedAsset.objects.only("id"),
+            )
+        )
+        .order_by("-created_at")
+    )
     total_count = all_assets.count()
 
     items_list = []
@@ -895,7 +908,7 @@ def get_finance_depreciation_status():
                 alerts.append(
                     {"category": "fully_depreciated", "level": "critical", "reason": "Tài sản đã khấu hao hết giá trị."}
                 )
-            elif asset.remaining_life_months <= 2:
+            elif asset.remaining_life_months is not None and asset.remaining_life_months <= 2:
                 alerts.append(
                     {
                         "category": "near_end",
@@ -905,7 +918,7 @@ def get_finance_depreciation_status():
                 )
 
             if asset.depreciation_method == "unit_of_production":
-                if not asset.work_order_links.exists():
+                if len(asset.work_order_links.all()) == 0:
                     alerts.append(
                         {
                             "category": "uop_unassigned",

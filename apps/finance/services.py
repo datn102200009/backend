@@ -49,25 +49,24 @@ def _apply_cash_flow_effect(tx: CashFlowTransaction, amount: Decimal):
         if po.status == PurchaseOrder.Status.COMPLETED:
             raise ValidationException("Không thể nhận thêm cọc/ứng trước cho đơn hàng đã hoàn tất.")
 
-        if tx.category != "Chi phí vận chuyển lô hàng":
-            if po.advance_paid_amount + amount > po.total_amount:
-                raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn mua hàng.")
-            po.advance_paid_amount += amount
-            po.save()
+        if po.advance_paid_amount + amount > po.total_amount:
+            raise ValidationException("Số tiền thanh toán vượt quá giá trị đơn mua hàng.")
+        po.advance_paid_amount += amount
+        po.save()
 
-            # Approved cash flows on PO will automatically credit the linked Purchase Invoice's paid_amount
-            pi = po.invoices.exclude(status=PurchaseInvoice.Status.CANCELLED).first()
-            if pi:
-                if pi.paid_amount + amount > pi.total_amount:
-                    raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
-                pi.paid_amount += amount
-                if pi.paid_amount >= pi.total_amount:
-                    pi.status = PurchaseInvoice.Status.PAID
-                else:
-                    pi.status = PurchaseInvoice.Status.PARTIAL
-                pi.save()
+        # Approved cash flows on PO will automatically credit the linked Purchase Invoice's paid_amount
+        pi = po.invoices.exclude(status=PurchaseInvoice.Status.CANCELLED).first()
+        if pi:
+            if pi.paid_amount + amount > pi.total_amount:
+                raise ValidationException("Số tiền thanh toán vượt quá giá trị hóa đơn mua.")
+            pi.paid_amount += amount
+            if pi.paid_amount >= pi.total_amount:
+                pi.status = PurchaseInvoice.Status.PAID
+            else:
+                pi.status = PurchaseInvoice.Status.PARTIAL
+            pi.save()
 
-            purchase_order_update_status(po)
+        purchase_order_update_status(po)
 
     elif tx.sales_order_id:
         so = SalesOrder.objects.select_for_update().filter(id=tx.sales_order_id).first()
@@ -343,13 +342,16 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
         asset = tx.fixed_asset
         if tx.payment_type == "pay" and asset.status == "pending_receive":
             # Không duyệt mua: xóa asset + PO/PI liên quan
-            # Clear FK trên CF trước khi xóa PO/PI
+            # Clear FK trên CF trước khi xóa PO/PI để tránh DB constraint violation
             po_id = tx.purchase_order_id
             pi_id = tx.purchase_invoice_id
+            asset_id = str(asset.id)
+            asset_code = asset.asset_code
 
             tx.purchase_order = None
             tx.purchase_invoice = None
-            tx.save(update_fields=["purchase_order", "purchase_invoice"])
+            tx.fixed_asset = None
+            tx.save(update_fields=["purchase_order", "purchase_invoice", "fixed_asset"])
 
             from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
 
@@ -363,17 +365,24 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
                     pi.delete()
 
             asset.delete()
-            tx.fixed_asset = None
 
             create_system_log(
                 user=user,
                 action="reject_purchase",
                 table_name="fixed_asset",
-                record_id=str(asset.id),
-                new_value={"deleted": True, "reason": "Từ chối đơn duyệt mua"},
+                record_id=asset_id,
+                new_value={
+                    "asset_code": asset_code,
+                    "deleted": True,
+                    "reason": "Từ chối đơn duyệt mua",
+                },
             )
         elif tx.payment_type == "receive" and asset.status == "pending_dispose":
             # Không duyệt thanh lý: trở về idle
+            old_status = asset.status
+            old_disposal_value = asset.disposal_value
+            old_disposal_date = asset.disposal_date
+
             asset.status = "idle"
             asset.disposal_date = None
             asset.disposal_value = None
@@ -383,7 +392,12 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
                 action="reject_dispose",
                 table_name="fixed_asset",
                 record_id=str(asset.id),
-                new_value={"status": "idle", "reverted_from": "pending_dispose"},
+                old_value={
+                    "status": old_status,
+                    "disposal_value": str(old_disposal_value) if old_disposal_value is not None else None,
+                    "disposal_date": str(old_disposal_date) if old_disposal_date is not None else None,
+                },
+                new_value={"status": "idle", "disposal_value": None, "disposal_date": None},
             )
 
     tx.status = "rejected"
@@ -635,6 +649,11 @@ def fixed_asset_request_dispose(
     if disposal_value < Decimal("0.00"):
         raise ValidationException("Giá trị thanh lý không được âm.")
 
+    # LUỒNG 1: Thanh lý có giá trị → chờ duyệt dòng tiền (CFO duyệt/từ chối)
+    #   - Set status = "pending_dispose"
+    #   - Tạo CashFlowTransaction với payment_type="receive", status="pending_approval"
+    #   - CFO duyệt CF → asset.status = "disposed"
+    #   - CFO từ chối CF → asset quay về "idle"
     if disposal_value > Decimal("0.00"):
         asset.status = "pending_dispose"
         asset.disposal_date = disposal_date
@@ -663,8 +682,11 @@ def fixed_asset_request_dispose(
             record_id=str(asset.id),
             new_value={"status": "pending_dispose", "disposal_value": str(disposal_value)},
         )
+    # LUỒNG 2: Thanh lý 0 đồng (mua lại phế liệu/hủy bỏ không thu hồi tiền) → chuyển thẳng sang disposed
+    #   - KHÔNG tạo CF (không có dòng tiền)
+    #   - Set status = "disposed" ngay lập tức
+    #   - Không thể từ chối (vì không có CF để reject)
     else:
-        # Nhánh 0 đồng: set disposed ngay
         asset.status = "disposed"
         asset.disposal_date = disposal_date
         asset.disposal_value = disposal_value
@@ -672,7 +694,7 @@ def fixed_asset_request_dispose(
 
         create_system_log(
             user=user,
-            action="request_dispose",
+            action="request_dispose_zero_value",
             table_name="fixed_asset",
             record_id=str(asset.id),
             new_value={"status": "disposed", "disposal_value": "0.00"},

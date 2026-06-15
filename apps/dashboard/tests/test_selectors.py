@@ -916,6 +916,32 @@ class TestDashboardSelectors:
         assert "below_threshold" not in categories
         assert "projected_shortage" not in categories
 
+    def test_no_n_plus_1_for_uop_assets(self):
+        """
+        Đếm số query SQL khi gọi get_finance_depreciation_status với 10 UOP assets.
+        Sau fix: query count phải ổn định (~5 queries) bất kể số UOP assets.
+        Trước fix: query count tăng tuyến tính theo số UOP assets.
+        """
+        # Tạo 10 UOP assets
+        for i in range(10):
+            FixedAsset.objects.create(
+                asset_code=f"MOLD-N1-{i}",
+                asset_name=f"Khuôn ép {i}",
+                original_value=Decimal("6000.00"),
+                salvage_value=Decimal("1000.00"),
+                depreciation_method="unit_of_production",
+                designed_capacity=Decimal("1000.00"),
+                accumulated_depreciation=Decimal("0.00"),
+                status="active",
+            )
+
+        with CaptureQueriesContext(connection) as ctx:
+            result = get_finance_depreciation_status()
+
+        # Trước fix: ~15 queries (5 base + 10 cho .exists())
+        # Sau fix: ~5 queries
+        assert len(ctx.captured_queries) < 10
+
 
 class TestFormatNum:
     def test_format_num_none(self):

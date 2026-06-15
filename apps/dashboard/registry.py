@@ -1,4 +1,4 @@
-# Static configuration registry for all 27 widgets
+# Static configuration registry for all 20 widgets
 
 WIDGETS_REGISTRY = {
     "sales_today_revenue": {

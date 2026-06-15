@@ -13,6 +13,7 @@ from apps.sales.models import SalesInvoice, SalesInvoiceLine
 
 class CashFlowTransactionSerializer(serializers.ModelSerializer):
     approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    fixed_asset_code = serializers.CharField(source="fixed_asset.asset_code", read_only=True)
 
     class Meta:
         model = CashFlowTransaction
@@ -29,6 +30,8 @@ class CashFlowTransactionSerializer(serializers.ModelSerializer):
             "sales_order",
             "purchase_invoice",
             "sales_invoice",
+            "fixed_asset",
+            "fixed_asset_code",
             "status",
             "approved_by",
             "approved_by_username",
@@ -43,6 +46,7 @@ class CashFlowTransactionSerializer(serializers.ModelSerializer):
             "approved_by",
             "approved_by_username",
             "approved_at",
+            "fixed_asset_code",
             "created_at",
             "updated_at",
         ]

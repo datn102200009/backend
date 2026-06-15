@@ -572,3 +572,46 @@ class TestFixedAssetServices:
 
         mold.refresh_from_db()
         assert mold.accumulated_depreciation == Decimal("2000.00")
+
+    def test_reject_purchase_clears_fk_and_deletes_asset(self, user):
+        """
+        Verify: Reject CF mua TSCĐ → asset + PO/PI bị xóa, FK trên CF clear.
+        Regression test cho bug use-after-delete.
+        """
+        from apps.finance.models import CashFlowTransaction
+        from apps.finance.services import cash_flow_reject
+        from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory, PurchaseOrderFactory
+
+        # Setup: tạo PO, PI, Asset (status pending_receive), CF (status pending_approval)
+        po = PurchaseOrderFactory(total_amount=Decimal("50000000.00"))
+        pi = PurchaseInvoiceFactory(order=po, total_amount=Decimal("50000000.00"))
+        asset = FixedAssetFactory(original_value=Decimal("50000000.00"), status="pending_receive")
+        cf = CashFlowTransaction.objects.create(
+            payment_type="pay",
+            category="Mua tài sản cố định",
+            amount=Decimal("50000000.00"),
+            payment_date="2026-06-15",
+            status="pending_approval",
+            purchase_order=po,
+            purchase_invoice=pi,
+            fixed_asset=asset,
+        )
+
+        # Act
+        cash_flow_reject(user=user, tx_id=str(cf.id), remarks="Từ chối mua")
+
+        # Assert
+        cf.refresh_from_db()
+        assert cf.status == "rejected"
+        assert cf.fixed_asset_id is None
+        assert cf.purchase_order_id is None
+        assert cf.purchase_invoice_id is None
+        assert cf.fixed_asset is None  # Should not raise DoesNotExist
+
+        with pytest.raises(FixedAsset.DoesNotExist):
+            FixedAsset.objects.get(id=asset.id)
+        with pytest.raises(PurchaseOrder.DoesNotExist):
+            PurchaseOrder.objects.get(id=po.id)
+        with pytest.raises(PurchaseInvoice.DoesNotExist):
+            PurchaseInvoice.objects.get(id=pi.id)

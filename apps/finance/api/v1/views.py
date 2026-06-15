@@ -133,7 +133,8 @@ class FixedAssetListCreateAPIView(APIView):
             if status_in:
                 status_filter = [s.strip() for s in status_in.split(",") if s.strip()]
 
-        assets = fixed_asset_list(status_filter=status_filter)
+        depreciation_method = request.query_params.get("depreciation_method")
+        assets = fixed_asset_list(status_filter=status_filter, depreciation_method=depreciation_method)
 
         limit_str = request.query_params.get("limit", "50")
         page_str = request.query_params.get("page", "1")
