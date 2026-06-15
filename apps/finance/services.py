@@ -541,7 +541,6 @@ def fixed_asset_create(
     payment_method: str = "bank_transfer",
     # Kept for compatibility:
     asset_code: Optional[str] = None,
-    department: Optional[str] = None,
 ) -> FixedAsset:
     PermissionChecker.check_permission(user, "finance.create_fixed_asset")
 
@@ -588,7 +587,6 @@ def fixed_asset_create(
         remaining_life_months=useful_life_months,
         designed_capacity=designed_capacity,
         accumulated_depreciation=Decimal("0.00"),
-        department=department,
         status="pending_receive",
         purchase_date=purchase_date,
         vendor_name=vendor_name,
@@ -752,6 +750,25 @@ def validate_fixed_assets_for_workorder_start(*, asset_ids: list[str]) -> None:
             f"chưa ở trạng thái 'idle'. Vui lòng đổi các tài sản sau:\n{details}"
         )
 
+    # Lỗi 2: MỚI — asset có thể đã bị gán cho WO active khác giữa lúc set và lúc approve
+    from apps.master_data.models import WorkOrderFixedAsset
+
+    conflicting = WorkOrderFixedAsset.objects.select_related("work_order", "fixed_asset").filter(
+        fixed_asset_id__in=asset_ids,
+        work_order__status__in=("in_progress", "pending_production_complete"),
+    )
+    conflicting_list = list(conflicting)
+    if conflicting_list:
+        details = "\n".join(
+            f"- [{link.fixed_asset.asset_code}] {link.fixed_asset.asset_name} "
+            f"(đang được sử dụng bởi WO '{link.work_order.name}')"
+            for link in conflicting_list
+        )
+        raise ValidationException(
+            "Phát hiện xung đột: Một số tài sản đã được gán cho WorkOrder khác "
+            f"đang hoạt động. Vui lòng kiểm tra:\n{details}"
+        )
+
 
 @transaction.atomic
 def fixed_asset_update(
@@ -764,7 +781,7 @@ def fixed_asset_update(
 ) -> FixedAsset:
     PermissionChecker.check_permission(user, "finance.update_fixed_asset")
 
-    forbidden_keys = {"original_value", "salvage_value", "depreciation_method", "designed_capacity", "department"}
+    forbidden_keys = {"original_value", "salvage_value", "depreciation_method", "designed_capacity"}
     passed_forbidden = set(kwargs.keys()) & forbidden_keys
     for k in forbidden_keys:
         if kwargs.get(k) is not None:

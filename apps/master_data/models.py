@@ -125,9 +125,8 @@ class Item(BaseModel):
     minimum_threshold = models.DecimalField(
         max_digits=18,
         decimal_places=3,
-        null=True,
-        blank=True,
-        help_text="Ngưỡng tối thiểu tồn kho. Nếu NULL sẽ dùng fallback theo UOM.",
+        default=0.0,
+        help_text="Ngưỡng tối thiểu tồn kho. Bắt buộc nhập.",
     )
     description = models.TextField(null=True, blank=True)
 

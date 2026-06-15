@@ -194,3 +194,23 @@ class TestDashboardViews:
         assert response.data["success"] is True
         assert "data" in response.data
         assert "total_count" in response.data
+
+    def test_widget_batch_data_finance_pending_cashflow_approval(self, api_client, db):
+        role = RoleFactory(name="Approver")
+        user = UserFactory(username="approver", password_hash="testpass", role=role)
+        perm, _ = Permission.objects.get_or_create(
+            code="finance.approve_cash_flow", defaults={"name": "Duyệt dòng tiền"}
+        )
+        RolePermission.objects.get_or_create(role=role, permission=perm)
+
+        api_client.force_authenticate(user=user)
+        url = reverse("widget-batch-data")
+        response = api_client.get(url, {"widgets": "finance_pending_cashflow_approval"})
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.data
+        assert data["finance_pending_cashflow_approval"]["success"] is True
+        payload = data["finance_pending_cashflow_approval"]["data"]
+        assert "total_count" in payload
+        assert "top_items" in payload
+        assert isinstance(payload["top_items"], list)

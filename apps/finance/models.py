@@ -210,7 +210,6 @@ class FixedAsset(BaseModel):
     remaining_life_months = models.IntegerField(null=True, blank=True)
     designed_capacity = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     accumulated_depreciation = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
-    department = models.CharField(max_length=100, null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=[

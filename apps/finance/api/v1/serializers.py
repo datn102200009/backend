@@ -113,7 +113,6 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             "designed_capacity",
             "accumulated_depreciation",
             "remaining_value",
-            "department",
             "is_active",
             "status",
             "purchase_date",

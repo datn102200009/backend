@@ -98,6 +98,7 @@ class ItemFactory(factory.django.DjangoModelFactory):
     status = "active"
     is_import = False
     recycling_coef_a = Decimal("0.05")
+    minimum_threshold = Decimal("10.00")
 
 
 class SupplierFactory(factory.django.DjangoModelFactory):

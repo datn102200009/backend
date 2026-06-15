@@ -43,7 +43,6 @@ class TestFixedAssetServices:
             salvage_value=Decimal("2000.00"),
             depreciation_method="straight_line",
             useful_life_months=10,
-            department="Sản xuất",
         )
         assert asset.asset_code == "MOLD-001"
         assert asset.original_value == Decimal("12000.00")
@@ -369,7 +368,6 @@ class TestFixedAssetServices:
             depreciation_method="unit_of_production",
             useful_life_months=None,
             designed_capacity=Decimal("10000.00"),
-            department="Sản xuất",
         )
         assert asset.asset_code == "MOLD-UOP-1"
         assert asset.original_value == Decimal("10000.00")

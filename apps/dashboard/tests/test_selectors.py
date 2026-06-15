@@ -10,6 +10,7 @@ from apps.dashboard.selectors import (
     format_num,
     get_finance_cashflow_overview,
     get_finance_depreciation_status,
+    get_finance_pending_cashflow_approval,
     get_finance_unpaid_purchase_invoices,
     get_finance_unpaid_sales_invoices,
     get_hrm_expiring_contracts,
@@ -173,6 +174,29 @@ class TestDashboardSelectors:
         assert res["summary"]["net_cashflow"] == "1000.00"
         assert res["summary"]["period_label"] == "4 tuần gần nhất"
         assert len(res["weeks"]) == 4
+
+    def test_finance_pending_cashflow_approval(self):
+        today = timezone.localdate()
+        CashFlowTransaction.objects.create(
+            name="TX-PENDING-01",
+            payment_type="receive",
+            amount=Decimal("1500.00"),
+            payment_date=today,
+            status="pending_approval",
+        )
+        CashFlowTransaction.objects.create(
+            name="TX-POSTED-02",
+            payment_type="pay",
+            amount=Decimal("2000.00"),
+            payment_date=today,
+            status="posted",
+        )
+        res = get_finance_pending_cashflow_approval()
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["name"] == "TX-PENDING-01"
+        assert res["top_items"][0]["payment_type"] == "receive"
+        assert res["top_items"][0]["amount"] == "1500.00"
 
     def test_finance_unpaid_purchase_invoices(self):
         supplier = SupplierFactory()
@@ -351,8 +375,12 @@ class TestDashboardSelectors:
         uom_ton = UOMFactory(name="tấn")
         uom_pcs = UOMFactory(name="cái")
 
-        item_ton = ItemFactory(stock_uom=uom_ton, item_code="RAW-TON", item_name="Sắt Cuộn")
-        item_pcs = ItemFactory(stock_uom=uom_pcs, item_code="COMP-PCS", item_name="Bulong M8")
+        item_ton = ItemFactory(
+            stock_uom=uom_ton, item_code="RAW-TON", item_name="Sắt Cuộn", minimum_threshold=Decimal("0.5")
+        )
+        item_pcs = ItemFactory(
+            stock_uom=uom_pcs, item_code="COMP-PCS", item_name="Bulong M8", minimum_threshold=Decimal("200.0")
+        )
 
         # Balance in local warehouses
         # Raw has 35.0 tons initially (net 5.0 tons after 30.0 tons consumption issues)
