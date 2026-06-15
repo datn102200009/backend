@@ -52,7 +52,9 @@ class TestCashFlowServices:
             )
 
     def test_cash_flow_sales_invoice_settlement(self, user):
-        invoice = SalesInvoiceFactory(total_amount=Decimal("500.00"), paid_amount=0)
+        invoice = SalesInvoiceFactory(
+            total_amount=Decimal("500.00"), paid_amount=0, order__total_amount=Decimal("500.00")
+        )
 
         tx = cash_flow_create(
             user=user,
@@ -91,3 +93,66 @@ class TestCashFlowServices:
                 payment_date="2023-10-01",
                 sales_invoice_id=str(invoice.id),
             )
+
+    def test_cash_flow_reject_non_asset_success(self, user):
+        from apps.finance.services import cash_flow_reject
+
+        po = PurchaseOrderFactory(total_amount=Decimal("1000.00"), advance_paid_amount=0)
+
+        tx = cash_flow_create(
+            user=user,
+            payment_type="pay",
+            amount=Decimal("200.00"),
+            payment_date="2023-10-01",
+            purchase_order_id=str(po.id),
+        )
+        assert tx.status == "pending_approval"
+
+        cash_flow_reject(user=user, tx_id=str(tx.id), remarks="Không duyệt")
+
+        tx.refresh_from_db()
+        assert tx.status == "rejected"
+        assert "[Từ chối] Không duyệt" in tx.remarks
+
+        # Verify no advance_paid_amount updated
+        po.refresh_from_db()
+        assert po.advance_paid_amount == 0
+
+    def test_apply_cash_flow_effect_rejects_overpayment_for_transport_fee(self, user):
+        """
+        Verify: Bypass bị bỏ. CF vận chuyển vượt PO khi approve sẽ raise ValidationException.
+        """
+        from apps.finance.services import cash_flow_approve
+
+        po = PurchaseOrderFactory(total_amount=Decimal("1000.00"), advance_paid_amount=0)
+
+        tx1 = CashFlowTransaction.objects.create(
+            name="CF-TR-1",
+            payment_type="pay",
+            category="Chi phí vận chuyển lô hàng",
+            payment_method="bank_transfer",
+            amount=Decimal("600.00"),
+            payment_date="2023-10-01",
+            status="pending_approval",
+            purchase_order=po,
+        )
+
+        tx2 = CashFlowTransaction.objects.create(
+            name="CF-TR-2",
+            payment_type="pay",
+            category="Chi phí vận chuyển lô hàng",
+            payment_method="bank_transfer",
+            amount=Decimal("600.00"),
+            payment_date="2023-10-01",
+            status="pending_approval",
+            purchase_order=po,
+        )
+
+        # Approve CF 1 -> success
+        cash_flow_approve(user=user, tx_id=str(tx1.id))
+        po.refresh_from_db()
+        assert po.advance_paid_amount == Decimal("600.00")
+
+        # Approve CF 2 -> must raise ValidationException
+        with pytest.raises(ValidationException, match="vượt quá giá trị đơn mua hàng"):
+            cash_flow_approve(user=user, tx_id=str(tx2.id))

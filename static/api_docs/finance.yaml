@@ -94,6 +94,13 @@ components:
           type: string
           format: uuid
           nullable: true
+        fixed_asset:
+          type: string
+          format: uuid
+          nullable: true
+        fixed_asset_code:
+          type: string
+          nullable: true
         status:
           type: string
           enum: [draft, pending_approval, posted, rejected]
@@ -134,8 +141,10 @@ components:
           enum: [straight_line, unit_of_production]
         useful_life_months:
           type: integer
+          nullable: true
         remaining_life_months:
           type: integer
+          nullable: true
         designed_capacity:
           type: number
           format: double
@@ -147,6 +156,26 @@ components:
         department:
           type: string
           nullable: true
+        status:
+          type: string
+          enum: [pending_receive, idle, active, pending_dispose, disposed]
+        purchase_date:
+          type: string
+          format: date
+          nullable: true
+        disposal_date:
+          type: string
+          format: date
+          nullable: true
+        disposal_value:
+          type: string
+          nullable: true
+        vendor_name:
+          type: string
+          nullable: true
+        payment_method:
+          type: string
+          nullable: true
         is_active:
           type: boolean
         created_at:
@@ -156,18 +185,15 @@ components:
           type: string
           format: date-time
 
-    FixedAssetInput:
+    FixedAssetPurchaseInput:
       type: object
       required:
-        - asset_code
         - asset_name
         - original_value
         - depreciation_method
-        - useful_life_months
+        - purchase_date
+        - vendor_name
       properties:
-        asset_code:
-          type: string
-          maxLength: 100
         asset_name:
           type: string
           maxLength: 255
@@ -182,14 +208,36 @@ components:
         useful_life_months:
           type: integer
           minimum: 1
+          nullable: true
         designed_capacity:
           type: number
           format: double
           minimum: 0.01
           nullable: true
-        department:
+        purchase_date:
           type: string
-          maxLength: 100
+          format: date
+        vendor_name:
+          type: string
+          maxLength: 255
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    FixedAssetRequestDisposeInput:
+      type: object
+      required:
+        - disposal_date
+      properties:
+        disposal_date:
+          type: string
+          format: date
+        disposal_value:
+          type: string
+          default: '0.00'
+        remarks:
+          type: string
           nullable: true
 
     FixedAssetUpdateInput:
@@ -198,25 +246,9 @@ components:
         asset_name:
           type: string
           maxLength: 255
-        original_value:
-          type: string
-        salvage_value:
-          type: string
-        depreciation_method:
-          type: string
-          enum: [straight_line, unit_of_production]
         useful_life_months:
           type: integer
           minimum: 1
-        designed_capacity:
-          type: number
-          format: double
-          minimum: 0.01
-          nullable: true
-        department:
-          type: string
-          maxLength: 100
-          nullable: true
 
     FixedAssetDepreciationLog:
       type: object
@@ -580,6 +612,44 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+  /finance/cash-flows/{pk}/reject/:
+    post:
+      summary: Reject Cash Flow Transaction
+      description: Rejects a cash flow transaction, which reverts linked fixed assets back to idle (or deletes them if it was a pending purchase).
+      tags:
+        - Cash Flows
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                remarks:
+                  type: string
+                  description: Optional reason for rejecting the transaction.
+      responses:
+        '200':
+          description: Cash flow transaction successfully rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowTransaction'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /finance/fixed-assets/:
     get:
       summary: List Fixed Assets
@@ -599,6 +669,25 @@ paths:
           schema:
             type: integer
             default: 1
+        - name: status__in
+          in: query
+          required: false
+          description: Comma-separated list of statuses to filter by.
+          schema:
+            type: string
+        - name: assignable
+          in: query
+          required: false
+          description: If true, only returns idle assets.
+          schema:
+            type: boolean
+        - name: depreciation_method
+          in: query
+          required: false
+          description: Depreciation method to filter by.
+          schema:
+            type: string
+            enum: [straight_line, unit_of_production]
       responses:
         '200':
           description: A paginated list of fixed assets.
@@ -632,7 +721,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/FixedAssetInput'
+              $ref: '#/components/schemas/FixedAssetPurchaseInput'
       responses:
         '201':
           description: Fixed asset successfully created.
@@ -738,6 +827,44 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+
+
+
+  /finance/fixed-assets/{pk}/request-dispose/:
+    post:
+      summary: Request Dispose Fixed Asset
+      description: Requests disposal of fixed asset, changing status to pending_dispose and setting disposal date/value.
+      tags:
+        - Fixed Assets
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FixedAssetRequestDisposeInput'
+      responses:
+        '200':
+          description: Fixed asset disposal request successfully registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FixedAsset'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
 
   /finance/fixed-assets/depreciation/:
     post:

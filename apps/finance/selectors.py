@@ -16,7 +16,7 @@ Khi schema PurchaseInvoice/SalesInvoice thay đổi, cần đồng bộ serializ
 tại finance tương ứng.
 """
 
-from django.db.models import QuerySet
+from django.db.models import Case, IntegerField, QuerySet, Value, When
 
 from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
 from apps.purchasing.models import PurchaseInvoice
@@ -44,11 +44,35 @@ def cash_flow_detail(*, transaction_id: str) -> CashFlowTransaction:
     ).get(id=transaction_id)
 
 
-def fixed_asset_list() -> QuerySet:
+def fixed_asset_list(*, status_filter: list[str] | None = None, depreciation_method: str | None = None) -> QuerySet:
     """
-    Returns a queryset of FixedAsset, ordered by creation date.
+    Returns a queryset of FixedAsset.
+    - status priority order: pending_receive (1) -> pending_dispose (2) -> idle (3) -> active (4) -> disposed (5)
+    - then -updated_at
+    - status_filter: optional list of statuses to include
+    - depreciation_method: optional depreciation method to filter
     """
-    return FixedAsset.objects.all().order_by("-created_at")
+    qs = FixedAsset.objects.all()
+
+    if status_filter:
+        qs = qs.filter(status__in=status_filter)
+
+    if depreciation_method:
+        qs = qs.filter(depreciation_method=depreciation_method)
+
+    qs = qs.annotate(
+        status_priority=Case(
+            When(status="pending_receive", then=Value(1)),
+            When(status="pending_dispose", then=Value(2)),
+            When(status="idle", then=Value(3)),
+            When(status="active", then=Value(4)),
+            When(status="disposed", then=Value(5)),
+            default=Value(6),
+            output_field=IntegerField(),
+        )
+    ).order_by("status_priority", "-updated_at")
+
+    return qs
 
 
 def fixed_asset_detail(*, asset_id: str) -> FixedAsset:

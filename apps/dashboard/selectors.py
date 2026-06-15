@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.finance.models import FixedAsset, FixedAssetDepreciationLog, SalarySlip
 from apps.hrm.models import Attendance, EmploymentContract, LeaveRequest
 from apps.inventory.models import StockEntry, StockLedger
-from apps.master_data.models import Employee, Item, Warehouse, WorkOrder
+from apps.master_data.models import BOMItem, Employee, Item, Warehouse, WorkOrder
 from apps.purchasing.models import PurchaseInvoice, PurchaseOrder, Shipment
 from apps.sales.models import SalesInvoice, SalesOrder
 
@@ -276,13 +276,15 @@ def get_warehouse_low_stock_alerts():
     today = timezone.now()
     thirty_days_ago = today - timedelta(days=30)
 
-    # 1. Lọc danh sách Kho Khả dụng
-    active_warehouses = Warehouse.objects.filter(is_active=True, is_group=False).exclude(
-        Q(name__icontains="wip")
-        | Q(name__icontains="sản xuất")
-        | Q(name__icontains="phế phẩm")
-        | Q(name__icontains="lỗi")
-        | Q(name__icontains="qc")
+    # 1. Lọc danh sách Kho Khả dụng bằng whitelist tên kho
+    WAREHOUSE_NVL_NAMES = ("Kho Nguyên Vật Liệu",)  # Phân loại: NVL
+    WAREHOUSE_TP_NAMES = ("Kho Thành Phẩm",)  # Phân loại: THANH_PHAM
+    ALLOWED_WAREHOUSE_NAMES = WAREHOUSE_NVL_NAMES + WAREHOUSE_TP_NAMES
+
+    active_warehouses = Warehouse.objects.filter(
+        is_active=True,
+        is_group=False,
+        name__in=ALLOWED_WAREHOUSE_NAMES,
     )
     warehouse_ids = list(active_warehouses.values_list("id", flat=True))
     if not warehouse_ids:
@@ -324,12 +326,30 @@ def get_warehouse_low_stock_alerts():
     # Tra cứu nhanh: (item_id, warehouse_id) -> total_issued (dương)
     consumption_map = {(c["item_id"], c["warehouse_id"]): abs(c["total_issued"]) for c in consumption_data}
 
-    # 4. Cache thông tin Master Data vào memory để tránh query liên tục trong loop
+    # 4. Cache thông tin Master Data và lấy nhu cầu từ các WorkOrder draft (pending_approval) quy đổi theo BOM
     item_ids = [b["item_id"] for b in balances]
     items_map = {item.id: item for item in Item.objects.filter(id__in=item_ids).select_related("stock_uom")}
     warehouses_map = {wh.id: wh for wh in active_warehouses}
 
-    product_alerts = {}
+    wo_demands = BOMItem.objects.filter(item_id__in=item_ids, parent__work_orders__status="pending_approval").annotate(
+        wo_qty=F("parent__work_orders__quantity"), bom_qty=F("parent__quantity"), wo_id=F("parent__work_orders__id")
+    )
+
+    component_demand_map = {}
+    for demand in wo_demands:
+        comp_id = demand.item_id
+        wo_qty = demand.wo_qty
+        bom_qty = demand.bom_qty if demand.bom_qty else Decimal("1.0")
+        if bom_qty == 0:
+            bom_qty = Decimal("1.0")
+
+        needed = (demand.quantity * wo_qty) / bom_qty
+
+        if comp_id not in component_demand_map:
+            component_demand_map[comp_id] = {"total_demand": Decimal("0.00"), "wo_ids": set()}
+        component_demand_map[comp_id]["total_demand"] += needed
+        component_demand_map[comp_id]["wo_ids"].add(demand.wo_id)
+
     product_distribution = {}
 
     for b in balances:
@@ -340,87 +360,180 @@ def get_warehouse_low_stock_alerts():
             product_distribution[item_id_str] = {}
         product_distribution[item_id_str][wh_id_str] = bal_str
 
-    # 5. Phân tích cảnh báo (Không gọi query DB nào trong loop này)
+    # Group balances by item
+    item_balances = {}
     for b in balances:
         item_id = b["item_id"]
-        wh_id = b["warehouse_id"]
-        balance = b["total_balance"]
+        if item_id not in item_balances:
+            item_balances[item_id] = []
+        item_balances[item_id].append(b)
 
+    items_list = []
+    for item_id, b_list in item_balances.items():
         item = items_map.get(item_id)
-        warehouse = warehouses_map.get(wh_id)
-        if not item or not warehouse:
+        if not item:
             continue
 
-        issued = consumption_map.get((item_id, wh_id), Decimal("0.00"))
-        adc = issued / Decimal("30.0")
+        item_id_str = str(item_id)
+        total_balance = sum(b["total_balance"] for b in b_list)
 
-        # Ngưỡng fallback tĩnh theo UOM
-        uom_name = item.stock_uom.name.lower() if item.stock_uom else ""
-        fallback_threshold = Decimal("10.0")
-        if uom_name in ["tấn", "ton", "kg"]:
-            fallback_threshold = Decimal("0.5")
-        elif uom_name in ["cái", "piece", "pcs"]:
-            fallback_threshold = Decimal("200.0")
+        # Ngưỡng tối thiểu tồn kho của Item
+        threshold = item.minimum_threshold
+        if threshold is None:
+            uom_name = item.stock_uom.name.lower() if item.stock_uom else ""
+            threshold = Decimal("10.0")
+            if uom_name in ["tấn", "ton", "kg"]:
+                threshold = Decimal("0.5")
+            elif uom_name in ["cái", "piece", "pcs"]:
+                threshold = Decimal("200.0")
 
-        is_alert = False
-        alert_reason = ""
-        days_left = None
-        status = "normal"
+        min_days_left = None
+        dos_status = "normal"
+        dos_reason = ""
+        dos_shortage = Decimal("0.00")
 
-        if adc > 0:
-            days_left = float(balance / adc)
-            days_left_str = format_num(days_left)
-            if days_left <= 3.0:
-                is_alert = True
-                status = "critical"
-                alert_reason = f"Khẩn cấp (Còn {days_left_str} ngày dùng tại {warehouse.name})"
-            elif days_left <= 7.0:
-                is_alert = True
-                status = "warning"
-                alert_reason = f"Cảnh báo (Còn {days_left_str} ngày dùng tại {warehouse.name})"
-        else:
-            if balance < fallback_threshold:
-                is_alert = True
-                status = "critical"
-                alert_reason = f"Dưới ngưỡng tối thiểu tại {warehouse.name} ({format_num(balance)}/{format_num(fallback_threshold)} {item.stock_uom.name})"
+        for b in b_list:
+            wh_id = b["warehouse_id"]
+            balance = b["total_balance"]
+            warehouse = warehouses_map.get(wh_id)
+            if not warehouse:
+                continue
 
-        if is_alert:
-            item_id_str = str(item_id)
-            if item_id_str not in product_alerts:
-                product_alerts[item_id_str] = {
-                    "id": item_id_str,
-                    "item_code": item.item_code,
-                    "item_name": item.item_name,
-                    "uom": item.stock_uom.name if item.stock_uom else "",
-                    "status": status,
-                    "reason": alert_reason,
-                    "days_left": days_left if days_left is not None else 9999.0,
-                }
+            issued = consumption_map.get((item_id, wh_id), Decimal("0.00"))
+            adc = issued / Decimal("30.0")
+
+            if adc > 0:
+                days_left_dec = balance / adc
+                days_left = float(days_left_dec)
+                days_left_str = format_num(days_left)
+                if min_days_left is None or days_left < min_days_left:
+                    min_days_left = days_left
+
+                if days_left_dec <= Decimal("7.0"):
+                    wh_shortage = max(Decimal("0"), Decimal("1") - (days_left_dec / Decimal("7.0")))
+                    dos_shortage = max(dos_shortage, wh_shortage)
+                    if days_left <= 3.0:
+                        if dos_status != "critical":
+                            dos_status = "critical"
+                            dos_reason = f"Khẩn cấp (Còn {days_left_str} ngày dùng tại {warehouse.name})"
+                    elif days_left <= 7.0:
+                        if dos_status == "normal":
+                            dos_status = "warning"
+                            dos_reason = f"Cảnh báo (Còn {days_left_str} ngày dùng tại {warehouse.name})"
+
+        # Xây dựng cảnh báo below_threshold_alert dựa trên TỔNG tồn kho
+        # - Dưới 100% ngưỡng: cảnh báo đỏ (critical)
+        # - Từ 100% - 150% ngưỡng: cảnh báo vàng (warning)
+        below_threshold_active = total_balance < (threshold * Decimal("1.5"))
+        below_threshold_level = "normal"
+        below_threshold_reason = ""
+        below_threshold_ratio = Decimal("0.00")
+        if below_threshold_active:
+            if total_balance < threshold:
+                below_threshold_level = "critical"
+                below_threshold_label = "Dưới ngưỡng tối thiểu"
+                below_threshold_ratio = max(Decimal("0"), Decimal("1") - (total_balance / threshold))
             else:
-                existing = product_alerts[item_id_str]
-                if status == "critical" and existing["status"] != "critical":
-                    existing["status"] = "critical"
-                    existing["reason"] = alert_reason
-                    existing["days_left"] = days_left if days_left is not None else 9999.0
-                elif status == existing["status"]:
-                    curr_dl = days_left if days_left is not None else 9999.0
-                    if curr_dl < existing["days_left"]:
-                        existing["reason"] = alert_reason
-                        existing["days_left"] = curr_dl
+                below_threshold_level = "warning"
+                below_threshold_label = "Cận ngưỡng tối thiểu"
+                below_threshold_ratio = max(Decimal("0"), Decimal("1.5") - (total_balance / threshold))
+            below_threshold_reason = (
+                f"{below_threshold_label}: tổng tồn kho {format_num(total_balance)}/{format_num(threshold)} {item.stock_uom.name if item.stock_uom else ''} "
+                f"trên toàn bộ hệ thống"
+            )
 
-    alert_items = list(product_alerts.values())
-    alert_items.sort(key=lambda x: (0 if x["status"] == "critical" else 1, x["days_left"]))
+        # Xây dựng cảnh báo projected_shortage_alert (cảnh báo vàng)
+        demand_info = component_demand_map.get(item_id, {"total_demand": Decimal("0.00"), "wo_ids": set()})
+        total_wo_demand_for_item = demand_info["total_demand"]
+        wo_count = len(demand_info["wo_ids"])
 
-    for item in alert_items:
+        projected_shortage = max(Decimal("0"), total_wo_demand_for_item - total_balance)
+        projected_shortage_active = total_wo_demand_for_item > total_balance
+        projected_shortage_level = "warning" if projected_shortage_active else "normal"
+        projected_shortage_reason = ""
+        projected_ratio = Decimal("0.00")
+        if projected_shortage_active:
+            projected_shortage_reason = (
+                f"Sẽ thiếu ~{format_num(projected_shortage)} {item.stock_uom.name if item.stock_uom else ''} "
+                f"nếu duyệt tất cả {wo_count} lệnh sản xuất chờ duyệt "
+                f"(nhu cầu: {format_num(total_wo_demand_for_item)} {item.stock_uom.name if item.stock_uom else ''}) "
+            )
+            projected_ratio = (
+                projected_shortage / (total_balance + projected_shortage)
+                if (total_balance + projected_shortage) > 0
+                else Decimal("0.00")
+            )
+
+        # Determine highest_status and highest_reason for backward compatibility
+        highest_status = "normal"
+        highest_reason = ""
+        if dos_status == "critical":
+            highest_status = "critical"
+            highest_reason = dos_reason
+        elif below_threshold_active and below_threshold_level == "critical":
+            highest_status = "critical"
+            highest_reason = below_threshold_reason
+        elif below_threshold_active and below_threshold_level == "warning":
+            highest_status = "warning"
+            highest_reason = below_threshold_reason
+        elif dos_status == "warning":
+            highest_status = "warning"
+            highest_reason = dos_reason
+        elif projected_shortage_active:
+            highest_status = "warning"
+            highest_reason = projected_shortage_reason
+
+        max_shortage_ratio = max(dos_shortage, below_threshold_ratio, projected_ratio)
+
+        # Build unified alerts array — sorted by severity (critical trước warning)
+        # Trong cùng mức severity, thứ tự: dos → below_threshold → projected_shortage
+        alerts = []
+        if dos_status == "critical":
+            alerts.append({"category": "dos", "level": "critical", "reason": dos_reason})
+        if below_threshold_active and below_threshold_level == "critical":
+            alerts.append({"category": "below_threshold", "level": "critical", "reason": below_threshold_reason})
+        if below_threshold_active and below_threshold_level == "warning":
+            alerts.append({"category": "below_threshold", "level": "warning", "reason": below_threshold_reason})
+        if dos_status == "warning":
+            alerts.append({"category": "dos", "level": "warning", "reason": dos_reason})
+        if projected_shortage_active:
+            alerts.append({"category": "projected_shortage", "level": "warning", "reason": projected_shortage_reason})
+
+        items_list.append(
+            {
+                "id": item_id_str,
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "uom": item.stock_uom.name if item.stock_uom else "",
+                "status": highest_status,
+                "reason": highest_reason,
+                "alerts": alerts,
+                "shortage_ratio": max_shortage_ratio,
+                "total_balance": total_balance,
+                "days_left": min_days_left if min_days_left is not None else 9999.0,
+            }
+        )
+
+    items_list.sort(
+        key=lambda x: (
+            0 if x["status"] == "critical" else (1 if x["status"] == "warning" else 2),
+            -x["shortage_ratio"],
+            x["total_balance"],
+        )
+    )
+
+    for item in items_list:
         item.pop("days_left", None)
+        item["shortage_ratio"] = f"{item['shortage_ratio']:.3f}"
+        item["total_balance"] = f"{item['total_balance']:.2f}"
 
     warehouses_list = [{"id": str(wh.id), "name": wh.name} for wh in active_warehouses]
 
     return {
-        "items": alert_items,
+        "items": items_list,
         "product_distribution": product_distribution,
         "warehouses": warehouses_list,
-        "total_count": len(alert_items),
+        "total_count": len(items_list),
     }
 
 
@@ -749,105 +862,160 @@ def get_finance_unpaid_sales_invoices():
 def get_finance_depreciation_status():
     current_period = timezone.now().strftime("%Y-%m")
 
-    # 1. Tìm các tài sản đã chạy khấu hao trong kỳ này
     depreciated_logs = FixedAssetDepreciationLog.objects.filter(period=current_period)
-    depreciated_assets_count = depreciated_logs.values("asset_id").distinct().count()
-    total_depreciation_amount = depreciated_logs.aggregate(total=Sum("depreciation_amount"))["total"] or Decimal("0")
+    depreciated_asset_ids = set(depreciated_logs.values_list("asset_id", flat=True))
 
-    # 2. Lấy danh sách tài sản chờ khấu hao (remaining_life_months > 0 và chưa chạy trong kỳ)
-    waiting_assets = FixedAsset.objects.filter(remaining_life_months__gt=0).exclude(
-        id__in=depreciated_logs.values_list("asset_id", flat=True)
+    waiting_assets = FixedAsset.objects.filter(is_active=True, status="active", remaining_life_months__gt=0).exclude(
+        id__in=depreciated_asset_ids
     )
     pending_assets_count = waiting_assets.count()
     is_done = pending_assets_count == 0
 
-    if not is_done and total_depreciation_amount == Decimal("0"):
-        # Ước lượng tiền khấu hao nếu chưa chạy
-        for asset in waiting_assets:
-            try:
-                dep_amount = (asset.original_value - asset.salvage_value) / Decimal(str(asset.useful_life_months))
-            except Exception:
-                dep_amount = Decimal("0")
-            total_depreciation_amount += dep_amount
+    from django.db.models import Prefetch
 
-    total_count = depreciated_assets_count + pending_assets_count
+    from apps.master_data.models import WorkOrderFixedAsset
 
-    top_assets = FixedAsset.objects.all().order_by("-created_at")[:5]
-    depreciated_asset_ids = set(depreciated_logs.values_list("asset_id", flat=True))
-    top_items = [
-        {
-            "id": str(a.id),
-            "asset_code": a.asset_code,
-            "asset_name": a.asset_name,
-            "status": "Đã hoàn tất" if a.id in depreciated_asset_ids else "Chờ khấu hao",
-        }
-        for a in top_assets
-    ]
+    all_assets = (
+        FixedAsset.objects.filter(is_active=True)
+        .prefetch_related(
+            Prefetch(
+                "work_order_links",
+                queryset=WorkOrderFixedAsset.objects.only("id"),
+            )
+        )
+        .order_by("-created_at")
+    )
+    total_count = all_assets.count()
+
+    items_list = []
+    for asset in all_assets:
+        depreciable_value = asset.original_value - asset.salvage_value
+        remaining = depreciable_value - asset.accumulated_depreciation
+        if remaining < 0:
+            remaining = Decimal("0.00")
+
+        alerts = []
+        if asset.status == "disposed":
+            alerts.append(
+                {
+                    "category": "disposed",
+                    "level": "normal",
+                    "reason": f"Tài sản đã thanh lý vào ngày {asset.disposal_date.strftime('%d/%m/%Y') if asset.disposal_date else ''}.",
+                }
+            )
+        else:
+            if remaining <= Decimal("0.00"):
+                alerts.append(
+                    {"category": "fully_depreciated", "level": "critical", "reason": "Tài sản đã khấu hao hết giá trị."}
+                )
+            elif asset.remaining_life_months is not None and asset.remaining_life_months <= 2:
+                alerts.append(
+                    {
+                        "category": "near_end",
+                        "level": "warning",
+                        "reason": f"Còn {asset.remaining_life_months} tháng là hết hạn sử dụng.",
+                    }
+                )
+
+            if asset.depreciation_method == "unit_of_production":
+                if len(asset.work_order_links.all()) == 0:
+                    alerts.append(
+                        {
+                            "category": "uop_unassigned",
+                            "level": "warning",
+                            "reason": "Tài sản UOP chưa được gán cho lệnh sản xuất nào.",
+                        }
+                    )
+
+        items_list.append(
+            {
+                "id": str(asset.id),
+                "asset_code": asset.asset_code,
+                "asset_name": asset.asset_name,
+                "depreciation_method": asset.depreciation_method,
+                "original_value": f"{asset.original_value:.2f}",
+                "salvage_value": f"{asset.salvage_value:.2f}",
+                "accumulated_depreciation": f"{asset.accumulated_depreciation:.2f}",
+                "remaining_value": f"{remaining:.2f}",
+                "status": asset.status,
+                "alerts": alerts,
+            }
+        )
 
     return {
+        "items": items_list,
         "total_count": total_count,
-        "top_items": top_items,
-        "depreciated_assets_count": depreciated_assets_count,
-        "pending_assets_count": pending_assets_count,
-        "total_depreciation_amount": f"{total_depreciation_amount:.2f}",
+        "current_period": current_period,
         "is_done": is_done,
+        "depreciated_assets_count": len(depreciated_asset_ids),
+        "pending_assets_count": pending_assets_count,
     }
 
 
 # 19. hrm_payroll_lifecycle_status (Bảng lương nhân sự)
 def get_hrm_payroll_lifecycle_status():
-    latest_slip = SalarySlip.objects.order_by("-salary_period").first()
-    if not latest_slip:
-        return {
-            "total_count": 0,
-            "top_items": [],
-            "salary_period": "",
-            "status": "draft",
-            "calculated_slips_count": 0,
-            "net_pay_total": "0",
-        }
+    from django.db.models import Count, Sum
 
-    period = latest_slip.salary_period
-    slips_qs = SalarySlip.objects.filter(salary_period=period)
-    total_count = slips_qs.count()
+    aggregates = (
+        SalarySlip.objects.values("salary_period", "status")
+        .annotate(count=Count("id"), total_net_pay=Sum("net_pay"))
+        .order_by("-salary_period")
+    )
 
-    statuses = set(slips_qs.values_list("status", flat=True))
-    if not statuses:
-        status_val = "draft"
-    elif "draft" in statuses:
-        status_val = "draft"
-    elif "calculated" in statuses:
-        status_val = "calculated"
-    elif "submitted" in statuses:
-        status_val = "submitted"
-    elif "approved" in statuses:
-        status_val = "approved"
-    elif "paid" in statuses:
-        status_val = "paid"
-    else:
-        status_val = "draft"
+    period_groups = {}
+    for row in aggregates:
+        period = row["salary_period"]
+        if not period:
+            continue
+        if period not in period_groups:
+            period_groups[period] = []
+        period_groups[period].append(row)
 
-    net_pay_total = slips_qs.aggregate(total=Sum("net_pay"))["total"] or Decimal("0")
+    pending_periods = []
+    status_weights = {"draft": 0, "calculated": 1, "submitted": 2, "approved": 3}
+    status_labels = {
+        "draft": "Bản nháp",
+        "calculated": "Đã tính toán",
+        "submitted": "Chờ phê duyệt",
+        "approved": "Chờ thanh toán",
+    }
 
-    top_slips = slips_qs.select_related("employee").order_by("-created_at")[:5]
-    top_items = [
-        {
-            "id": str(s.id),
-            "employee_name": s.employee.full_name,
-            "salary_period": s.salary_period,
-            "net_pay": str(s.net_pay),
-            "status": s.status,
-        }
-        for s in top_slips
-    ]
+    for period, rows in period_groups.items():
+        statuses = {r["status"] for r in rows}
+
+        if not statuses or (len(statuses) == 1 and "paid" in statuses):
+            continue
+
+        active_statuses = [s for s in statuses if s != "paid"]
+        if not active_statuses:
+            continue
+
+        highest_status = max(active_statuses, key=lambda s: status_weights.get(s, -1))
+
+        net_pay_total = sum(r["total_net_pay"] or Decimal("0") for r in rows)
+        slip_count = sum(r["count"] for r in rows)
+
+        pending_periods.append(
+            {
+                "id": period,
+                "salary_period": period,
+                "status": highest_status,
+                "status_label": status_labels.get(highest_status, "Bản nháp"),
+                "net_pay_total": f"{net_pay_total:.2f}",
+                "slip_count": slip_count,
+            }
+        )
+
+    # Sort:
+    # 1. Sort by salary_period DESC
+    pending_periods.sort(key=lambda x: x["salary_period"], reverse=True)
+    # 2. Stable sort: approved status comes first
+    pending_periods.sort(key=lambda x: 0 if x["status"] == "approved" else 1)
 
     return {
-        "total_count": total_count,
-        "top_items": top_items,
-        "salary_period": period,
-        "status": status_val,
-        "calculated_slips_count": slips_qs.filter(status="calculated").count() or total_count,
-        "net_pay_total": f"{net_pay_total:.2f}",
+        "total_count": len(pending_periods),
+        "top_items": pending_periods,
+        "is_empty": len(pending_periods) == 0,
     }
 
 
@@ -896,6 +1064,7 @@ def get_hrm_expiring_contracts():
         top_items.append(
             {
                 "id": str(c.id),
+                "employee_id": str(c.employee.id) if c.employee else None,
                 "employee_name": c.employee.full_name,
                 "contract_no": c.contract_no,
                 "contract_type": c.get_contract_type_display(),
@@ -968,13 +1137,21 @@ def get_manufacturing_pending_wo_approval():
 
 # 25. manufacturing_active_wos
 def get_manufacturing_active_wos():
-    orders_qs = WorkOrder.objects.filter(status="in_progress").select_related("production_item").order_by("-created_at")
+    today = timezone.localdate()
+    orders_qs = (
+        WorkOrder.objects.filter(status="in_progress")
+        .select_related("production_item", "target_warehouse")
+        .order_by("-created_at")
+    )
     total_count = orders_qs.count()
     results = []
     for o in orders_qs[:5]:
         qty = o.quantity
         prod = o.produced_qty
         pct = float((prod / qty) * 100) if qty > 0 else 0.0
+        days_left = None
+        if o.planned_end_date is not None:
+            days_left = (o.planned_end_date - today).days
         results.append(
             {
                 "id": str(o.id),
@@ -984,55 +1161,18 @@ def get_manufacturing_active_wos():
                 "produced_qty": str(prod),
                 "progress_pct": pct,
                 "planned_start_date": o.planned_start_date.isoformat(),
+                "planned_end_date": o.planned_end_date.isoformat() if o.planned_end_date else None,
+                "days_left": days_left,
+                "target_warehouse_name": o.target_warehouse.name if o.target_warehouse else None,
                 "created_at": o.created_at.isoformat(),
             }
         )
     return DashboardList(results, total_count)
 
 
-# 26. manufacturing_pending_declarations (Lệnh sản xuất sắp trễ hạn)
-def get_manufacturing_pending_declarations():
-    today = timezone.localdate()
-    three_days_later = today + timedelta(days=3)
-
-    # Lấy các lệnh sản xuất chưa hoàn thành và có hạn sắp đến hoặc đã qua
-    orders_qs = (
-        WorkOrder.objects.filter(
-            status__in=["pending_approval", "in_progress"],
-            planned_end_date__isnull=False,
-            planned_end_date__lte=three_days_later,
-        )
-        .select_related("production_item")
-        .order_by("planned_end_date")
-    )
-    total_count = orders_qs.count()
-
-    results = []
-    for o in orders_qs[:5]:
-        days_left = (o.planned_end_date - today).days
-        results.append(
-            {
-                "id": str(o.id),
-                "name": o.name,
-                "production_item_name": o.production_item.item_name,
-                "quantity": str(o.quantity),
-                "produced_qty": str(o.produced_qty),
-                "planned_start_date": o.planned_start_date.isoformat(),
-                "planned_end_date": o.planned_end_date.isoformat(),
-                "status": o.status,
-                "days_left": days_left,
-                "created_at": o.created_at.isoformat(),
-            }
-        )
-    return {
-        "total_count": total_count,
-        "top_items": results,
-    }
-
-
 # 27. manufacturing_pending_completion
 def get_manufacturing_pending_completion():
-    orders_qs = WorkOrder.objects.filter(status="in_progress", produced_qty__gte=F("quantity")).select_related(
+    orders_qs = WorkOrder.objects.filter(status="pending_production_complete").select_related(
         "production_item", "target_warehouse"
     )
     pending_completion_count = orders_qs.count()
@@ -1079,6 +1219,5 @@ SELECTORS_MAP = {
     "hrm_today_attendance_rate": get_hrm_today_attendance_rate,
     "manufacturing_pending_wo_approval": get_manufacturing_pending_wo_approval,
     "manufacturing_active_wos": get_manufacturing_active_wos,
-    "manufacturing_pending_declarations": get_manufacturing_pending_declarations,
     "manufacturing_pending_completion": get_manufacturing_pending_completion,
 }

@@ -32,7 +32,6 @@ def bom_create(
     item_id: str,
     quantity: Decimal = Decimal("1"),
     description: Optional[str] = None,
-    mold_id: Optional[str] = None,
     items: List[Dict[str, Any]],
 ) -> BOM:
     """
@@ -87,15 +86,6 @@ def bom_create(
     if str(item.id) in item_ids:
         raise ValidationException("Linh kiện không được trùng với sản phẩm thành phẩm")
 
-    # Resolve mold if passed
-    mold = None
-    if mold_id:
-        from apps.finance.models import FixedAsset
-
-        mold = FixedAsset.objects.filter(id=mold_id).first()
-        if not mold:
-            raise NotFoundException(f"Khuôn mẫu với ID {mold_id} không tồn tại")
-
     # Tạo BOM Header
     bom = BOM.objects.create(
         name=name,
@@ -103,7 +93,6 @@ def bom_create(
         quantity=quantity,
         is_active=True,
         description=description,
-        mold=mold,
     )
 
     # Tạo BOM Items (bulk create)
@@ -144,7 +133,6 @@ def bom_update(
     name: Optional[str] = None,
     quantity: Optional[Decimal] = None,
     description: Optional[str] = None,
-    mold_id: Optional[str] = _UNSET,  # type: ignore
     items: Optional[List[Dict[str, Any]]] = None,
 ) -> BOM:
     """
@@ -177,7 +165,6 @@ def bom_update(
         "name": bom.name,
         "quantity": str(bom.quantity),
         "description": bom.description,
-        "mold_id": str(bom.mold_id) if bom.mold_id else None,
         "items_count": bom.items.count(),
     }
 
@@ -191,17 +178,6 @@ def bom_update(
         bom.quantity = quantity
     if description is not None:
         bom.description = description
-
-    if mold_id is not _UNSET:
-        if mold_id:
-            from apps.finance.models import FixedAsset
-
-            mold = FixedAsset.objects.filter(id=mold_id).first()
-            if not mold:
-                raise NotFoundException(f"Khuôn mẫu với ID {mold_id} không tồn tại")
-            bom.mold = mold
-        else:
-            bom.mold = None
 
     bom.save()
 
@@ -305,6 +281,66 @@ def bom_delete(*, user: User, bom_id: str) -> None:
 
 
 @transaction.atomic
+def work_order_set_fixed_assets(
+    *,
+    user: User,
+    work_order_id: str,
+    fixed_asset_ids: List[str],
+    check_perm: bool = True,
+) -> WorkOrder:
+    """
+    Gán (set/replace) danh sách tài sản cố định cho WorkOrder.
+    """
+    if check_perm:
+        PermissionChecker.check_permission(user, "manufacturing.work_order_update")
+
+    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
+    if not work_order:
+        raise NotFoundException("Lệnh sản xuất không tồn tại")
+
+    from apps.finance.models import FixedAsset
+    from apps.master_data.models import WorkOrderFixedAsset
+
+    fixed_asset_ids = [str(aid) for aid in fixed_asset_ids]
+    if len(fixed_asset_ids) != len(set(fixed_asset_ids)):
+        raise ValidationException("Danh sách tài sản có ID trùng lặp.")
+
+    assets = FixedAsset.objects.filter(id__in=fixed_asset_ids)
+    asset_map = {str(a.id): a for a in assets}
+
+    for aid in fixed_asset_ids:
+        asset = asset_map.get(aid)
+        if not asset:
+            raise ValidationException(f"Tài sản cố định {aid} không tồn tại.")
+        if asset.status != "idle":
+            raise ValidationException(
+                f"Tài sản '{asset.asset_code}' phải ở trạng thái nhàn rỗi (idle) để gán vào lệnh sản xuất."
+            )
+        if asset.depreciation_method != "unit_of_production":
+            raise ValidationException(
+                f"Tài sản '{asset.asset_code}' không dùng phương pháp UOP. "
+                f"Chỉ gán được tài sản có phương pháp khấu hao sản lượng (UOP)."
+            )
+
+    # Replace all links
+    work_order.fixed_asset_links.all().delete()
+
+    for aid in fixed_asset_ids:
+        WorkOrderFixedAsset.objects.create(
+            work_order=work_order,
+            fixed_asset=asset_map[aid],
+        )
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="work_order",
+        record_id=str(work_order.id),
+        new_value={"fixed_assets_count": len(fixed_asset_ids)},
+    )
+    return work_order
+
+
 def work_order_create(
     *,
     user: User,
@@ -317,6 +353,7 @@ def work_order_create(
     planned_start_date: date,
     planned_end_date: Optional[date] = None,
     remarks: Optional[str] = None,
+    fixed_asset_ids: Optional[List[str]] = None,
 ) -> WorkOrder:
     from apps.master_data.models import Warehouse
 
@@ -360,6 +397,14 @@ def work_order_create(
         remarks=remarks,
     )
 
+    if fixed_asset_ids:
+        work_order_set_fixed_assets(
+            user=user,
+            work_order_id=str(work_order.id),
+            fixed_asset_ids=fixed_asset_ids,
+            check_perm=False,
+        )
+
     create_system_log(
         user=user,
         action="create",
@@ -400,9 +445,26 @@ def work_order_approve(
     if not bom_items:
         raise ValidationException(f"Định mức '{work_order.bom.name}' không có linh kiện nào.")
 
-    # 1. Lock Items liên quan (ngăn TOCTOU race condition) sắp xếp theo ID để tránh deadlock
+    # 1. Khóa các dòng StockLedger của các item trong source_warehouse (ngăn race condition khi 2 transaction cùng sum balance)
+    # Sắp xếp theo item_id và id để tránh deadlock
     item_ids = sorted(list(set(str(bi.item_id) for bi in bom_items)))
-    Item.objects.select_for_update().filter(id__in=item_ids).order_by("id")
+
+    from django.db import connection
+
+    if connection.vendor == "postgresql":
+        # nowait=False để tránh exception khi lock bận; lock timeout mặc định của PG
+        locked_rows = list(
+            StockLedger.objects.select_for_update(nowait=False)
+            .filter(item_id__in=item_ids, warehouse=work_order.source_warehouse)
+            .order_by("item_id", "id")
+        )
+    else:
+        # SQLite/MySQL/other: dùng FOR UPDATE cơ bản
+        locked_rows = list(
+            StockLedger.objects.select_for_update()
+            .filter(item_id__in=item_ids, warehouse=work_order.source_warehouse)
+            .order_by("item_id", "id")
+        )
 
     # 2. Tính tồn kho khả dụng (1 query duy nhất)
     stock_balances = (
@@ -474,6 +536,13 @@ def work_order_approve(
     if details_to_create:
         StockEntryDetail.objects.bulk_create(details_to_create)
         StockLedger.objects.bulk_create(ledgers_to_create)
+
+    # Validation & status update for fixed assets
+    asset_ids = list(work_order.fixed_asset_links.values_list("fixed_asset_id", flat=True))
+    from apps.finance.services import set_fixed_asset_status_for_workorder, validate_fixed_assets_for_workorder_start
+
+    validate_fixed_assets_for_workorder_start(asset_ids=asset_ids)
+    set_fixed_asset_status_for_workorder(asset_ids=asset_ids, target_status="active", source="wo_in_progress")
 
     work_order.status = "in_progress"
     work_order.planned_start_date = timezone.now().date()
@@ -572,6 +641,11 @@ def work_order_declare_production(
     StockLedger.objects.bulk_create(ledgers)
 
     work_order.produced_qty += Decimal(str(produced_qty))
+
+    # Auto-transition sang "Chờ phê duyệt" khi đạt 100%
+    if work_order.produced_qty >= work_order.quantity and work_order.status == "in_progress":
+        work_order.status = "pending_production_complete"
+
     work_order.save()
 
     create_system_log(
@@ -579,7 +653,11 @@ def work_order_declare_production(
         action="declare_production",
         table_name="work_order",
         record_id=str(work_order.id),
-        new_value={"produced_qty": str(produced_qty), "stock_entry": stock_entry.name},
+        new_value={
+            "produced_qty": str(produced_qty),
+            "stock_entry": stock_entry.name,
+            "status": work_order.status,
+        },
     )
 
     return work_order
@@ -602,8 +680,8 @@ def work_order_complete(
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
 
-    if work_order.status != "in_progress":
-        raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện")
+    if work_order.status not in ("in_progress", "pending_production_complete"):
+        raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện hoặc lệnh chờ phê duyệt cuối")
 
     manufacture_entries = StockEntry.objects.filter(purpose="manufacture", work_order=work_order, status="posted")
 
@@ -656,6 +734,12 @@ def work_order_complete(
     work_order.actual_end_date = timezone.now().date()
     work_order.planned_end_date = timezone.now().date()
     work_order.save()
+
+    # Transition assets back to idle
+    asset_ids = list(work_order.fixed_asset_links.values_list("fixed_asset_id", flat=True))
+    from apps.finance.services import set_fixed_asset_status_for_workorder
+
+    set_fixed_asset_status_for_workorder(asset_ids=asset_ids, target_status="idle", source="wo_completed")
 
     create_system_log(
         user=user,

@@ -1,4 +1,4 @@
-# Static configuration registry for all 27 widgets
+# Static configuration registry for all 20 widgets
 
 WIDGETS_REGISTRY = {
     "sales_today_revenue": {
@@ -76,20 +76,20 @@ WIDGETS_REGISTRY = {
         "type": "donut_chart",
         "size": "1x2",
         "title": "Hóa đơn mua chưa thanh toán",
-        "quick_links": ["/finance?tab=purchase_invoices&status=unpaid,partial"],
+        "quick_links": ["/finance/invoices?tab=purchase_invoices&status=unpaid,partial"],
     },
     "finance_unpaid_sales_invoices": {
         "permission": "finance.collect_sales_invoice",
         "type": "donut_chart",
         "size": "1x2",
         "title": "Hóa đơn bán chưa thanh toán",
-        "quick_links": ["/finance?tab=sales_invoices&status=unpaid,partial"],
+        "quick_links": ["/finance/invoices?tab=sales_invoices&status=unpaid,partial"],
     },
     "finance_depreciation_status": {
         "permission": "finance.view_fixed_asset",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Khấu hao tài sản cố định",
+        "type": "donut_chart",
+        "size": "2x2",
+        "title": "Theo dõi khấu hao tài sản",
         "quick_links": ["/finance/fixed-assets"],
     },
     "hrm_payroll_lifecycle_status": {
@@ -97,55 +97,48 @@ WIDGETS_REGISTRY = {
         "type": "kpi_list",
         "size": "1x2",
         "title": "Bảng lương chờ duyệt & thanh toán",
-        "quick_links": ["/hrm?tab=salary"],
+        "quick_links": ["/hrm/payroll"],
     },
     "hrm_pending_leave_requests": {
         "permission": "hrm.change_leaverequest",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Yêu cầu nghỉ phép chờ duyệt",
-        "quick_links": ["/hrm?tab=leave"],
+        "quick_links": ["/hrm/attendance-leave?tab=leave"],
     },
     "hrm_expiring_contracts": {
         "permission": "hrm.change_employmentcontract",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Hợp đồng lao động sắp hết hạn",
-        "quick_links": ["/hrm?tab=employees"],
+        "quick_links": ["/hrm/employees"],
     },
     "hrm_today_attendance_rate": {
         "permission": "hrm.view_attendance",
         "type": "gauge",
         "size": "1x2",
         "title": "Theo dõi vắng mặt",
-        "quick_links": ["/hrm?tab=attendance"],
+        "quick_links": ["/hrm/attendance-leave?tab=attendance"],
     },
     "manufacturing_pending_wo_approval": {
         "permission": "manufacturing.work_order_approve",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Lệnh sản xuất chờ duyệt",
-        "quick_links": ["/bom?tab=wo&status=pending_approval"],
+        "quick_links": ["/work-orders?status=pending_approval"],
     },
     "manufacturing_active_wos": {
         "permission": "manufacturing.work_order_view",
         "type": "stacked_progress",
         "size": "2x2",
         "title": "Lệnh sản xuất đang thực hiện",
-        "quick_links": ["/bom?tab=wo&status=in_progress"],
-    },
-    "manufacturing_pending_declarations": {
-        "permission": "manufacturing.work_order_view",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Lệnh sản xuất sắp trễ hạn",
-        "quick_links": ["/bom?tab=wo&status=in_progress"],
+        "quick_links": ["/work-orders?status=in_progress"],
     },
     "manufacturing_pending_completion": {
         "permission": "manufacturing.work_order_complete",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Lệnh sản xuất chờ nghiệm thu",
-        "quick_links": ["/bom?tab=wo&status=in_progress"],
+        "quick_links": ["/work-orders?status=pending_production_complete"],
     },
 }

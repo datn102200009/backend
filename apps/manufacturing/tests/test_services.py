@@ -380,11 +380,81 @@ class TestWorkOrderServices:
     def test_work_order_complete_invalid_status(self, production_user):
         wo = WorkOrderFactory(status="completed")
 
-        with pytest.raises(ValidationException, match="Chỉ có thể hoàn thành lệnh đang thực hiện"):
+        with pytest.raises(
+            ValidationException,
+            match="Chỉ có thể hoàn thành lệnh đang thực hiện hoặc lệnh chờ phê duyệt cuối",
+        ):
             work_order_complete(
                 user=production_user,
                 work_order_id=str(wo.id),
             )
+
+    def test_work_order_declare_production_auto_transition(self, production_user):
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
+        item1 = ItemFactory()
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("2.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            quantity=10,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        declared_wo = work_order_declare_production(
+            user=production_user, work_order_id=str(wo.id), produced_qty=Decimal("10.0")
+        )
+
+        assert declared_wo.status == "pending_production_complete"
+        assert declared_wo.produced_qty == Decimal("10.0")
+
+    def test_work_order_complete_from_pending_production_complete(self, production_user):
+        bom = BOMFactory(is_active=True)
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            status="pending_production_complete",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+            quantity=100,
+            produced_qty=100,
+        )
+
+        se = StockEntry.objects.create(
+            name=f"MFG-{wo.name}-456",
+            purpose="manufacture",
+            posting_date=timezone.now(),
+            status="posted",
+            work_order=wo,
+            remarks=f"Nhập liệu sản xuất cho lệnh {wo.name}",
+        )
+        from apps.inventory.models import StockEntryDetail
+
+        StockEntryDetail.objects.create(
+            parent=se,
+            item=wo.production_item,
+            quantity=Decimal("100.0"),
+            target_warehouse=production,
+        )
+
+        completed_wo = work_order_complete(
+            user=production_user,
+            work_order_id=str(wo.id),
+        )
+
+        assert completed_wo.status == "completed"
 
     def test_work_order_complete_substring_collision(self, production_user):
         """Test complete lệnh sản xuất không bị nhận nhầm stock entry của lệnh khác có tên chứa substring tương tự."""
@@ -485,3 +555,43 @@ class TestWorkOrderServices:
         # Assert
         assert approved_wo.status == "in_progress"
         assert approved_wo.planned_start_date == timezone.now().date()
+
+    def test_concurrent_approve_wo_locks_stock(self, production_user):
+        """
+        Verify: work_order_approve locks StockLedger using select_for_update to serialize transactions.
+        """
+        from unittest.mock import patch
+
+        from apps.inventory.models import StockLedger
+
+        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        item1 = ItemFactory()
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("1.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        StockLedgerFactory(
+            item=item1,
+            warehouse=source,
+            actual_quantity=Decimal("10.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            quantity=5,
+            status="pending_approval",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        with patch.object(
+            StockLedger.objects, "select_for_update", wraps=StockLedger.objects.select_for_update
+        ) as mock_sfu:
+            work_order_approve(user=production_user, work_order_id=str(wo.id))
+            assert mock_sfu.called

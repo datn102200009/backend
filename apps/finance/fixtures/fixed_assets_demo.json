@@ -1,0 +1,52 @@
+[
+  {
+    "model": "finance.fixedasset",
+    "pk": "a243c2a6-b52b-42ab-ba0c-1123456789ab",
+    "fields": {
+      "created_at": "2026-06-15T00:00:00Z",
+      "updated_at": "2026-06-15T00:00:00Z",
+      "is_active": true,
+      "asset_code": "FA-DEMO-SL-01",
+      "asset_name": "Xe Tải Giao Hàng Suzuki",
+      "original_value": "350000000.00",
+      "salvage_value": "50000000.00",
+      "depreciation_method": "straight_line",
+      "useful_life_months": 60,
+      "remaining_life_months": 60,
+      "designed_capacity": null,
+      "accumulated_depreciation": "0.00",
+      "department": "Logistics",
+      "status": "idle",
+      "purchase_date": "2026-06-01",
+      "disposal_date": null,
+      "disposal_value": null,
+      "vendor_name": "Suzuki Việt Nam",
+      "payment_method": "bank_transfer"
+    }
+  },
+  {
+    "model": "finance.fixedasset",
+    "pk": "b423c2a6-c52b-42ab-ba0c-9923456789cd",
+    "fields": {
+      "created_at": "2026-06-15T00:00:00Z",
+      "updated_at": "2026-06-15T00:00:00Z",
+      "is_active": true,
+      "asset_code": "FA-DEMO-UOP-01",
+      "asset_name": "Máy Ép Nhựa Haitian 120T",
+      "original_value": "780000000.00",
+      "salvage_value": "80000000.00",
+      "depreciation_method": "unit_of_production",
+      "useful_life_months": null,
+      "remaining_life_months": null,
+      "designed_capacity": "200000.00",
+      "accumulated_depreciation": "0.00",
+      "department": "Xưởng A",
+      "status": "idle",
+      "purchase_date": "2026-06-05",
+      "disposal_date": null,
+      "disposal_value": null,
+      "vendor_name": "Haitian Machinery",
+      "payment_method": "bank_transfer"
+    }
+  }
+]

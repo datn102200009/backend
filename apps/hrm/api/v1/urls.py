@@ -31,6 +31,7 @@ urlpatterns = [
     path("leave-requests/<uuid:pk>/approve/", views.leave_request_approve_view, name="leave_request_approve"),
     # Salary Slips
     path("salary-slips/", views.salary_slip_list_view, name="salary_slip_list"),
+    path("salary-periods/", views.salary_periods_list_view, name="salary_periods_list"),
     path("salary-slips/initialize/", views.salary_slip_initialize_view, name="salary_slip_initialize"),
     path("salary-slips/bulk-confirm-pay/", views.salary_slip_bulk_confirm_view, name="salary_slip_bulk_confirm"),
     path("salary-slips/<uuid:pk>/calculate/", views.salary_slip_calculate_view, name="salary_slip_calculate"),

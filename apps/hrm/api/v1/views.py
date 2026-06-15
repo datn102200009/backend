@@ -542,6 +542,22 @@ def salary_slip_list_view(request):
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+@api_view(["GET"])
+def salary_periods_list_view(request):
+    """
+    Xem danh sách các kỳ lương tồn tại.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "finance.view_salaryslip")
+
+    periods = SalarySlip.objects.values_list("salary_period", flat=True).distinct().order_by("-salary_period")
+    periods = [p for p in periods if p]
+    return Response(periods, status=status.HTTP_200_OK)
+
+
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
 def salary_slip_initialize_view(request):
