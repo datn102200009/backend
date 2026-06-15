@@ -25,7 +25,6 @@ from apps.hrm.services import (
     employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
-    payroll_approve_salary,
     payroll_calculate_salary,
     payroll_initialize_period,
     reward_record_create,
@@ -759,143 +758,6 @@ class TestPayrollAndRewardDisciplineServices:
         assert len(slips) == 1
         assert slips[0].base_salary == Decimal("15000000.00")
 
-    def test_payroll_bulk_confirm_and_pay(self):
-        from apps.finance.models import CashFlowTransaction, SalarySlip
-
-        # Arrange
-        emp1 = EmployeeFactory(employee_id="EMP9501", full_name="Emp 1")
-        emp2 = EmployeeFactory(employee_id="EMP9502", full_name="Emp 2")
-        admin = UserFactory(username="admin_payroll")
-
-        # Khởi tạo 2 phiếu lương của kỳ 2026-05 dạng draft (sửa thành approved để test confirm & pay)
-        slip1 = SalarySlipFactory(
-            employee=emp1,
-            salary_period="2026-05",
-            base_salary=Decimal("5000000.00"),
-            net_pay=Decimal("5000000.00"),
-            status="approved",
-        )
-        slip2 = SalarySlipFactory(
-            employee=emp2,
-            salary_period="2026-05",
-            base_salary=Decimal("6000000.00"),
-            net_pay=Decimal("6000000.00"),
-            status="approved",
-        )
-
-        # Phiếu lương của kỳ khác (không bị ảnh hưởng)
-        slip_other = SalarySlipFactory(
-            employee=emp1,
-            salary_period="2026-04",
-            net_pay=Decimal("4500000.00"),
-            status="draft",
-        )
-
-        # Act
-        from apps.hrm.services import payroll_bulk_confirm_and_pay
-
-        updated_slips = payroll_bulk_confirm_and_pay(
-            salary_period="2026-05", payment_method="bank_transfer", creator=admin
-        )
-
-        # Assert
-        assert len(updated_slips) == 2
-
-        # Refresh from DB
-        slip1.refresh_from_db()
-        slip2.refresh_from_db()
-        slip_other.refresh_from_db()
-
-        assert slip1.status == "paid"
-        assert slip1.payment_method == "bank_transfer"
-        assert slip2.status == "paid"
-        assert slip2.payment_method == "bank_transfer"
-        assert slip_other.status == "draft"  # Remains draft
-
-        # Verify CashFlowTransactions
-        tx1 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9501-2026-05").first()
-        tx2 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9502-2026-05").first()
-
-        assert tx1 is not None
-        assert tx1.amount == Decimal("5000000.00")
-        assert tx2 is not None
-        assert tx2.amount == Decimal("6000000.00")
-
-        # Verify SystemLogs
-        slip_logs = SystemLog.objects.filter(table_name="salary_slip", action="update", user=admin)
-        assert slip_logs.count() == 2
-
-        tx_logs = SystemLog.objects.filter(table_name="cash_flow_transaction", action="create", user=admin)
-        assert tx_logs.count() == 2
-
-    def test_payroll_bulk_confirm_and_pay_handles_zero_and_negative_net_pay(self):
-        from apps.finance.models import CashFlowTransaction, SalarySlip
-
-        # Arrange
-        emp1 = EmployeeFactory(employee_id="EMP9503", full_name="Emp 3")  # Lương dương -> pay
-        emp2 = EmployeeFactory(employee_id="EMP9504", full_name="Emp 4")  # Lương bằng 0 -> bỏ qua
-        emp3 = EmployeeFactory(employee_id="EMP9505", full_name="Emp 5")  # Lương âm -> receive
-        admin = UserFactory(username="admin_payroll_neg")
-
-        slip_positive = SalarySlipFactory(
-            employee=emp1,
-            salary_period="2026-05",
-            base_salary=Decimal("5000000.00"),
-            net_pay=Decimal("5000000.00"),
-            status="approved",
-        )
-        slip_zero = SalarySlipFactory(
-            employee=emp2,
-            salary_period="2026-05",
-            base_salary=Decimal("0.00"),
-            net_pay=Decimal("0.00"),
-            status="approved",
-        )
-        slip_negative = SalarySlipFactory(
-            employee=emp3,
-            salary_period="2026-05",
-            base_salary=Decimal("1000000.00"),
-            net_pay=Decimal("-200000.00"),
-            status="approved",
-        )
-
-        # Act
-        from apps.hrm.services import payroll_bulk_confirm_and_pay
-
-        updated_slips = payroll_bulk_confirm_and_pay(
-            salary_period="2026-05", payment_method="bank_transfer", creator=admin
-        )
-
-        # Assert
-        assert len(updated_slips) == 3
-
-        # Refresh from DB
-        slip_positive.refresh_from_db()
-        slip_zero.refresh_from_db()
-        slip_negative.refresh_from_db()
-
-        assert slip_positive.status == "paid"
-        assert slip_zero.status == "paid"
-        assert slip_negative.status == "paid"
-
-        # Verify CashFlowTransactions
-        tx_pos = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9503-2026-05").first()
-        tx_zero = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9504-2026-05").first()
-        tx_neg = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP9505-2026-05").first()
-
-        # Tiền dương -> pay
-        assert tx_pos is not None
-        assert tx_pos.payment_type == "pay"
-        assert tx_pos.amount == Decimal("5000000.00")
-
-        # Tiền bằng 0 -> bỏ qua không tạo transaction
-        assert tx_zero is None
-
-        # Tiền âm -> receive với trị tuyệt đối abs(amount)
-        assert tx_neg is not None
-        assert tx_neg.payment_type == "receive"
-        assert tx_neg.amount == Decimal("200000.00")
-
     def test_payroll_calculate_salary_with_late_reward_and_discipline(self):
         from apps.finance.models import SalarySlip
         from apps.hrm.models import DisciplineRecord, RewardRecord
@@ -1086,10 +948,9 @@ class TestPayrollAndRewardDisciplineServices:
         assert slip.deductions == Decimal("1365000.00")
         assert slip.net_pay == Decimal("7385000.00")
 
-        # Kiểm tra bút toán chi tiền lương
+        # Kiểm tra bút toán chi tiền lương không được tự động tạo ở HRM nữa
         tx = CashFlowTransaction.objects.filter(name=f"PAY-FINAL-SALARY-{employee.employee_id}-2026-05").first()
-        assert tx is not None
-        assert tx.amount == Decimal("7385000.00")
+        assert tx is None
 
     def test_contract_terminate_unlawful_resignation_without_bhxh(self):
         # Arrange
@@ -1137,12 +998,9 @@ class TestPayrollAndRewardDisciplineServices:
         assert slip.deductions == Decimal("43000000.00")
         assert slip.net_pay == Decimal("-33000000.00")
 
-        # Assert CashFlowTransaction
+        # Assert CashFlowTransaction không được tự động tạo ở HRM nữa
         tx = CashFlowTransaction.objects.filter(name=f"COLLECT-FINAL-SALARY-{employee.employee_id}-2026-05").first()
-        assert tx is not None
-        assert tx.payment_type == "receive"
-        assert tx.category == "Thu hồi bồi thường nhân viên thôi việc"
-        assert tx.amount == Decimal("33000000.00")
+        assert tx is None
 
 
 @pytest.mark.django_db
@@ -1784,67 +1642,3 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Act & Assert
         with pytest.raises(ProtectedError):
             employee.delete()
-
-
-@pytest.mark.django_db
-class TestPayrollApprovalServices:
-
-    def test_payroll_approve_salary_success(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP_APPROVE_1", employment_status="active")
-        approver = UserFactory(username="payroll_approver")
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
-
-        # Act
-        approved_slip = payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
-
-        # Assert
-        assert approved_slip.status == "approved"
-        assert approved_slip.approved_by == approver
-        assert approved_slip.approved_at is not None
-
-        # Check log
-        log = SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=approver).first()
-        assert log is not None
-        assert log.action == "update"
-        assert log.old_value == {"status": "calculated"}
-        assert log.new_value["status"] == "approved"
-        assert log.new_value["approved_by_id"] == str(approver.id)
-
-    def test_payroll_approve_salary_fails_if_no_permission(self, mock_check_permission):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP_APPROVE_2")
-        approver = UserFactory(username="no_permission_approver")
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
-
-        # Mock check_permission to raise PermissionException
-        from apps.common.xlib.exceptions import PermissionException
-
-        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.payroll_approve")
-
-        # Act & Assert
-        with pytest.raises(PermissionException) as exc_info:
-            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
-        assert "không có quyền: hrm.payroll_approve" in str(exc_info.value)
-
-    def test_payroll_approve_salary_fails_if_not_found(self):
-        # Arrange
-        approver = UserFactory(username="payroll_approver_3")
-        from apps.common.xlib.exceptions import NotFoundException
-
-        # Act & Assert
-        with pytest.raises(NotFoundException) as exc_info:
-            payroll_approve_salary(user=approver, salary_slip_id="00000000-0000-0000-0000-000000000000")
-        assert "Phiếu lương với ID 00000000-0000-0000-0000-000000000000 không tồn tại" in str(exc_info.value)
-
-    def test_payroll_approve_salary_fails_if_not_calculated(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP_APPROVE_4")
-        approver = UserFactory(username="payroll_approver_4")
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
-        from apps.common.xlib.exceptions import ValidationException
-
-        # Act & Assert
-        with pytest.raises(ValidationException) as exc_info:
-            payroll_approve_salary(user=approver, salary_slip_id=str(slip.id))
-        assert "Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'" in str(exc_info.value)

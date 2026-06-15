@@ -27,11 +27,12 @@ class SalarySlip(BaseModel):
         blank=True,
     )
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=[
             ("draft", "Draft"),
             ("calculated", "Calculated"),
             ("submitted", "Submitted"),
+            ("pending_finance_review", "Pending Finance Review"),
             ("approved", "Approved"),
             ("paid", "Paid"),
         ],

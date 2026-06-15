@@ -322,3 +322,22 @@ class CollectInvoiceInputSerializer(serializers.Serializer):
         choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản ngân hàng")],
         default="bank_transfer",
     )
+
+
+class SalarySlipPaymentInputSerializer(serializers.Serializer):
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
+        default="bank_transfer",
+    )
+
+
+class SalarySlipRejectInputSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, required=True)
+
+
+class SalarySlipBulkApprovePayInputSerializer(serializers.Serializer):
+    salary_period = serializers.CharField(max_length=10, required=True)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
+        default="bank_transfer",
+    )

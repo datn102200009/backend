@@ -23,7 +23,7 @@ from apps.accounts.models import User
 from apps.common.services import create_system_log
 from apps.common.xlib.exceptions import NotFoundException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
-from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog
+from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog, SalarySlip
 from apps.inventory.models import StockEntryDetail
 from apps.master_data.models import BOM
 
@@ -1064,3 +1064,274 @@ def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payme
     )
 
     return tx
+
+
+def _process_payroll_chunk(
+    chunk: list[SalarySlip],
+    payment_method: str,
+    creator: Optional[User],
+    slips_to_update: list[SalarySlip],
+    txs_to_create: list[Any],
+    logs_to_create: list[Any],
+    salary_period: str,
+):
+    from apps.accounts.models import SystemLog
+    from apps.finance.models import CashFlowTransaction
+
+    tx_names = []
+    for slip in chunk:
+        if slip.net_pay != 0:
+            prefix = "PAY-SALARY" if slip.net_pay > 0 else "COLLECT-SALARY"
+            tx_names.append(f"{prefix}-{slip.employee.employee_id}-{salary_period}")
+    existing_tx_names = set(CashFlowTransaction.objects.filter(name__in=tx_names).values_list("name", flat=True))
+
+    for slip in chunk:
+        old_status = slip.status
+        old_method = slip.payment_method
+
+        slip.status = "paid"
+        slip.payment_method = payment_method
+        slips_to_update.append(slip)
+
+        logs_to_create.append(
+            SystemLog(
+                user=creator,
+                action="update",
+                table_name="salary_slip",
+                record_id=str(slip.id),
+                old_value={"status": old_status, "payment_method": old_method},
+                new_value={"status": "paid", "payment_method": payment_method},
+            )
+        )
+
+        if slip.net_pay == 0:
+            continue
+
+        prefix = "PAY-SALARY" if slip.net_pay > 0 else "COLLECT-SALARY"
+        tx_name = f"{prefix}-{slip.employee.employee_id}-{salary_period}"
+        if tx_name not in existing_tx_names:
+            try:
+                parts = salary_period.split("-")
+                period_year = parts[0]
+                period_month = parts[1]
+            except Exception:
+                period_year = ""
+                period_month = salary_period
+
+            if slip.net_pay > 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="pay",
+                        category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
+                        amount=slip.net_pay,
+                        payment_date=datetime.date.today(),
+                        remarks=f"Chi trả lương tháng {period_month}/{period_year} cho nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Thực lĩnh: {slip.net_pay:,.2f}đ. Phương thức: Chuyển khoản.",
+                        status="posted",
+                    )
+                )
+            elif slip.net_pay < 0:
+                txs_to_create.append(
+                    CashFlowTransaction(
+                        name=tx_name,
+                        payment_type="receive",
+                        category="Chi trả lương nhân viên",
+                        payment_method=payment_method,
+                        amount=abs(slip.net_pay),
+                        payment_date=datetime.date.today(),
+                        remarks=f"Thu hồi lương âm tháng {period_month}/{period_year} của nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Số tiền: {abs(slip.net_pay):,.2f}đ.",
+                        status="posted",
+                    )
+                )
+
+
+@transaction.atomic
+def payroll_pay_slip(*, user: User, salary_slip_id: str, payment_method: str = "bank_transfer") -> SalarySlip:
+    PermissionChecker.check_permission(user, "finance.change_salaryslip")
+    try:
+        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
+    except SalarySlip.DoesNotExist:
+        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
+
+    if slip.status != "approved":
+        raise ValidationException("Chỉ chi trả phiếu ở trạng thái 'approved'")
+    if slip.status == "paid":
+        raise ValidationException("Phiếu đã thanh toán - không thể chỉnh sửa")
+
+    old_status = slip.status
+    slip.status = "paid"
+    slip.payment_method = payment_method
+    slip.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": old_status},
+        new_value={"status": "paid", "payment_method": payment_method},
+    )
+
+    # Tạo CashFlowTransaction
+    if slip.net_pay > 0:
+        CashFlowTransaction.objects.create(
+            name=f"PAY-SALARY-{slip.employee.employee_id}-{slip.salary_period}",
+            payment_type="pay",
+            category="Chi trả lương nhân viên",
+            payment_method=payment_method,
+            amount=slip.net_pay,
+            payment_date=datetime.date.today(),
+            status="posted",
+        )
+    elif slip.net_pay < 0:
+        CashFlowTransaction.objects.create(
+            name=f"COLLECT-SALARY-{slip.employee.employee_id}-{slip.salary_period}",
+            payment_type="receive",
+            category="Thu hồi lương âm",
+            payment_method=payment_method,
+            amount=abs(slip.net_pay),
+            payment_date=datetime.date.today(),
+            status="posted",
+        )
+    return slip
+
+
+@transaction.atomic
+def payroll_approve_slip(*, user: User, salary_slip_id: str) -> SalarySlip:
+    PermissionChecker.check_permission(user, "finance.payroll_approve")
+    try:
+        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
+    except SalarySlip.DoesNotExist:
+        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
+
+    if slip.status not in ["pending_finance_review", "calculated", "submitted"]:
+        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái chờ duyệt hoặc calculated/submitted")
+
+    old_status = slip.status
+    slip.status = "approved"
+    slip.approved_by = user
+    slip.approved_at = timezone.now()
+    slip.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": old_status},
+        new_value={
+            "status": "approved",
+            "approved_by_id": str(user.id),
+            "approved_at": str(slip.approved_at),
+        },
+    )
+    return slip
+
+
+@transaction.atomic
+def payroll_reject_slip(*, user: User, salary_slip_id: str, reason: str) -> SalarySlip:
+    PermissionChecker.check_permission(user, "finance.payroll_approve")
+    if not reason or len(reason) < 10:
+        raise ValidationException("Lý do từ chối phải từ 10 ký tự trở lên")
+
+    try:
+        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
+    except SalarySlip.DoesNotExist:
+        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
+
+    if slip.status not in ["pending_finance_review", "approved", "submitted"]:
+        raise ValidationException("Chỉ có thể từ chối phiếu lương ở trạng thái chờ duyệt hoặc approved")
+
+    old_status = slip.status
+    slip.status = "calculated"
+    slip.remarks = reason
+    slip.save()
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": old_status},
+        new_value={
+            "status": "calculated",
+            "remarks": reason,
+        },
+    )
+    return slip
+
+
+@transaction.atomic
+def payroll_bulk_approve_and_pay(
+    *,
+    salary_period: str,
+    payment_method: str,
+    creator: Optional[User] = None,
+) -> list[SalarySlip]:
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    slips_qs = SalarySlip.objects.filter(
+        salary_period=salary_period, status__in=["pending_finance_review", "approved", "submitted", "calculated"]
+    ).select_related("employee")
+
+    slips_to_update = []
+    txs_to_create = []
+    logs_to_create = []
+
+    chunk_size = 1000
+    chunk = []
+    for slip in slips_qs.iterator(chunk_size=chunk_size):
+        chunk.append(slip)
+        if len(chunk) >= chunk_size:
+            _process_payroll_chunk(
+                chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
+            )
+            chunk = []
+    if chunk:
+        _process_payroll_chunk(
+            chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
+        )
+
+    if not slips_to_update:
+        return []
+
+    for i in range(0, len(slips_to_update), 1000):
+        SalarySlip.objects.bulk_update(slips_to_update[i : i + 1000], fields=["status", "payment_method"])
+
+    from apps.finance.models import CashFlowTransaction
+
+    if txs_to_create:
+        created_txs = []
+        for i in range(0, len(txs_to_create), 1000):
+            created_chunk = CashFlowTransaction.objects.bulk_create(txs_to_create[i : i + 1000])
+            created_txs.extend(created_chunk)
+
+        from apps.accounts.models import SystemLog
+
+        tx_logs = [
+            SystemLog(
+                user=creator,
+                action="create",
+                table_name="cash_flow_transaction",
+                record_id=str(tx.id),
+                new_value={
+                    "name": tx.name,
+                    "payment_type": tx.payment_type,
+                    "category": tx.category,
+                    "amount": str(tx.amount),
+                    "payment_date": str(tx.payment_date),
+                },
+            )
+            for tx in created_txs
+        ]
+        logs_to_create.extend(tx_logs)
+
+    if logs_to_create:
+        from apps.accounts.models import SystemLog
+
+        for i in range(0, len(logs_to_create), 1000):
+            SystemLog.objects.bulk_create(logs_to_create[i : i + 1000])
+
+    return slips_to_update

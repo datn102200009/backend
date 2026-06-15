@@ -341,31 +341,6 @@ class TestHrmAPI:
         assert response.status_code == status.HTTP_200_OK
         assert float(response.data["base_salary"]) > 0
 
-    def test_approve_salary_slip_success(self, mock_check, auth_client):
-        employee = EmployeeFactory()
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
-
-        url = f"/api/v1/hrm/salary-slips/{slip.id}/approve/"
-        response = auth_client.post(url)
-
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["status"] == "approved"
-
-        slip.refresh_from_db()
-        assert slip.status == "approved"
-        assert slip.approved_by is not None
-        assert slip.approved_at is not None
-
-    def test_approve_salary_slip_invalid_status(self, mock_check, auth_client):
-        employee = EmployeeFactory()
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
-
-        url = f"/api/v1/hrm/salary-slips/{slip.id}/approve/"
-        response = auth_client.post(url)
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'" in response.data["error"]
-
     # =========================================================================
     # REWARDS & DISCIPLINES API TESTS
     # =========================================================================
@@ -426,40 +401,6 @@ class TestHrmAPI:
         assert len(response.data) >= 2
         assert "employee_code" in response.data[0]
         assert "employee_name" in response.data[0]
-
-    def test_bulk_confirm_salary_slips(self, mock_check, auth_client):
-        # Clear slips first
-        SalarySlip.objects.all().delete()
-
-        emp1 = EmployeeFactory(employee_id="EMP9501", full_name="Emp 1")
-        emp2 = EmployeeFactory(employee_id="EMP9502", full_name="Emp 2")
-
-        SalarySlipFactory(
-            employee=emp1,
-            salary_period="2026-05",
-            base_salary=5000000.00,
-            net_pay=5000000.00,
-            status="approved",
-        )
-        SalarySlipFactory(
-            employee=emp2,
-            salary_period="2026-05",
-            base_salary=6000000.00,
-            net_pay=6000000.00,
-            status="approved",
-        )
-
-        url = "/api/v1/hrm/salary-slips/bulk-confirm-pay/"
-        data = {"salary_period": "2026-05", "payment_method": "bank_transfer"}
-
-        response = auth_client.post(url, data, format="json")
-
-        assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 2
-        assert response.data[0]["status"] == "paid"
-        assert response.data[0]["payment_method"] == "bank_transfer"
-
-        assert SalarySlip.objects.filter(salary_period="2026-05", status="paid").count() == 2
 
     def test_list_and_create_public_holiday(self, mock_check, auth_client):
         from datetime import timedelta

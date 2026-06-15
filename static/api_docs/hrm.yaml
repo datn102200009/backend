@@ -1310,32 +1310,6 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
-  /hrm/salary-slips/{id}/approve/:
-    post:
-      summary: Phê duyệt phiếu lương
-      description: Phê duyệt phiếu lương đã tính toán, chuyển trạng thái từ calculated sang approved. Yêu cầu quyền hrm.payroll_approve.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Phê duyệt thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SalarySlip'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
 
   /hrm/rewards/:
     get:
@@ -1554,44 +1528,6 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
-  /hrm/salary-slips/bulk-confirm-pay/:
-    post:
-      summary: Xác nhận và thanh toán lương nhanh
-      description: Xác nhận chi trả toàn bộ phiếu lương chưa thanh toán của một kỳ lương. Đổi trạng thái sang 'paid' và tự động sinh ra các bút toán chi tiền CashFlowTransaction tương ứng tại phân hệ Finance.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - salary_period
-                - payment_method
-              properties:
-                salary_period:
-                  type: string
-                  description: Kỳ lương cần thanh toán (YYYY-MM)
-                  example: "2026-05"
-                payment_method:
-                  type: string
-                  enum: [cash, bank_transfer]
-                  description: Hình thức chi trả lương
-                  example: "bank_transfer"
-      responses:
-        '200':
-          description: Xác nhận và thanh toán lương nhanh thành công
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SalarySlip'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
 
   /hrm/public-holidays/:
     get:

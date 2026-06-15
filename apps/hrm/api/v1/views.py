@@ -64,8 +64,6 @@ from apps.hrm.services import (
     employment_history_approve,
     leave_request_approve,
     leave_request_create,
-    payroll_approve_salary,
-    payroll_bulk_confirm_and_pay,
     payroll_calculate_salary,
     payroll_initialize_period,
     public_holiday_create,
@@ -608,32 +606,6 @@ def salary_slip_calculate_view(request, pk):
     return Response(out_serializer.data, status=status.HTTP_200_OK)
 
 
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def salary_slip_approve_view(request, pk):
-    """
-    Phê duyệt phiếu lương của nhân viên (sau khi tính toán).
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.payroll_approve")
-
-    try:
-        slip = SalarySlip.objects.get(id=pk)
-    except SalarySlip.DoesNotExist:
-        raise NotFoundException("Không tìm thấy phiếu lương")
-
-    approved_slip = payroll_approve_salary(
-        user=user,
-        salary_slip_id=pk,
-    )
-
-    out_serializer = SalarySlipOutputSerializer(approved_slip)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
-
-
 # =============================================================================
 # REWARD & DISCIPLINE VIEWS
 # =============================================================================
@@ -711,34 +683,6 @@ def discipline_list_create_view(request):
 
         out_serializer = DisciplineRecordOutputSerializer(discipline)
         return Response(out_serializer.data, status=status.HTTP_201_CREATED)
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def salary_slip_bulk_confirm_view(request):
-    """
-    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "finance.change_salaryslip")
-
-    serializer = SalarySlipBulkConfirmInputSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-
-    salary_period = serializer.validated_data["salary_period"]
-    payment_method = serializer.validated_data["payment_method"]
-
-    updated_slips = payroll_bulk_confirm_and_pay(
-        salary_period=salary_period,
-        payment_method=payment_method,
-        creator=user,
-    )
-
-    out_serializer = SalarySlipOutputSerializer(updated_slips, many=True)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET", "POST"])
