@@ -122,6 +122,13 @@ class Item(BaseModel):
         ],
         default="active",
     )
+    minimum_threshold = models.DecimalField(
+        max_digits=18,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Ngưỡng tối thiểu tồn kho. Nếu NULL sẽ dùng fallback theo UOM.",
+    )
     description = models.TextField(null=True, blank=True)
 
     class Meta:
@@ -204,10 +211,11 @@ class WorkOrder(BaseModel):
         related_name="wo_production",
     )
     status = models.CharField(
-        max_length=20,
+        max_length=32,
         choices=[
             ("pending_approval", "Pending Approval"),
             ("in_progress", "In Progress"),
+            ("pending_production_complete", "Pending Production Complete"),
             ("completed", "Completed"),
             ("cancelled", "Cancelled"),
         ],

@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.finance.models import FixedAsset, FixedAssetDepreciationLog, SalarySlip
 from apps.hrm.models import Attendance, EmploymentContract, LeaveRequest
 from apps.inventory.models import StockEntry, StockLedger
-from apps.master_data.models import Employee, Item, Warehouse, WorkOrder
+from apps.master_data.models import BOMItem, Employee, Item, Warehouse, WorkOrder
 from apps.purchasing.models import PurchaseInvoice, PurchaseOrder, Shipment
 from apps.sales.models import SalesInvoice, SalesOrder
 
@@ -276,13 +276,15 @@ def get_warehouse_low_stock_alerts():
     today = timezone.now()
     thirty_days_ago = today - timedelta(days=30)
 
-    # 1. Lọc danh sách Kho Khả dụng
-    active_warehouses = Warehouse.objects.filter(is_active=True, is_group=False).exclude(
-        Q(name__icontains="wip")
-        | Q(name__icontains="sản xuất")
-        | Q(name__icontains="phế phẩm")
-        | Q(name__icontains="lỗi")
-        | Q(name__icontains="qc")
+    # 1. Lọc danh sách Kho Khả dụng bằng whitelist tên kho
+    WAREHOUSE_NVL_NAMES = ("Kho Nguyên Vật Liệu",)  # Phân loại: NVL
+    WAREHOUSE_TP_NAMES = ("Kho Thành Phẩm",)  # Phân loại: THANH_PHAM
+    ALLOWED_WAREHOUSE_NAMES = WAREHOUSE_NVL_NAMES + WAREHOUSE_TP_NAMES
+
+    active_warehouses = Warehouse.objects.filter(
+        is_active=True,
+        is_group=False,
+        name__in=ALLOWED_WAREHOUSE_NAMES,
     )
     warehouse_ids = list(active_warehouses.values_list("id", flat=True))
     if not warehouse_ids:
@@ -324,10 +326,29 @@ def get_warehouse_low_stock_alerts():
     # Tra cứu nhanh: (item_id, warehouse_id) -> total_issued (dương)
     consumption_map = {(c["item_id"], c["warehouse_id"]): abs(c["total_issued"]) for c in consumption_data}
 
-    # 4. Cache thông tin Master Data vào memory để tránh query liên tục trong loop
+    # 4. Cache thông tin Master Data và lấy nhu cầu từ các WorkOrder draft (pending_approval) quy đổi theo BOM
     item_ids = [b["item_id"] for b in balances]
     items_map = {item.id: item for item in Item.objects.filter(id__in=item_ids).select_related("stock_uom")}
     warehouses_map = {wh.id: wh for wh in active_warehouses}
+
+    wo_demands = BOMItem.objects.filter(item_id__in=item_ids, parent__work_orders__status="pending_approval").annotate(
+        wo_qty=F("parent__work_orders__quantity"), bom_qty=F("parent__quantity"), wo_id=F("parent__work_orders__id")
+    )
+
+    component_demand_map = {}
+    for demand in wo_demands:
+        comp_id = demand.item_id
+        wo_qty = demand.wo_qty
+        bom_qty = demand.bom_qty if demand.bom_qty else Decimal("1.0")
+        if bom_qty == 0:
+            bom_qty = Decimal("1.0")
+
+        needed = (demand.quantity * wo_qty) / bom_qty
+
+        if comp_id not in component_demand_map:
+            component_demand_map[comp_id] = {"total_demand": Decimal("0.00"), "wo_ids": set()}
+        component_demand_map[comp_id]["total_demand"] += needed
+        component_demand_map[comp_id]["wo_ids"].add(demand.wo_id)
 
     product_distribution = {}
 
@@ -356,10 +377,20 @@ def get_warehouse_low_stock_alerts():
         item_id_str = str(item_id)
         total_balance = sum(b["total_balance"] for b in b_list)
 
-        highest_status = "normal"
-        highest_reason = ""
+        # Ngưỡng tối thiểu tồn kho của Item
+        threshold = item.minimum_threshold
+        if threshold is None:
+            uom_name = item.stock_uom.name.lower() if item.stock_uom else ""
+            threshold = Decimal("10.0")
+            if uom_name in ["tấn", "ton", "kg"]:
+                threshold = Decimal("0.5")
+            elif uom_name in ["cái", "piece", "pcs"]:
+                threshold = Decimal("200.0")
+
         min_days_left = None
-        max_shortage_ratio = Decimal("0.00")
+        dos_status = "normal"
+        dos_reason = ""
+        dos_shortage = Decimal("0.00")
 
         for b in b_list:
             wh_id = b["warehouse_id"]
@@ -371,61 +402,103 @@ def get_warehouse_low_stock_alerts():
             issued = consumption_map.get((item_id, wh_id), Decimal("0.00"))
             adc = issued / Decimal("30.0")
 
-            # Ngưỡng fallback tĩnh theo UOM
-            uom_name = item.stock_uom.name.lower() if item.stock_uom else ""
-            fallback_threshold = Decimal("10.0")
-            if uom_name in ["tấn", "ton", "kg"]:
-                fallback_threshold = Decimal("0.5")
-            elif uom_name in ["cái", "piece", "pcs"]:
-                fallback_threshold = Decimal("200.0")
-
-            is_alert = False
-            alert_reason = ""
-            days_left = None
-            status = "normal"
-            wh_shortage = Decimal("0.00")
-
             if adc > 0:
                 days_left_dec = balance / adc
                 days_left = float(days_left_dec)
                 days_left_str = format_num(days_left)
+                if min_days_left is None or days_left < min_days_left:
+                    min_days_left = days_left
+
                 if days_left_dec <= Decimal("7.0"):
                     wh_shortage = max(Decimal("0"), Decimal("1") - (days_left_dec / Decimal("7.0")))
+                    dos_shortage = max(dos_shortage, wh_shortage)
                     if days_left <= 3.0:
-                        is_alert = True
-                        status = "critical"
-                        alert_reason = f"Khẩn cấp (Còn {days_left_str} ngày dùng tại {warehouse.name})"
+                        if dos_status != "critical":
+                            dos_status = "critical"
+                            dos_reason = f"Khẩn cấp (Còn {days_left_str} ngày dùng tại {warehouse.name})"
                     elif days_left <= 7.0:
-                        is_alert = True
-                        status = "warning"
-                        alert_reason = f"Cảnh báo (Còn {days_left_str} ngày dùng tại {warehouse.name})"
+                        if dos_status == "normal":
+                            dos_status = "warning"
+                            dos_reason = f"Cảnh báo (Còn {days_left_str} ngày dùng tại {warehouse.name})"
+
+        # Xây dựng cảnh báo below_threshold_alert dựa trên TỔNG tồn kho
+        # - Dưới 100% ngưỡng: cảnh báo đỏ (critical)
+        # - Từ 100% - 150% ngưỡng: cảnh báo vàng (warning)
+        below_threshold_active = total_balance < (threshold * Decimal("1.5"))
+        below_threshold_level = "normal"
+        below_threshold_reason = ""
+        below_threshold_ratio = Decimal("0.00")
+        if below_threshold_active:
+            if total_balance < threshold:
+                below_threshold_level = "critical"
+                below_threshold_label = "Dưới ngưỡng tối thiểu"
+                below_threshold_ratio = max(Decimal("0"), Decimal("1") - (total_balance / threshold))
             else:
-                if balance < fallback_threshold:
-                    wh_shortage = max(Decimal("0"), Decimal("1") - (balance / fallback_threshold))
-                    is_alert = True
-                    status = "critical"
-                    alert_reason = f"Dưới ngưỡng tối thiểu tại {warehouse.name} ({format_num(balance)}/{format_num(fallback_threshold)} {item.stock_uom.name})"
+                below_threshold_level = "warning"
+                below_threshold_label = "Cận ngưỡng tối thiểu"
+                below_threshold_ratio = max(Decimal("0"), Decimal("1.5") - (total_balance / threshold))
+            below_threshold_reason = (
+                f"{below_threshold_label}: tổng tồn kho {format_num(total_balance)}/{format_num(threshold)} {item.stock_uom.name if item.stock_uom else ''} "
+                f"trên toàn bộ hệ thống"
+            )
 
-            max_shortage_ratio = max(max_shortage_ratio, wh_shortage)
+        # Xây dựng cảnh báo projected_shortage_alert (cảnh báo vàng)
+        demand_info = component_demand_map.get(item_id, {"total_demand": Decimal("0.00"), "wo_ids": set()})
+        total_wo_demand_for_item = demand_info["total_demand"]
+        wo_count = len(demand_info["wo_ids"])
 
-            if status == "critical":
-                if highest_status != "critical":
-                    highest_status = "critical"
-                    highest_reason = alert_reason
-                    min_days_left = days_left
-                else:
-                    if min_days_left is None or (days_left is not None and days_left < min_days_left):
-                        highest_reason = alert_reason
-                        min_days_left = days_left
-            elif status == "warning":
-                if highest_status == "normal":
-                    highest_status = "warning"
-                    highest_reason = alert_reason
-                    min_days_left = days_left
-                elif highest_status == "warning":
-                    if min_days_left is None or (days_left is not None and days_left < min_days_left):
-                        highest_reason = alert_reason
-                        min_days_left = days_left
+        projected_shortage = max(Decimal("0"), total_wo_demand_for_item - total_balance)
+        projected_shortage_active = total_wo_demand_for_item > total_balance
+        projected_shortage_level = "warning" if projected_shortage_active else "normal"
+        projected_shortage_reason = ""
+        projected_ratio = Decimal("0.00")
+        if projected_shortage_active:
+            projected_shortage_reason = (
+                f"Sẽ thiếu ~{format_num(projected_shortage)} {item.stock_uom.name if item.stock_uom else ''} "
+                f"nếu duyệt tất cả {wo_count} lệnh sản xuất chờ duyệt "
+                f"(nhu cầu: {format_num(total_wo_demand_for_item)} {item.stock_uom.name if item.stock_uom else ''}, "
+                f"tồn kho: {format_num(total_balance)} {item.stock_uom.name if item.stock_uom else ''})"
+            )
+            projected_ratio = (
+                projected_shortage / (total_balance + projected_shortage)
+                if (total_balance + projected_shortage) > 0
+                else Decimal("0.00")
+            )
+
+        # Determine highest_status and highest_reason for backward compatibility
+        highest_status = "normal"
+        highest_reason = ""
+        if dos_status == "critical":
+            highest_status = "critical"
+            highest_reason = dos_reason
+        elif below_threshold_active and below_threshold_level == "critical":
+            highest_status = "critical"
+            highest_reason = below_threshold_reason
+        elif below_threshold_active and below_threshold_level == "warning":
+            highest_status = "warning"
+            highest_reason = below_threshold_reason
+        elif dos_status == "warning":
+            highest_status = "warning"
+            highest_reason = dos_reason
+        elif projected_shortage_active:
+            highest_status = "warning"
+            highest_reason = projected_shortage_reason
+
+        max_shortage_ratio = max(dos_shortage, below_threshold_ratio, projected_ratio)
+
+        # Build unified alerts array — sorted by severity (critical trước warning)
+        # Trong cùng mức severity, thứ tự: dos → below_threshold → projected_shortage
+        alerts = []
+        if dos_status == "critical":
+            alerts.append({"category": "dos", "level": "critical", "reason": dos_reason})
+        if below_threshold_active and below_threshold_level == "critical":
+            alerts.append({"category": "below_threshold", "level": "critical", "reason": below_threshold_reason})
+        if below_threshold_active and below_threshold_level == "warning":
+            alerts.append({"category": "below_threshold", "level": "warning", "reason": below_threshold_reason})
+        if dos_status == "warning":
+            alerts.append({"category": "dos", "level": "warning", "reason": dos_reason})
+        if projected_shortage_active:
+            alerts.append({"category": "projected_shortage", "level": "warning", "reason": projected_shortage_reason})
 
         items_list.append(
             {
@@ -435,6 +508,7 @@ def get_warehouse_low_stock_alerts():
                 "uom": item.stock_uom.name if item.stock_uom else "",
                 "status": highest_status,
                 "reason": highest_reason,
+                "alerts": alerts,
                 "shortage_ratio": max_shortage_ratio,
                 "total_balance": total_balance,
                 "days_left": min_days_left if min_days_left is not None else 9999.0,
@@ -962,6 +1036,7 @@ def get_hrm_expiring_contracts():
         top_items.append(
             {
                 "id": str(c.id),
+                "employee_id": str(c.employee.id) if c.employee else None,
                 "employee_name": c.employee.full_name,
                 "contract_no": c.contract_no,
                 "contract_type": c.get_contract_type_display(),
@@ -1034,13 +1109,21 @@ def get_manufacturing_pending_wo_approval():
 
 # 25. manufacturing_active_wos
 def get_manufacturing_active_wos():
-    orders_qs = WorkOrder.objects.filter(status="in_progress").select_related("production_item").order_by("-created_at")
+    today = timezone.localdate()
+    orders_qs = (
+        WorkOrder.objects.filter(status="in_progress")
+        .select_related("production_item", "target_warehouse")
+        .order_by("-created_at")
+    )
     total_count = orders_qs.count()
     results = []
     for o in orders_qs[:5]:
         qty = o.quantity
         prod = o.produced_qty
         pct = float((prod / qty) * 100) if qty > 0 else 0.0
+        days_left = None
+        if o.planned_end_date is not None:
+            days_left = (o.planned_end_date - today).days
         results.append(
             {
                 "id": str(o.id),
@@ -1050,55 +1133,18 @@ def get_manufacturing_active_wos():
                 "produced_qty": str(prod),
                 "progress_pct": pct,
                 "planned_start_date": o.planned_start_date.isoformat(),
+                "planned_end_date": o.planned_end_date.isoformat() if o.planned_end_date else None,
+                "days_left": days_left,
+                "target_warehouse_name": o.target_warehouse.name if o.target_warehouse else None,
                 "created_at": o.created_at.isoformat(),
             }
         )
     return DashboardList(results, total_count)
 
 
-# 26. manufacturing_pending_declarations (Lệnh sản xuất sắp trễ hạn)
-def get_manufacturing_pending_declarations():
-    today = timezone.localdate()
-    three_days_later = today + timedelta(days=3)
-
-    # Lấy các lệnh sản xuất chưa hoàn thành và có hạn sắp đến hoặc đã qua
-    orders_qs = (
-        WorkOrder.objects.filter(
-            status__in=["pending_approval", "in_progress"],
-            planned_end_date__isnull=False,
-            planned_end_date__lte=three_days_later,
-        )
-        .select_related("production_item")
-        .order_by("planned_end_date")
-    )
-    total_count = orders_qs.count()
-
-    results = []
-    for o in orders_qs[:5]:
-        days_left = (o.planned_end_date - today).days
-        results.append(
-            {
-                "id": str(o.id),
-                "name": o.name,
-                "production_item_name": o.production_item.item_name,
-                "quantity": str(o.quantity),
-                "produced_qty": str(o.produced_qty),
-                "planned_start_date": o.planned_start_date.isoformat(),
-                "planned_end_date": o.planned_end_date.isoformat(),
-                "status": o.status,
-                "days_left": days_left,
-                "created_at": o.created_at.isoformat(),
-            }
-        )
-    return {
-        "total_count": total_count,
-        "top_items": results,
-    }
-
-
 # 27. manufacturing_pending_completion
 def get_manufacturing_pending_completion():
-    orders_qs = WorkOrder.objects.filter(status="in_progress", produced_qty__gte=F("quantity")).select_related(
+    orders_qs = WorkOrder.objects.filter(status="pending_production_complete").select_related(
         "production_item", "target_warehouse"
     )
     pending_completion_count = orders_qs.count()
@@ -1145,6 +1191,5 @@ SELECTORS_MAP = {
     "hrm_today_attendance_rate": get_hrm_today_attendance_rate,
     "manufacturing_pending_wo_approval": get_manufacturing_pending_wo_approval,
     "manufacturing_active_wos": get_manufacturing_active_wos,
-    "manufacturing_pending_declarations": get_manufacturing_pending_declarations,
     "manufacturing_pending_completion": get_manufacturing_pending_completion,
 }

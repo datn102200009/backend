@@ -19,7 +19,6 @@ from apps.dashboard.selectors import (
     get_inventory_pending_entries,
     get_manufacturing_active_wos,
     get_manufacturing_pending_completion,
-    get_manufacturing_pending_declarations,
     get_manufacturing_pending_wo_approval,
     get_purchasing_active_po_count,
     get_purchasing_draft_orders,
@@ -307,41 +306,22 @@ class TestDashboardSelectors:
 
     def test_manufacturing_active_wos(self):
         item = ItemFactory()
+        wh = WarehouseFactory(name="Kho Thành Phẩm Test")
         WorkOrder.objects.create(
-            name="WO-02", production_item=item, quantity=10, planned_start_date=date.today(), status="in_progress"
+            name="WO-02",
+            production_item=item,
+            quantity=10,
+            planned_start_date=date.today(),
+            planned_end_date=date.today() + timedelta(days=5),
+            target_warehouse=wh,
+            status="in_progress",
         )
         res = get_manufacturing_active_wos()
         assert len(res) == 1
         assert res[0]["name"] == "WO-02"
-
-    def test_manufacturing_pending_declarations(self):
-        item = ItemFactory()
-        # Create work orders with planned_end_date.
-        # Nearing delay (2 days left)
-        WorkOrder.objects.create(
-            name="WO-03",
-            production_item=item,
-            quantity=10,
-            produced_qty=2,
-            planned_start_date=date.today(),
-            planned_end_date=date.today() + timedelta(days=2),
-            status="in_progress",
-        )
-        # Far delay (10 days left - should not be included)
-        WorkOrder.objects.create(
-            name="WO-03-FAR",
-            production_item=item,
-            quantity=10,
-            produced_qty=2,
-            planned_start_date=date.today(),
-            planned_end_date=date.today() + timedelta(days=10),
-            status="in_progress",
-        )
-        res = get_manufacturing_pending_declarations()
-        assert res["total_count"] == 1
-        assert len(res["top_items"]) == 1
-        assert res["top_items"][0]["name"] == "WO-03"
-        assert res["top_items"][0]["days_left"] == 2
+        assert res[0]["days_left"] == 5
+        assert res[0]["target_warehouse_name"] == "Kho Thành Phẩm Test"
+        assert res[0]["planned_end_date"] == (date.today() + timedelta(days=5)).isoformat()
 
     def test_manufacturing_pending_completion(self):
         item = ItemFactory()
@@ -352,7 +332,7 @@ class TestDashboardSelectors:
             quantity=10,
             produced_qty=10,
             planned_start_date=date.today(),
-            status="in_progress",
+            status="pending_production_complete",
             target_warehouse=wh,
         )
         res = get_manufacturing_pending_completion()
@@ -364,8 +344,8 @@ class TestDashboardSelectors:
     # Specific tests for inventory_low_stock (DOS, Excluded Warehouses, UOM Fallback, O(1) query complexity)
     def test_inventory_low_stock_calculations(self):
         # 1. Setup active warehouses (Raw materials & Finished goods)
-        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Selectors Test")
-        wh_wip = WarehouseFactory(name="Kho WIP Selectors Test")  # Excluded
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        wh_wip = WarehouseFactory(name="Kho Bán Thành Phẩm")  # Excluded
 
         # UOMs
         uom_ton = UOMFactory(name="tấn")
@@ -431,7 +411,7 @@ class TestDashboardSelectors:
 
     def test_inventory_low_stock_query_efficiency(self):
         # 1. Setup active warehouses
-        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Efficiency Test")
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu")
         uom_pcs = UOMFactory(name="cái")
 
         # Create 10 items
@@ -449,8 +429,8 @@ class TestDashboardSelectors:
         with CaptureQueriesContext(connection) as ctx:
             res = get_warehouse_low_stock_alerts()
 
-        # Verified O(1) query count (maximum 4 queries: active warehouses, balances, consumptions, item/uom master data)
-        assert len(ctx.captured_queries) <= 5
+        # Verified O(1) query count (maximum 7 queries under new whitelist and BOM logic)
+        assert len(ctx.captured_queries) <= 7
         assert len(res["items"]) == 10
 
     def test_selector_total_count_greater_than_five(self):
@@ -676,7 +656,7 @@ class TestDashboardSelectors:
         assert res["summary"]["net_cashflow"] == "700.25"
 
     def test_low_stock_returns_all_products_with_balance(self):
-        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Low Stock Test")
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu")
         uom_pcs = UOMFactory(name="cái")
         item_normal = ItemFactory(stock_uom=uom_pcs, item_code="RAW-NORM", item_name="Bulong Normal")
         # normal balance 300 pieces (above fallback threshold of 200, status should be normal)
@@ -696,7 +676,7 @@ class TestDashboardSelectors:
         assert float(item_data["shortage_ratio"]) == 0.0
 
     def test_low_stock_sort_by_shortage_ratio(self):
-        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu Sort Test")
+        wh_raw = WarehouseFactory(name="Kho Nguyên Vật Liệu")
         uom_pcs = UOMFactory(name="cái")
         item_a = ItemFactory(stock_uom=uom_pcs, item_code="RAW-A", item_name="Bulong A")
         item_b = ItemFactory(stock_uom=uom_pcs, item_code="RAW-B", item_name="Bulong B")
@@ -724,6 +704,218 @@ class TestDashboardSelectors:
         # Since both are critical, RAW-A should be sorted before RAW-B because it has higher shortage_ratio
         assert items[0]["item_code"] == "RAW-A"
         assert items[1]["item_code"] == "RAW-B"
+
+    def test_inventory_low_stock_filters_to_nvl_and_tp_warehouses_only(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        wh_tp = WarehouseFactory(name="Kho Thành Phẩm")
+        wh_wip = WarehouseFactory(name="Kho Bán Thành Phẩm")
+
+        uom_pcs = UOMFactory(name="cái")
+        item = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-TEST-FILTERS")
+
+        # Create balance in all 3 warehouses
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("100.00"),
+            voucher_type="Stock In",
+        )
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_tp,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("50.00"),
+            voucher_type="Stock In",
+        )
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_wip,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("80.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-TEST-FILTERS"][0]
+        assert float(item_data["total_balance"]) == 150.0
+
+        dist = res["product_distribution"][str(item.id)]
+        assert str(wh_nvl.id) in dist
+        assert str(wh_tp.id) in dist
+        assert str(wh_wip.id) not in dist
+
+    def test_inventory_low_stock_warehouses_not_in_whitelist_are_excluded(self):
+        wh_wip = WarehouseFactory(name="Kho WIP Sản Xuất")
+        wh_qc = WarehouseFactory(name="Kho Lỗi QC")
+
+        uom_pcs = UOMFactory(name="cái")
+        item = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-EXCLUDED-WH")
+
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_wip,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("50.00"),
+            voucher_type="Stock In",
+        )
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_qc,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("30.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_codes = [i["item_code"] for i in res["items"]]
+        assert "ITEM-EXCLUDED-WH" not in item_codes
+
+    def test_inventory_low_stock_below_threshold_uses_total_balance(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        uom_pcs = UOMFactory(name="cái")
+        item = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-BELOW-THRESHOLD", minimum_threshold=Decimal("200.00"))
+
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("30.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-BELOW-THRESHOLD"][0]
+        below = next((a for a in item_data["alerts"] if a["category"] == "below_threshold"), None)
+        assert below is not None
+        assert below["level"] == "critical"
+        assert "Dưới ngưỡng tối thiểu" in below["reason"]
+
+    def test_inventory_low_stock_projected_shortage_uses_bom_and_only_pending_approval(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        uom_pcs = UOMFactory(name="cái")
+        item_comp = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-COMP-MONITOR", minimum_threshold=Decimal("200.00"))
+        item_prod = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-PROD")
+
+        from apps.master_data.models import BOM, BOMItem
+
+        bom = BOM.objects.create(name="BOM-PROD", item=item_prod, quantity=Decimal("1.00"))
+        BOMItem.objects.create(parent=bom, item=item_comp, quantity=Decimal("3.00"))
+
+        StockLedger.objects.create(
+            item=item_comp,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("100.00"),
+            voucher_type="Stock In",
+        )
+
+        WorkOrder.objects.create(
+            name="WO-PEND-1",
+            bom=bom,
+            production_item=item_prod,
+            quantity=Decimal("50.00"),
+            status="pending_approval",
+            planned_start_date=date.today(),
+        )
+        WorkOrder.objects.create(
+            name="WO-PEND-2",
+            bom=bom,
+            production_item=item_prod,
+            quantity=Decimal("20.00"),
+            status="pending_approval",
+            planned_start_date=date.today(),
+        )
+        WorkOrder.objects.create(
+            name="WO-INPROG",
+            bom=bom,
+            production_item=item_prod,
+            quantity=Decimal("40.00"),
+            status="in_progress",
+            planned_start_date=date.today(),
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-COMP-MONITOR"][0]
+        projected = next((a for a in item_data["alerts"] if a["category"] == "projected_shortage"), None)
+        assert projected is not None
+        assert projected["level"] == "warning"
+        assert "110" in projected["reason"]
+        assert "210" in projected["reason"]
+        assert "100" in projected["reason"]
+
+    def test_inventory_low_stock_both_alerts_independent(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        uom_pcs = UOMFactory(name="cái")
+        item_comp = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-BOTH-ALERTS", minimum_threshold=Decimal("200.00"))
+        item_prod = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-PROD-2")
+
+        from apps.master_data.models import BOM, BOMItem
+
+        bom = BOM.objects.create(name="BOM-PROD-2", item=item_prod, quantity=Decimal("1.00"))
+        BOMItem.objects.create(parent=bom, item=item_comp, quantity=Decimal("2.00"))
+
+        StockLedger.objects.create(
+            item=item_comp,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("50.00"),
+            voucher_type="Stock In",
+        )
+
+        WorkOrder.objects.create(
+            name="WO-PEND-3",
+            bom=bom,
+            production_item=item_prod,
+            quantity=Decimal("40.00"),
+            status="pending_approval",
+            planned_start_date=date.today(),
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-BOTH-ALERTS"][0]
+        categories = [a["category"] for a in item_data["alerts"]]
+        assert "below_threshold" in categories
+        assert "projected_shortage" in categories
+
+    def test_inventory_low_stock_below_threshold_warning_level(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        uom_pcs = UOMFactory(name="cái")
+        item = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-THRESHOLD-WARNING", minimum_threshold=Decimal("200.00"))
+
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("250.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-THRESHOLD-WARNING"][0]
+        below = next((a for a in item_data["alerts"] if a["category"] == "below_threshold"), None)
+        assert below is not None
+        assert below["level"] == "warning"
+        assert "Cận ngưỡng tối thiểu" in below["reason"]
+
+    def test_inventory_low_stock_no_alert_when_above_threshold_and_no_wo(self):
+        wh_nvl = WarehouseFactory(name="Kho Nguyên Vật Liệu")
+        uom_pcs = UOMFactory(name="cái")
+        item = ItemFactory(stock_uom=uom_pcs, item_code="ITEM-NO-ALERT", minimum_threshold=Decimal("200.00"))
+
+        StockLedger.objects.create(
+            item=item,
+            warehouse=wh_nvl,
+            posting_date=timezone.now(),
+            actual_quantity=Decimal("300.00"),
+            voucher_type="Stock In",
+        )
+
+        res = get_warehouse_low_stock_alerts()
+        item_data = [i for i in res["items"] if i["item_code"] == "ITEM-NO-ALERT"][0]
+        categories = [a["category"] for a in item_data["alerts"]]
+        assert "below_threshold" not in categories
+        assert "projected_shortage" not in categories
 
 
 class TestFormatNum:

@@ -572,6 +572,11 @@ def work_order_declare_production(
     StockLedger.objects.bulk_create(ledgers)
 
     work_order.produced_qty += Decimal(str(produced_qty))
+
+    # Auto-transition sang "Chờ phê duyệt" khi đạt 100%
+    if work_order.produced_qty >= work_order.quantity and work_order.status == "in_progress":
+        work_order.status = "pending_production_complete"
+
     work_order.save()
 
     create_system_log(
@@ -579,7 +584,11 @@ def work_order_declare_production(
         action="declare_production",
         table_name="work_order",
         record_id=str(work_order.id),
-        new_value={"produced_qty": str(produced_qty), "stock_entry": stock_entry.name},
+        new_value={
+            "produced_qty": str(produced_qty),
+            "stock_entry": stock_entry.name,
+            "status": work_order.status,
+        },
     )
 
     return work_order
@@ -602,8 +611,8 @@ def work_order_complete(
     if not work_order:
         raise NotFoundException("Lệnh sản xuất không tồn tại")
 
-    if work_order.status != "in_progress":
-        raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện")
+    if work_order.status not in ("in_progress", "pending_production_complete"):
+        raise ValidationException("Chỉ có thể hoàn thành lệnh đang thực hiện hoặc lệnh chờ phê duyệt cuối")
 
     manufacture_entries = StockEntry.objects.filter(purpose="manufacture", work_order=work_order, status="posted")
 

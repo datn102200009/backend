@@ -205,7 +205,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending_approval, in_progress, completed, cancelled]
+          enum: [pending_approval, in_progress, pending_production_complete, completed, cancelled]
         planned_start_date:
           type: string
           format: date
@@ -624,7 +624,7 @@ paths:
           name: status
           schema:
             type: string
-            enum: [pending_approval, in_progress, completed, cancelled]
+            enum: [pending_approval, in_progress, pending_production_complete, completed, cancelled]
         - in: query
           name: limit
           schema:

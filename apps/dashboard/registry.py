@@ -134,18 +134,11 @@ WIDGETS_REGISTRY = {
         "title": "Lệnh sản xuất đang thực hiện",
         "quick_links": ["/bom?tab=wo&status=in_progress"],
     },
-    "manufacturing_pending_declarations": {
-        "permission": "manufacturing.work_order_view",
-        "type": "kpi_list",
-        "size": "1x2",
-        "title": "Lệnh sản xuất sắp trễ hạn",
-        "quick_links": ["/bom?tab=wo&status=in_progress"],
-    },
     "manufacturing_pending_completion": {
         "permission": "manufacturing.work_order_complete",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Lệnh sản xuất chờ nghiệm thu",
-        "quick_links": ["/bom?tab=wo&status=in_progress"],
+        "quick_links": ["/bom?tab=wo&status=pending_production_complete"],
     },
 }

@@ -93,7 +93,6 @@ components:
                   - $ref: '#/components/schemas/HRMTodayAbsentLine'
                   - $ref: '#/components/schemas/ManufacturingPendingWOApprovalLine'
                   - $ref: '#/components/schemas/ManufacturingActiveWOLine'
-                  - $ref: '#/components/schemas/ManufacturingPendingDeclarationLine'
                   - $ref: '#/components/schemas/ManufacturingPendingCompletionLine'
             - type: object
               additionalProperties: true
@@ -348,6 +347,17 @@ components:
           type: string
         created_at:
           type: string
+    InventoryLowStockAlert:
+      type: object
+      properties:
+        category:
+          type: string
+          enum: [dos, below_threshold, projected_shortage]
+        level:
+          type: string
+          enum: [critical, warning, normal]
+        reason:
+          type: string
     InventoryLowStockLine:
       type: object
       properties:
@@ -363,6 +373,10 @@ components:
           type: string
         reason:
           type: string
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryLowStockAlert'
     FinanceUnpaidAPLine:
       type: object
       properties:
@@ -422,6 +436,12 @@ components:
           type: string
         end_date:
           type: string
+        employee_id:
+          type: string
+          nullable: true
+        days_left:
+          type: integer
+          nullable: true
         created_at:
           type: string
     ManufacturingPendingWOApprovalLine:
@@ -460,29 +480,14 @@ components:
           type: string
         planned_start_date:
           type: string
-        created_at:
-          type: string
-    ManufacturingPendingDeclarationLine:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        production_item_name:
-          type: string
-        quantity:
-          type: string
-        produced_qty:
-          type: string
-        planned_start_date:
-          type: string
         planned_end_date:
           type: string
-        status:
-          type: string
+          nullable: true
         days_left:
           type: integer
+          nullable: true
+        target_warehouse_name:
+          type: string
           nullable: true
         created_at:
           type: string
