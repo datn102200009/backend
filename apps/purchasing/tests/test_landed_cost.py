@@ -270,3 +270,92 @@ class TestLandedCost:
         assert any("shipment_complete: start" in m for m in messages)
         assert any("created StockEntry" in m for m in messages)
         assert any("completed shipment_id" in m for m in messages)
+
+    def test_shipment_serializer_remaining_quantity_after_other_shipment(self, setup_data):
+        """Số lượng còn lại phải trừ đi lượng đã nhận ở shipment trước."""
+        user, vendor, item, warehouse = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("600.00"), "unit_price": Decimal("100.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Shipment 1: nhập 400
+        s1 = shipment_create_from_po(user=user, shipment_num="SH-RM-1", name="r1", purchase_order_id=str(order.id))
+        shipment_update(user=user, shipment_id=str(s1.id), status="inspecting")
+        shipment_complete(
+            user=user,
+            shipment_id=str(s1.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("400.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+
+        # Tạo shipment 2 và check remaining_quantity qua serializer
+        s2 = shipment_create_from_po(user=user, shipment_num="SH-RM-2", name="r2", purchase_order_id=str(order.id))
+        from apps.purchasing.api.v1.serializers import ShipmentSerializer
+
+        data = ShipmentSerializer(s2).data
+        line_data = next(
+            line_item for line_item in data["purchase_order_lines"] if line_item["item_id"] == str(item.id)
+        )
+        assert Decimal(line_data["quantity"]) == Decimal("600.00")  # tổng đặt
+        assert Decimal(line_data["remaining_quantity"]) == Decimal("200.00")  # còn lại
+        assert Decimal(line_data["received_quantity"]) == Decimal("400.00")  # đã nhận
+
+    def test_shipment_serializer_remaining_quantity_zero_when_completed(self, setup_data):
+        """Khi đã nhận đủ → remaining_quantity = 0."""
+        user, vendor, item, warehouse = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("600.00"), "unit_price": Decimal("100.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+        order = purchase_order_approve(user=user, order_id=str(order.id))
+
+        # Shipment 1: nhập 400
+        s1 = shipment_create_from_po(user=user, shipment_num="SH-RM-1", name="r1", purchase_order_id=str(order.id))
+        shipment_update(user=user, shipment_id=str(s1.id), status="inspecting")
+        shipment_complete(
+            user=user,
+            shipment_id=str(s1.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("400.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+
+        # Tạo shipment 2: nhập nốt 200
+        s2 = shipment_create_from_po(user=user, shipment_num="SH-RM-2", name="r2", purchase_order_id=str(order.id))
+        shipment_update(user=user, shipment_id=str(s2.id), status="inspecting")
+        shipment_complete(
+            user=user,
+            shipment_id=str(s2.id),
+            details=[
+                {
+                    "po_line_id": str(order.lines.first().id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("200.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0"),
+        )
+
+        # Check remaining_quantity của s2 qua serializer
+        s2.refresh_from_db()
+        from apps.purchasing.api.v1.serializers import ShipmentSerializer
+
+        data = ShipmentSerializer(s2).data
+        line_data = next(
+            line_item for line_item in data["purchase_order_lines"] if line_item["item_id"] == str(item.id)
+        )
+        assert Decimal(line_data["quantity"]) == Decimal("600.00")
+        assert Decimal(line_data["remaining_quantity"]) == Decimal("0.00")
+        assert Decimal(line_data["received_quantity"]) == Decimal("600.00")
