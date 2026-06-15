@@ -456,8 +456,7 @@ def get_warehouse_low_stock_alerts():
             projected_shortage_reason = (
                 f"Sẽ thiếu ~{format_num(projected_shortage)} {item.stock_uom.name if item.stock_uom else ''} "
                 f"nếu duyệt tất cả {wo_count} lệnh sản xuất chờ duyệt "
-                f"(nhu cầu: {format_num(total_wo_demand_for_item)} {item.stock_uom.name if item.stock_uom else ''}, "
-                f"tồn kho: {format_num(total_balance)} {item.stock_uom.name if item.stock_uom else ''})"
+                f"(nhu cầu: {format_num(total_wo_demand_for_item)} {item.stock_uom.name if item.stock_uom else ''}) "
             )
             projected_ratio = (
                 projected_shortage / (total_balance + projected_shortage)
