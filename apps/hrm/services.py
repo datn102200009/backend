@@ -34,30 +34,26 @@ SOCIAL_INSURANCE_MIN_DAYS = 14  # Số ngày làm việc tối thiểu để đ�
 DEFAULT_STANDARD_WORKING_DAYS = Decimal("26.00")  # Ngày công chuẩn fallback
 
 
-def _disable_linked_user(*, employee: Employee, terminator: Optional[User] = None) -> None:
+def _delete_linked_user(*, employee: Employee, terminator: Optional[User] = None) -> None:
     """
-    Vô hiệu hoá tài khoản User liên kết với employee_id.
-
-    - Idempotent: nếu User đã inactive → không tạo log thừa.
-    - Tạo SystemLog khi thay đổi trạng thái is_active.
-    - Dùng chung cho contract_terminate và _handle_termination_side_effects.
+    Xóa tài khoản User liên kết với employee_id.
     """
     linked_user = User.objects.filter(employee_id=employee.employee_id).first()
-    if not linked_user or not linked_user.is_active:
+    if not linked_user:
         return
 
-    old_active = linked_user.is_active
-    linked_user.is_active = False
-    linked_user.save(update_fields=["is_active"])
+    user_id = linked_user.id
+    username = linked_user.username
+    linked_user.delete()
 
     if terminator:
         create_system_log(
             user=terminator,
-            action="update",
+            action="delete",
             table_name="user",
-            record_id=str(linked_user.id),
-            old_value={"is_active": old_active},
-            new_value={"is_active": False},
+            record_id=str(user_id),
+            old_value={"username": username},
+            new_value=None,
         )
 
 
@@ -126,7 +122,7 @@ def _deactivate_employee(
         },
     )
 
-    _disable_linked_user(employee=employee, terminator=terminator)
+    _delete_linked_user(employee=employee, terminator=terminator)
 
 
 def _create_termination_document(
@@ -206,8 +202,6 @@ def employee_create_with_contract(
     if Employee.objects.filter(employee_id=employee_id).exists():
         raise ValidationException(f"Mã nhân viên {employee_id} đã tồn tại")
 
-    create_user = data.get("create_user", False)
-
     # Tạo Employee
     employee = Employee.objects.create(
         employee_id=employee_id,
@@ -237,46 +231,6 @@ def employee_create_with_contract(
         record_id=str(employee.id),
         new_value=employee_data_for_log,
     )
-
-    # Tạo User nếu được yêu cầu
-    if create_user:
-        username = data.get("username")
-        password = data.get("password")
-        email = data.get("email") or f"{employee_id}@example.com"
-        role_id = data.get("role_id")
-
-        if not username or not password:
-            raise ValidationException("Username và password là bắt buộc khi tạo tài khoản User")
-
-        if User.objects.filter(username=username).exists():
-            raise ValidationException(f"Username {username} đã tồn tại")
-
-        if User.objects.filter(email=email).exists():
-            raise ValidationException(f"Email {email} đã tồn tại")
-
-        user = User.objects.create(
-            username=username,
-            email=email,
-            password_hash=make_password(password),
-            role_id=role_id,
-            employee_id=employee_id,
-            is_active=True,
-        )
-
-        # Log user creation
-        user_data_for_log = {
-            "username": user.username,
-            "email": user.email,
-            "role_id": str(role_id) if role_id else None,
-            "employee_id": employee_id,
-        }
-        create_system_log(
-            user=creator,
-            action="create",
-            table_name="user",
-            record_id=str(user.id),
-            new_value=user_data_for_log,
-        )
 
     # Tạo EmploymentContract bắt buộc
     from apps.hrm.selectors import count_active_contracts
@@ -813,8 +767,8 @@ def contract_terminate(
         },
     )
 
-    # 5. Vô hiệu hóa tài khoản User liên kết qua employee_id
-    _disable_linked_user(employee=employee, terminator=terminator)
+    # 5. Xóa tài khoản User liên kết qua employee_id
+    _delete_linked_user(employee=employee, terminator=terminator)
 
     # 6. Lưu tài liệu quyết định thôi việc nếu có file_url
     if file_url:

@@ -46,9 +46,7 @@ class UserFactory(factory.django.DjangoModelFactory):
         django_get_or_create = ("username",)
 
     username = factory.Sequence(lambda n: f"user{n}")
-    email = factory.Sequence(lambda n: f"user{n}@example.com")
     password_hash = "hashed_password_123"
-    role = factory.SubFactory(RoleFactory)
     employee_id = factory.Sequence(lambda n: f"EMP{n:04d}")
 
 

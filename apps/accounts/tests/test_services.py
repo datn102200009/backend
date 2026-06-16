@@ -12,7 +12,7 @@ class TestAuthLoginService:
     def test_login_success_with_hashed_password(self):
         # Arrange
         hashed = make_password("securepassword")
-        user = UserFactory(username="john_doe", password_hash=hashed, email="john@example.com")
+        user = UserFactory(username="john_doe", password_hash=hashed)
 
         # Act
         result = auth_login(username="john_doe", password="securepassword")
@@ -22,17 +22,6 @@ class TestAuthLoginService:
         assert "refresh" in result
         assert result["username"] == "john_doe"
         assert result["user_id"] == str(user.id)
-
-    def test_login_success_with_email(self):
-        # Arrange
-        user = UserFactory(username="jane_doe", password_hash="plainpass", email="jane@example.com")
-
-        # Act
-        result = auth_login(username="jane@example.com", password="plainpass")
-
-        # Assert
-        assert "access" in result
-        assert result["username"] == "jane_doe"
 
     def test_login_fails_wrong_password(self):
         user = UserFactory(username="admin_user", password_hash="secret")
@@ -46,7 +35,7 @@ class TestAuthLoginService:
         with pytest.raises(NotFoundException) as exc:
             auth_login(username="ghost_user", password="123")
 
-        assert "Tên đăng nhập hoặc email không tồn tại" in str(exc.value)
+        assert "Tên đăng nhập không tồn tại" in str(exc.value)
 
     def test_login_fails_inactive_user(self):
         user = UserFactory(username="inactive_user", password_hash="secret", is_active=False)
@@ -55,18 +44,3 @@ class TestAuthLoginService:
             auth_login(username="inactive_user", password="secret")
 
         assert "Tài khoản đã bị vô hiệu hóa" in str(exc.value)
-
-
-@pytest.mark.django_db
-def test_role_deletion_blocked_by_active_users():
-    # Arrange
-    from django.db.models.deletion import ProtectedError
-
-    from apps.accounts.models import Role
-
-    role = Role.objects.create(name="temporary_role", description="temporary")
-    UserFactory(username="temp_user", role=role)
-
-    # Act & Assert
-    with pytest.raises(ProtectedError):
-        role.delete()

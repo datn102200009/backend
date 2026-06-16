@@ -73,34 +73,6 @@ class TestHrmAPI:
         assert response.data["contract"]["contract_no"] == "HDLD-2026-NV8"
         assert Employee.objects.filter(employee_id="NV8888").exists()
 
-    def test_create_employee_with_user(self, mock_check, auth_client):
-        url = "/api/v1/hrm/employees/create/"
-        role = RoleFactory()
-        data = {
-            "employee_id": "NV9999",
-            "full_name": "Tran Thi User",
-            "contract_salary_base": 12000000.00,
-            "create_user": True,
-            "username": "tranthiuser",
-            "password": "secretpassword123",
-            "role_id": str(role.id),
-            "contract_no": "HDLD-2026-NV9",
-            "contract_type": "definite_term",
-            "contract_start_date": "2026-01-01",
-            "contract_end_date": "2027-01-01",
-        }
-        response = auth_client.post(url, data, format="json")
-
-        assert response.status_code == status.HTTP_201_CREATED
-        assert response.data["employee"]["employee_id"] == "NV9999"
-        assert response.data["contract"] is not None
-        assert response.data["contract"]["contract_no"] == "HDLD-2026-NV9"
-
-        # Verify user account creation
-        from apps.accounts.models import User
-
-        assert User.objects.filter(username="tranthiuser", employee_id="NV9999").exists()
-
     def test_create_employee_with_contract(self, mock_check, auth_client):
         from apps.hrm.models import EmploymentContract
 

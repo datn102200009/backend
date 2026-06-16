@@ -29,14 +29,13 @@ class TestAuthLoginAPI:
 
     def test_login_endpoint_returns_permissions(self, api_client):
         # Arrange
-        from apps.accounts.models import Permission, Role, RolePermission
+        from apps.accounts.models import Permission, UserPermission
 
-        role = Role.objects.create(name="Tester", description="Tester Role")
         perm, _ = Permission.objects.get_or_create(
             code="accounts.test_permission", defaults={"name": "Test Permission"}
         )
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(username="perm_user", password_hash="pass123", role=role)
+        user = UserFactory(username="perm_user", password_hash="pass123")
+        UserPermission.objects.create(user=user, permission=perm)
 
         # Act
         response = api_client.post(
@@ -87,7 +86,7 @@ class TestAuthLoginAPI:
 
         # Assert
         assert response.status_code == 404
-        assert response.json()["error"] == "Tên đăng nhập hoặc email không tồn tại"
+        assert response.json()["error"] == "Tên đăng nhập không tồn tại"
 
 
 @pytest.mark.django_db
@@ -127,19 +126,18 @@ class TestAuthMeAPI:
         assert response.status_code == 401
 
     def test_auth_me_success(self, api_client):
-        from apps.accounts.models import Permission, Role, RolePermission
+        from apps.accounts.models import Permission, UserPermission
 
-        role = Role.objects.create(name="Tester", description="Tester Role")
         perm, _ = Permission.objects.get_or_create(
             code="accounts.test_permission", defaults={"name": "Test Permission"}
         )
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(username="perm_user", role=role)
+        user = UserFactory(username="perm_user")
+        UserPermission.objects.create(user=user, permission=perm)
         api_client.force_authenticate(user=user)
 
         response = api_client.get("/api/v1/accounts/auth/me/")
         assert response.status_code == 200
         data = response.json()
         assert data["username"] == "perm_user"
-        assert data["role"] == "Tester"
         assert "accounts.test_permission" in data["permissions"]
+        assert "role" not in data

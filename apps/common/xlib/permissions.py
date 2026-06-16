@@ -35,11 +35,9 @@ class PermissionChecker:
         if not user.is_active:
             raise PermissionException("Tài khoản người dùng đã bị vô hiệu hóa")
 
-        if user.role_id is None:
-            raise PermissionException("Người dùng không được gán vai trò")
-
         if not hasattr(user, "_perm_cache"):
-            user._perm_cache = set(user.role.permissions.values_list("permission__code", flat=True))
+            direct_perms = set(user.direct_permissions.values_list("permission__code", flat=True))
+            user._perm_cache = direct_perms
 
         if permission_code not in user._perm_cache:
             raise PermissionException(f"Người dùng không có quyền: {permission_code}")
@@ -94,11 +92,9 @@ class PermissionChecker:
         if not user.is_active:
             raise PermissionException("Tài khoản người dùng đã bị vô hiệu hóa")
 
-        if user.role_id is None:
-            raise PermissionException("Người dùng không được gán vai trò")
-
         if not hasattr(user, "_perm_cache"):
-            user._perm_cache = set(user.role.permissions.values_list("permission__code", flat=True))
+            direct_perms = set(user.direct_permissions.values_list("permission__code", flat=True))
+            user._perm_cache = direct_perms
 
         user_permission_codes = user._perm_cache
 

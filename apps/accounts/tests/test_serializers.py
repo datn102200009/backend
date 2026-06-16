@@ -12,8 +12,6 @@ class TestAuthTokenOutputSerializer:
             "refresh": "refresh-token-456",
             "user_id": "some-uuid-string",
             "username": "test_user",
-            "email": "test@example.com",
-            "role": "admin",
             "full_name": "Test Full Name",
             "permissions": ["inventory.stock_in_approve", "accounts.view_users"],
         }
@@ -36,8 +34,6 @@ class TestAuthTokenOutputSerializer:
             "refresh": "refresh-token-456",
             "user_id": "some-uuid-string",
             "username": "test_user",
-            "email": "test@example.com",
-            "role": "admin",
             "full_name": "",
             "permissions": [],
         }
