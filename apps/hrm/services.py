@@ -1475,7 +1475,7 @@ def payroll_initialize_period(
         # bulk create slips
         created_slips = SalarySlip.objects.bulk_create(new_slips, ignore_conflicts=True)
 
-        # bulk create logs
+        # bulk create logs (Ghi nhận log CREATE ở trạng thái draft trước)
         logs = [
             SystemLog(
                 user=creator,
@@ -1493,6 +1493,13 @@ def payroll_initialize_period(
         ]
         SystemLog.objects.bulk_create(logs)
 
+        # Tự động tính toán lương sau khi khởi tạo (sử dụng holidays_cache để tránh N+1 queries)
+        # Quá trình này sẽ tiếp tục cập nhật phiếu lương và tự động ghi log UPDATE vào DB sau log CREATE
+        year, month = map(int, salary_period.split("-"))
+        holidays_cache = get_holiday_dates_for_period(year, month)
+        for slip in created_slips:
+            payroll_calculate_salary(salary_slip_id=str(slip.id), creator=creator, holidays_cache=holidays_cache)
+
     return list(SalarySlip.objects.filter(salary_period=salary_period).select_related("employee"))
 
 
@@ -1501,6 +1508,7 @@ def payroll_calculate_salary(
     *,
     salary_slip_id: str,
     creator: Optional[User] = None,
+    holidays_cache: Optional[tuple[set[date], set[date]]] = None,
 ) -> SalarySlip:
     """
     Tính toán chi tiết phiếu lương dựa trên chấm công, phụ cấp, thưởng, phạt trong kỳ.
@@ -1551,8 +1559,11 @@ def payroll_calculate_salary(
 
     attendances = Attendance.objects.filter(employee=employee, date__year=year, date__month=month)
 
-    # Fetch public holidays and compensatory holidays for this period
-    official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(year, month)
+    # Fetch public holidays and compensatory holidays for this period (use cache if provided)
+    if holidays_cache:
+        official_holiday_dates, compensatory_holiday_dates = holidays_cache
+    else:
+        official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(year, month)
     all_holiday_dates = official_holiday_dates | compensatory_holiday_dates
 
     working_days = Decimal("0.00")
@@ -2212,40 +2223,6 @@ def payroll_submit_for_review(
         record_id=str(slip.id),
         old_value={"status": "calculated"},
         new_value={"status": "pending_finance_review", "log": "HRM submitted for Finance review"},
-    )
-
-    return slip
-
-
-@transaction.atomic
-def payroll_recall_to_calculated(
-    *,
-    salary_slip_id: str,
-    user: User,
-) -> SalarySlip:
-    """
-    HRM rút lại phiếu lương từ trạng thái chờ duyệt về calculated để sửa.
-    """
-    PermissionChecker.check_permission(user, "hrm.payroll_submit")
-
-    try:
-        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
-    except SalarySlip.DoesNotExist:
-        raise ValidationException("Phiếu lương không tồn tại")
-
-    if slip.status != "pending_finance_review":
-        raise ValidationException("Chỉ được rút lại phiếu lương ở trạng thái 'pending_finance_review'")
-
-    slip.status = "calculated"
-    slip.save(update_fields=["status"])
-
-    create_system_log(
-        user=user,
-        action="update",
-        table_name="salary_slip",
-        record_id=str(slip.id),
-        old_value={"status": "pending_finance_review"},
-        new_value={"status": "calculated", "log": "HRM recalled submission"},
     )
 
     return slip

@@ -72,7 +72,6 @@ from apps.hrm.services import (
     leave_request_create,
     payroll_calculate_salary,
     payroll_initialize_period,
-    payroll_recall_to_calculated,
     payroll_submit_for_review,
     public_holiday_create,
     public_holiday_delete,
@@ -975,23 +974,6 @@ def payroll_submit_view(request, pk):
     PermissionChecker.check_permission(user, "hrm.payroll_submit")
 
     slip = payroll_submit_for_review(salary_slip_id=pk, user=user)
-    out_serializer = SalarySlipOutputSerializer(slip)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def payroll_recall_view(request, pk):
-    """
-    HRM rút lại phiếu lương từ trạng thái chờ duyệt.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.payroll_submit")
-
-    slip = payroll_recall_to_calculated(salary_slip_id=pk, user=user)
     out_serializer = SalarySlipOutputSerializer(slip)
     return Response(out_serializer.data, status=status.HTTP_200_OK)
 

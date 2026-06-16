@@ -679,11 +679,10 @@ class TestHrmAPI:
         assert response.status_code == 200
         assert response.data["status"] == "pending_finance_review"
 
-        # Recall
+        # Recall (should return 404 now that route is deleted)
         recall_url = f"/api/v1/hrm/salary-slips/{slip.id}/recall/"
         response = auth_client.post(recall_url)
-        assert response.status_code == 200
-        assert response.data["status"] == "calculated"
+        assert response.status_code == 404
 
     def test_employment_history_reject_api(self, mock_check, auth_client):
         from apps.hrm.tests.factories import EmployeeFactory, EmploymentHistoryFactory

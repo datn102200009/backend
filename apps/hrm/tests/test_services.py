@@ -31,7 +31,6 @@ from apps.hrm.services import (
     leave_request_create,
     payroll_calculate_salary,
     payroll_initialize_period,
-    payroll_recall_to_calculated,
     payroll_submit_for_review,
     reward_record_create,
 )
@@ -631,13 +630,17 @@ class TestPayrollAndRewardDisciplineServices:
         assert "EMP7004" in employee_ids
         assert "EMP7005" not in employee_ids
 
-        # Slips should be in draft status
+        # Slips should be in calculated status
         for slip in slips:
-            assert slip.status == "draft"
+            assert slip.status == "calculated"
             assert slip.salary_period == "2026-05"
 
             # Check log
-            log = SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=admin).first()
+            log = (
+                SystemLog.objects.filter(table_name="salary_slip", record_id=str(slip.id), user=admin)
+                .order_by("created_at")
+                .first()
+            )
             assert log is not None
             assert log.action == "create"
 
@@ -2002,7 +2005,7 @@ class TestPR4Services:
         assert calculated_slip.breakdown["is_partial"] is True
         assert calculated_slip.base_salary == Decimal("5000000.00")
 
-    def test_payroll_submit_and_recall(self):
+    def test_payroll_submit(self):
         employee = EmployeeFactory()
         admin = UserFactory(username="admin_pr4_test9")
         slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
@@ -2010,11 +2013,9 @@ class TestPR4Services:
         submitted_slip = payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
         assert submitted_slip.status == "pending_finance_review"
 
-        recalled_slip = payroll_recall_to_calculated(salary_slip_id=str(slip.id), user=admin)
-        assert recalled_slip.status == "calculated"
-
-        recalled_slip.status = "draft"
-        recalled_slip.save()
+        # Nếu slip ở trạng thái draft, không cho submit
+        submitted_slip.status = "draft"
+        submitted_slip.save()
         with pytest.raises(ValidationException):
             payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
 

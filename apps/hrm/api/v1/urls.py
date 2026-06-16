@@ -45,7 +45,6 @@ urlpatterns = [
         views.payroll_submit_view,
         name="payroll_submit_for_review",
     ),
-    path("salary-slips/<uuid:pk>/recall/", views.payroll_recall_view, name="payroll_recall_to_calculated"),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
     path("rewards/<uuid:pk>/approve/", views.reward_approve_view, name="reward_approve"),
