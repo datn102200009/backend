@@ -395,6 +395,23 @@ components:
                     type: string
                   amount:
                     type: number
+            salary_segments:
+              type: array
+              items:
+                type: object
+                properties:
+                  start_date:
+                    type: string
+                    format: date
+                  end_date:
+                    type: string
+                    format: date
+                  salary_base:
+                    type: number
+                  work_days:
+                    type: number
+                  earned:
+                    type: number
         created_at:
           type: string
           format: date-time
