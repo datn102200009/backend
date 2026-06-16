@@ -15,17 +15,17 @@ urlpatterns = [
     path("employees/<uuid:pk>/", views.employee_detail_view, name="employee_detail"),
     path("employees/<uuid:pk>/update/", views.employee_update_view, name="employee_update"),
     path(
-        "employees/<uuid:pk>/update-salary-title/",
-        views.employee_update_salary_title_view,
-        name="employee_update_salary_title",
+        "employees/<uuid:pk>/adjust-salary/",
+        views.employee_adjust_salary_view,
+        name="employee_adjust_salary",
     ),
     # Contracts
     path("contracts/", views.contract_create_or_renew_view, name="contract_create_or_renew"),
     path("contracts/<uuid:pk>/terminate/", views.contract_terminate_view, name="contract_terminate"),
     path(
-        "contracts/<uuid:pk>/handle-expiration/",
-        views.contract_handle_expiration_view,
-        name="contract_handle_expiration",
+        "contracts/<uuid:pk>/renew/",
+        views.contract_renew_view,
+        name="contract_renew",
     ),
     # Attendances
     path("attendances/", views.attendance_list_view, name="attendance_list"),
@@ -64,17 +64,6 @@ urlpatterns = [
     path("disciplines/<uuid:pk>/", views.discipline_detail_update_delete_view, name="discipline_detail_update_delete"),
     path("disciplines/<uuid:pk>/approve/", views.discipline_approve_view, name="discipline_approve"),
     path("disciplines/<uuid:pk>/cancel/", views.discipline_cancel_view, name="discipline_cancel"),
-    path("employment-histories/", views.employment_history_list_view, name="employment_history_list"),
-    path(
-        "employment-histories/<uuid:pk>/approve/",
-        views.employment_history_approve_view,
-        name="employment_history_approve",
-    ),
-    path(
-        "employment-histories/<uuid:pk>/reject/",
-        views.employment_history_reject_view,
-        name="employment_history_reject",
-    ),
     # Public Holidays
     path("public-holidays/", views.public_holiday_list_create_view, name="public_holiday_list_create"),
     path(

@@ -68,9 +68,9 @@ components:
         position_title:
           type: string
           nullable: true
-        salary_base:
+        current_salary_base:
           type: string
-          description: Lương cơ bản dạng Decimal
+          description: Lương cơ bản hiện tại của nhân viên (đọc từ hợp đồng active)
           nullable: true
         email:
           type: string
@@ -119,10 +119,6 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/EmploymentContract'
-            employment_histories:
-              type: array
-              items:
-                $ref: '#/components/schemas/EmploymentHistory'
             documents:
               type: array
               items:
@@ -162,6 +158,10 @@ components:
         file_url:
           type: string
           nullable: true
+        salary_base:
+          type: string
+          description: Lương cơ bản của hợp đồng
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -191,61 +191,7 @@ components:
         updated_at:
           type: string
           format: date-time
-    EmploymentHistory:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        employee_id:
-          type: string
-          format: uuid
-        employee_code:
-          type: string
-          nullable: true
-        employee_name:
-          type: string
-          nullable: true
-        change_type:
-          type: string
-          enum: [salary_change, title_change, department_transfer, other]
-        old_salary_base:
-          type: string
-          nullable: true
-        new_salary_base:
-          type: string
-          nullable: true
-        old_title:
-          type: string
-          nullable: true
-        new_title:
-          type: string
-          nullable: true
-        old_department:
-          type: string
-          nullable: true
-        new_department:
-          type: string
-          nullable: true
-        effective_date:
-          type: string
-          format: date
-        approved_by_id:
-          type: string
-          format: uuid
-          nullable: true
-        approved_by_username:
-          type: string
-          nullable: true
-        reason:
-          type: string
-          nullable: true
-        status:
-          type: string
-          enum: [pending_approval, approved, rejected]
-        created_at:
-          type: string
-          format: date-time
+
     Attendance:
       type: object
       properties:
@@ -615,11 +561,11 @@ paths:
             schema:
               type: object
               required:
-                - employee_id
                 - full_name
               properties:
                 employee_id:
                   type: string
+                  description: Mã nhân viên (nếu để trống, hệ thống tự động sinh theo format NV####)
                   example: "NV099"
                 full_name:
                   type: string
@@ -630,9 +576,10 @@ paths:
                 position_title:
                   type: string
                   example: "Lập trình viên Senior"
-                salary_base:
+                contract_salary_base:
                   type: number
                   format: float
+                  description: Lương cơ bản của hợp đồng
                   example: 25000000.00
                 email:
                   type: string
@@ -752,10 +699,10 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
-  /hrm/employees/{id}/update-salary-title/:
+  /hrm/employees/{id}/adjust-salary/:
     post:
-      summary: Thay đổi lương, chức vụ hoặc phòng ban
-      description: Thực hiện điều chỉnh thông số lương cơ bản, chức vụ hoặc phòng ban của nhân viên. Hệ thống tự động ghi nhận một dòng lịch sử trong EmploymentHistory.
+      summary: Điều chỉnh lương cơ bản
+      description: Thực hiện điều chỉnh lương cơ bản của nhân viên (áp dụng trực tiếp).
       parameters:
         - name: id
           in: path
@@ -770,161 +717,29 @@ paths:
             schema:
               type: object
               required:
-                - change_type
-                - effective_date
+                - new_salary_base
               properties:
-                change_type:
-                  type: string
-                  enum: [salary_change, title_change, department_transfer, other]
-                  example: "salary_change"
                 new_salary_base:
                   type: number
                   format: float
                   example: 28000000.00
-                new_title:
-                  type: string
-                  example: "Tech Lead"
-                new_department:
-                  type: string
-                  example: "Phòng R&D"
-                effective_date:
-                  type: string
-                  format: date
-                  example: "2026-06-01"
                 reason:
                   type: string
                   example: "Tăng lương định kỳ theo năng lực"
       responses:
         '200':
-          description: Cập nhật thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Employee'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
-
-  /hrm/employment-histories/:
-    get:
-      summary: Lấy danh sách lịch sử công tác / đề xuất thay đổi nhân sự
-      description: Lấy danh sách lịch sử thay đổi thông tin nhân sự (lương, chức danh, phòng ban), hỗ trợ lọc trạng thái, employee_id và phân trang.
-      parameters:
-        - name: status
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [pending_approval, approved, rejected]
-          description: Lọc theo trạng thái phê duyệt.
-        - name: employee_id
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-          description: Lọc theo ID nhân viên.
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 0
-      responses:
-        '200':
-          description: Thành công
+          description: Điều chỉnh lương thành công
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  count:
-                    type: integer
-                  total_pages:
-                    type: integer
-                  next:
-                    type: string
-                    nullable: true
-                  previous:
-                    type: string
-                    nullable: true
-                  results:
+                  contract:
+                    $ref: '#/components/schemas/EmploymentContract'
+                  affected_payslips:
                     type: array
                     items:
-                      $ref: '#/components/schemas/EmploymentHistory'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-
-  /hrm/employment-histories/{id}/approve/:
-    post:
-      summary: Phê duyệt đề xuất thay đổi nhân sự
-      description: Phê duyệt đề xuất thay đổi nhân sự (lương, chức danh, phòng ban), áp dụng các thay đổi mới vào hồ sơ nhân viên.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Phê duyệt thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EmploymentHistory'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
-
-  /hrm/employment-histories/{id}/reject/:
-    post:
-      summary: Từ chối đề xuất thay đổi nhân sự
-      description: BGĐ từ chối đề xuất thay đổi nhân sự (lương, chức danh, phòng ban). Nếu là đề xuất tái ký gộp, tự động rollback (xóa) hợp đồng mới vừa được tạo nháp.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - reason
-              properties:
-                reason:
-                  type: string
-                  example: "Không đồng ý tăng mức lương cơ bản do chưa đạt KPI kỳ trước"
-      responses:
-        '200':
-          description: Từ chối thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EmploymentHistory'
+                      $ref: '#/components/schemas/SalarySlip'
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':
@@ -975,6 +790,11 @@ paths:
                 file_url:
                   type: string
                   example: "https://storage.example.com/contracts/nv099_hdld.pdf"
+                salary_base:
+                  type: number
+                  format: float
+                  description: Lương cơ bản của hợp đồng
+                  example: 25000000.00
       responses:
         '201':
           description: Tạo thành công
@@ -1057,10 +877,10 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
-  /hrm/contracts/{id}/handle-expiration/:
+  /hrm/contracts/{id}/renew/:
     post:
-      summary: Xử lý hợp đồng lao động hết hạn
-      description: Thực hiện các hành động xử lý đối với hợp đồng lao động hết hạn (renew, renew_with_salary_change, terminate, defer).
+      summary: Gia hạn hợp đồng lao động (tái ký)
+      description: Thực hiện gia hạn hợp đồng lao động cũ, có thể kèm điều chỉnh lương.
       parameters:
         - name: id
           in: path
@@ -1074,33 +894,36 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - action
               properties:
-                action:
+                new_contract_no:
                   type: string
-                  enum: [renew, renew_with_salary_change, terminate, defer]
-                  example: "renew_with_salary_change"
-                new_salary_base:
-                  type: number
-                  description: Lương cơ bản mới (bắt buộc khi action=renew_with_salary_change)
-                  example: 35000000
-                new_title:
+                  description: Số hợp đồng mới (optional, mặc định tự sinh)
+                  example: "HDLD-2026-002"
+                new_contract_type:
                   type: string
-                  description: Chức danh mới (optional)
-                  example: "Senior Developer"
+                  enum: [probation, definite_term, indefinite_term, other]
+                  description: Loại hợp đồng mới (optional, mặc định lấy loại cũ)
+                  example: "definite_term"
                 start_date:
                   type: string
                   format: date
                   description: Ngày bắt đầu của hợp đồng mới (optional, mặc định là ngày kết thúc cũ + 1 ngày)
                   example: "2026-06-01"
-                reason:
+                new_salary_base:
+                  type: number
+                  description: Lương cơ bản mới nếu có điều chỉnh (optional)
+                  example: 35000000
+                file_url:
                   type: string
-                  description: Lý do (optional)
-                  example: "Tái ký hợp đồng mới kèm nâng lương định kỳ"
+                  description: Đường dẫn file scan hợp đồng (optional)
+                  example: "https://storage.com/hdld.pdf"
+                note:
+                  type: string
+                  description: Ghi chú (optional)
+                  example: "Gia hạn hợp đồng 1 năm"
       responses:
-        '200':
-          description: Xử lý thành công
+        '201':
+          description: Gia hạn thành công
           content:
             application/json:
               schema:
@@ -1108,8 +931,6 @@ paths:
                 properties:
                   contract:
                     $ref: '#/components/schemas/EmploymentContract'
-                  history:
-                    $ref: '#/components/schemas/EmploymentHistory'
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':

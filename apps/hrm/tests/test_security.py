@@ -10,9 +10,9 @@ from apps.hrm.services import (
     contract_create_or_renew,
     contract_terminate,
     discipline_record_create,
-    employee_create_with_user,
+    employee_adjust_salary_apply,
+    employee_create_with_contract,
     employee_update,
-    employee_update_salary_or_title,
     leave_request_approve,
     leave_request_create,
     payroll_calculate_salary,
@@ -73,42 +73,33 @@ class TestHRMSecurity:
         )
         assert approved_req.status == "approved"
 
-    def test_employee_update_salary_or_title_permission(self):
+    def test_employee_adjust_salary_permission(self):
         unauthorized_user = UserFactory()
         employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
-        change_data = {
-            "change_type": "salary_change",
-            "new_salary_base": Decimal("13000000.00"),
-            "effective_date": date(2026, 6, 1),
-            "reason": "Performance bonus",
-        }
+        EmploymentContractFactory.create(
+            employee=employee,
+            status="active",
+            start_date=date(2026, 1, 1),
+            salary_base=Decimal("10000000.00"),
+        )
 
         with pytest.raises(PermissionException) as exc_info:
-            employee_update_salary_or_title(
+            employee_adjust_salary_apply(
                 employee_id=employee.id,
-                change_data=change_data,
-                approved_by_user_id=str(unauthorized_user.id),
-                approved_by=unauthorized_user,
+                new_salary_base=Decimal("13000000.00"),
+                reason="Performance adjustment",
+                actor=unauthorized_user,
             )
-        assert "hrm.change_employee" in str(exc_info.value)
+        assert "hrm.adjust_salary" in str(exc_info.value)
 
-        authorized_user = create_user_with_permission("hrm.change_employee")
-        history = employee_update_salary_or_title(
+        authorized_user = create_user_with_permission("hrm.adjust_salary")
+        result = employee_adjust_salary_apply(
             employee_id=employee.id,
-            change_data=change_data,
-            approved_by_user_id=str(authorized_user.id),
-            approved_by=authorized_user,
+            new_salary_base=Decimal("13000000.00"),
+            reason="Performance adjustment",
+            actor=authorized_user,
         )
-        assert history.new_salary_base == Decimal("13000000.00")
-        assert history.status == "pending_approval"
-
-        # Approve proposal
-        from apps.hrm.services import employment_history_approve
-
-        employment_history_approve(user=authorized_user, history_id=str(history.id))
-
-        employee.refresh_from_db()
-        assert employee.salary_base == Decimal("13000000.00")
+        assert result["contract"].salary_base == Decimal("13000000.00")
 
     def test_reward_record_create_permission(self):
         unauthorized_user = UserFactory()

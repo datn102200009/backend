@@ -14,7 +14,6 @@ from apps.hrm.models import (
     DisciplineRecord,
     EmployeeDocument,
     EmploymentContract,
-    EmploymentHistory,
     LeaveRequest,
     PublicHoliday,
     RewardRecord,
@@ -63,40 +62,9 @@ class EmploymentContractOutputSerializer(serializers.ModelSerializer):
             "status",
             "note",
             "file_url",
+            "salary_base",
             "created_at",
             "updated_at",
-        ]
-
-
-class EmploymentHistoryOutputSerializer(serializers.ModelSerializer):
-    """
-    Serializer for EmploymentHistory output.
-    """
-
-    employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
-    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
-    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
-
-    class Meta:
-        model = EmploymentHistory
-        fields = [
-            "id",
-            "employee_id",
-            "employee_code",
-            "employee_name",
-            "change_type",
-            "old_salary_base",
-            "new_salary_base",
-            "old_title",
-            "new_title",
-            "old_department",
-            "new_department",
-            "effective_date",
-            "approved_by_id",
-            "approved_by_username",
-            "reason",
-            "status",
-            "created_at",
         ]
 
 
@@ -171,15 +139,15 @@ class EmployeeOutputSerializer(serializers.ModelSerializer):
     Serializer for Employee basic output.
     """
 
+    current_salary_base = serializers.SerializerMethodField()
+
     class Meta:
         model = Employee
         fields = [
             "id",
             "employee_id",
             "full_name",
-            "department",
-            "position_title",
-            "salary_base",
+            "current_salary_base",
             "email",
             "phone",
             "gender",
@@ -193,6 +161,13 @@ class EmployeeOutputSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def get_current_salary_base(self, obj):
+        from datetime import date
+
+        from apps.hrm.selectors import get_salary_at_date
+
+        return get_salary_at_date(obj, date.today())
+
 
 class EmployeeDetailOutputSerializer(EmployeeOutputSerializer):
     """
@@ -200,7 +175,6 @@ class EmployeeDetailOutputSerializer(EmployeeOutputSerializer):
     """
 
     contracts = EmploymentContractOutputSerializer(many=True, read_only=True)
-    employment_histories = EmploymentHistoryOutputSerializer(many=True, read_only=True)
     documents = EmployeeDocumentOutputSerializer(many=True, read_only=True)
     rewards = RewardRecordOutputSerializer(many=True, read_only=True)
     disciplines = DisciplineRecordOutputSerializer(many=True, read_only=True)
@@ -208,7 +182,6 @@ class EmployeeDetailOutputSerializer(EmployeeOutputSerializer):
     class Meta(EmployeeOutputSerializer.Meta):
         fields = EmployeeOutputSerializer.Meta.fields + [
             "contracts",
-            "employment_histories",
             "documents",
             "rewards",
             "disciplines",
@@ -349,11 +322,8 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
     Serializer for validating employee creation input.
     """
 
-    employee_id = serializers.CharField(max_length=50)
+    employee_id = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     full_name = serializers.CharField(max_length=255)
-    department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
@@ -374,6 +344,14 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
     password = serializers.CharField(max_length=128, required=False)
     role_id = serializers.UUIDField(required=False, allow_null=True)
 
+    def validate_employee_id(self, value):
+        if value:
+            import re
+
+            if not re.match(r"^NV\d{4,}$", value):
+                raise serializers.ValidationError("Mã nhân viên phải có format NV#### (ví dụ: NV0001)")
+        return value
+
     def validate(self, attrs):
         if attrs.get("create_user"):
             if not attrs.get("username") or not attrs.get("password"):
@@ -383,15 +361,43 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
         return attrs
 
 
+class EmployeeWithContractCreateInputSerializer(EmployeeCreateInputSerializer):
+    """
+    Serializer for validating employee creation with an immediate contract.
+    """
+
+    contract_salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    create_contract = serializers.BooleanField(default=True)
+    contract_no = serializers.CharField(max_length=100, required=True)
+    contract_type = serializers.ChoiceField(
+        choices=[
+            ("probation", "Thử việc"),
+            ("definite_term", "Xác định thời hạn"),
+            ("indefinite_term", "Không xác định thời hạn"),
+            ("other", "Khác"),
+        ],
+        required=True,
+    )
+    contract_start_date = serializers.DateField(required=True)
+    contract_end_date = serializers.DateField(required=False, allow_null=True)
+    contract_note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    contract_file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get("contract_type") not in ("indefinite_term", "other") and not attrs.get("contract_end_date"):
+            raise serializers.ValidationError({"contract_end_date": "Ngày kết thúc bắt buộc với loại HĐLĐ này."})
+        if attrs.get("contract_end_date") and attrs["contract_end_date"] <= attrs["contract_start_date"]:
+            raise serializers.ValidationError({"contract_end_date": "Ngày kết thúc phải sau ngày bắt đầu."})
+        return attrs
+
+
 class EmployeeUpdateInputSerializer(serializers.Serializer):
     """
     Serializer for validating employee update input.
     """
 
     full_name = serializers.CharField(max_length=255, required=False)
-    department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
@@ -407,24 +413,34 @@ class EmployeeUpdateInputSerializer(serializers.Serializer):
     )
 
 
-class EmployeeUpdateSalaryTitleInputSerializer(serializers.Serializer):
+class EmployeeAdjustSalaryInputSerializer(serializers.Serializer):
     """
-    Serializer for validating salary/title change input.
+    Serializer for validating salary adjust input.
     """
 
-    change_type = serializers.ChoiceField(
-        choices=[
-            ("salary_change", "Thay đổi lương"),
-            ("title_change", "Thay đổi chức danh"),
-            ("department_transfer", "Điều chuyển phòng ban"),
-            ("other", "Khác"),
-        ]
-    )
-    new_salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    new_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    new_department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    effective_date = serializers.DateField()
+    new_salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=True)
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ContractRenewInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating contract renewal input.
+    """
+
+    new_contract_no = serializers.CharField(max_length=100, required=False, allow_null=True, allow_blank=True)
+    new_contract_type = serializers.ChoiceField(
+        choices=[
+            ("probation", "Thử việc"),
+            ("definite_term", "Xác định thời hạn"),
+            ("indefinite_term", "Không xác định thời hạn"),
+            ("other", "Khác"),
+        ],
+        required=False,
+    )
+    start_date = serializers.DateField(required=False, allow_null=True)
+    new_salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class ContractCreateOrRenewInputSerializer(serializers.Serializer):
@@ -442,8 +458,9 @@ class ContractCreateOrRenewInputSerializer(serializers.Serializer):
             ("other", "Khác"),
         ]
     )
-    start_date = serializers.DateField()
+    start_date = serializers.DateField(required=False, allow_null=True)
     end_date = serializers.DateField(required=False, allow_null=True)
+    salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
     note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
 
@@ -603,7 +620,6 @@ class ContractHandleExpirationInputSerializer(serializers.Serializer):
 
     action = serializers.ChoiceField(choices=["renew", "renew_with_salary_change", "terminate", "defer"])
     new_salary_base = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
-    new_title = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     start_date = serializers.DateField(required=False, allow_null=True)
     reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
@@ -617,14 +633,6 @@ class PartialSalarySlipInputSerializer(serializers.Serializer):
     period_start = serializers.DateField()
     period_end = serializers.DateField()
     name = serializers.CharField(max_length=255)
-
-
-class EmploymentHistoryRejectInputSerializer(serializers.Serializer):
-    """
-    Serializer for rejecting an employment history proposal.
-    """
-
-    reason = serializers.CharField(required=True, min_length=1)
 
 
 class RewardRecordUpdateInputSerializer(serializers.Serializer):
