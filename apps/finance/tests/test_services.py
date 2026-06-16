@@ -9,7 +9,9 @@ from apps.common.xlib.exceptions import NotFoundException, PermissionException, 
 from apps.finance.models import CashFlowTransaction, SalarySlip
 from apps.finance.services import (
     payroll_approve_slip,
+    payroll_bulk_approve,
     payroll_bulk_approve_and_pay,
+    payroll_bulk_pay,
     payroll_pay_slip,
     payroll_reject_slip,
 )
@@ -151,6 +153,7 @@ class TestFinancePayrollServices:
         # Arrange
         emp1 = EmployeeFactory(employee_id="EMP_BULK_1")
         emp2 = EmployeeFactory(employee_id="EMP_BULK_2")
+        emp3 = EmployeeFactory(employee_id="EMP_BULK_3")
         user = UserFactory(username="finance_user_8")
         slip1 = SalarySlipFactory(
             employee=emp1,
@@ -164,6 +167,12 @@ class TestFinancePayrollServices:
             status="calculated",
             net_pay=Decimal("-100000.00"),
         )
+        slip3 = SalarySlipFactory(
+            employee=emp3,
+            salary_period="2026-06",
+            status="approved",
+            net_pay=Decimal("5000000.00"),
+        )
 
         # Act
         updated_slips = payroll_bulk_approve_and_pay(
@@ -176,16 +185,20 @@ class TestFinancePayrollServices:
         assert len(updated_slips) == 2
         slip1.refresh_from_db()
         slip2.refresh_from_db()
+        slip3.refresh_from_db()
         assert slip1.status == "paid"
-        assert slip2.status == "paid"
+        assert slip2.status == "calculated"
+        assert slip3.status == "paid"
 
         # Check transactions
         tx1 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_1-2026-06").first()
         tx2 = CashFlowTransaction.objects.filter(name="COLLECT-SALARY-EMP_BULK_2-2026-06").first()
+        tx3 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_3-2026-06").first()
         assert tx1 is not None
         assert tx1.amount == Decimal("10000000.00")
-        assert tx2 is not None
-        assert tx2.amount == Decimal("100000.00")
+        assert tx2 is None
+        assert tx3 is not None
+        assert tx3.amount == Decimal("5000000.00")
 
     def test_hrm_no_cashflow_on_terminate(self, mock_permission_checker):
         # Arrange
@@ -216,3 +229,71 @@ class TestFinancePayrollServices:
         # Act & Assert
         with pytest.raises(PermissionException):
             payroll_approve_slip(user=user, salary_slip_id=str(slip.id))
+
+    def test_payroll_bulk_approve(self, mock_permission_checker):
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP_BULK_APP_1")
+        emp2 = EmployeeFactory(employee_id="EMP_BULK_APP_2")
+        user = UserFactory(username="finance_user_app")
+        slip1 = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-06",
+            status="pending_finance_review",
+        )
+        slip2 = SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-06",
+            status="calculated",
+        )
+
+        # Act
+        approved_slips = payroll_bulk_approve(
+            salary_period="2026-06",
+            creator=user,
+        )
+
+        # Assert
+        assert len(approved_slips) == 1
+        slip1.refresh_from_db()
+        slip2.refresh_from_db()
+        assert slip1.status == "approved"
+        assert slip1.approved_by == user
+        assert slip2.status == "calculated"
+
+    def test_payroll_bulk_pay(self, mock_permission_checker):
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP_BULK_PAY_1")
+        emp2 = EmployeeFactory(employee_id="EMP_BULK_PAY_2")
+        user = UserFactory(username="finance_user_pay")
+        slip1 = SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-06",
+            status="approved",
+            net_pay=Decimal("4000000.00"),
+        )
+        slip2 = SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-06",
+            status="pending_finance_review",
+            net_pay=Decimal("3000000.00"),
+        )
+
+        # Act
+        paid_slips = payroll_bulk_pay(
+            salary_period="2026-06",
+            payment_method="bank_transfer",
+            creator=user,
+        )
+
+        # Assert
+        assert len(paid_slips) == 1
+        slip1.refresh_from_db()
+        slip2.refresh_from_db()
+        assert slip1.status == "paid"
+        assert slip1.payment_method == "bank_transfer"
+        assert slip2.status == "pending_finance_review"
+
+        # Check transaction
+        tx = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_PAY_1-2026-06").first()
+        assert tx is not None
+        assert tx.amount == Decimal("4000000.00")

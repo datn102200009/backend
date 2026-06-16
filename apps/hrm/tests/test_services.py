@@ -3178,3 +3178,52 @@ class TestDisciplineRecordTerminationSideEffects:
             standard_working_days=26,
         )
         assert comp["social_insurance_deduction"] == Decimal("0.00")
+
+    def test_payroll_calculate_terminated_salary_retry_preserves_segments(self):
+        employee = EmployeeFactory(
+            employee_id="EMP_CALC_RETRY", salary_base=Decimal("10000000.00"), employment_status="active"
+        )
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-CALC-RETRY", status="active")
+        admin = UserFactory(username="admin_calc_retry")
+        # Attendance 10 days
+        for day in range(1, 11):
+            AttendanceFactory(employee=employee, date=date(2026, 5, day), status="working", work_hours=Decimal("8.00"))
+
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.create(
+            employee=employee,
+            salary_period="2026-05",
+            name="TEST-SLIP-CALC-RETRY",
+            status="draft",
+            breakdown={"is_partial": True, "period_start": "2026-05-01", "period_end": "2026-05-15"},
+        )
+        # Lần 1: Tính lương quyết toán
+        payroll_calculate_terminated_salary(
+            salary_slip_id=str(slip.id),
+            termination_date=date(2026, 5, 15),
+            is_lawful=True,
+            unused_leave_days=Decimal("2.0"),
+            standard_working_days=26,
+            creator=admin,
+        )
+        slip.refresh_from_db()
+        assert "salary_segments" in slip.breakdown
+        assert len(slip.breakdown["salary_segments"]) > 0
+
+        # Terminate HĐLĐ của nhân viên (giả lập giống thực tế sau lần tính đầu hoặc sa thải)
+        contract.status = "terminated"
+        contract.save()
+
+        # Lần 2 (retry): Tính lại lương quyết toán khi contract không còn active
+        payroll_calculate_terminated_salary(
+            salary_slip_id=str(slip.id),
+            termination_date=date(2026, 5, 15),
+            is_lawful=True,
+            unused_leave_days=Decimal("2.0"),
+            standard_working_days=26,
+            creator=admin,
+        )
+        slip.refresh_from_db()
+        assert "salary_segments" in slip.breakdown
+        assert len(slip.breakdown["salary_segments"]) > 0

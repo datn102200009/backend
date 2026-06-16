@@ -673,6 +673,13 @@ class DisciplineRecordUpdateInputSerializer(serializers.Serializer):
 class CancelRecordInputSerializer(serializers.Serializer):
     """
     Serializer for cancelling a record.
+    Lý do huỷ phải từ 10 ký tự trở lên để đảm bảo audit trail.
     """
 
-    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        min_length=10,
+        help_text="Lý do huỷ (tối thiểu 10 ký tự, nếu có)",
+    )

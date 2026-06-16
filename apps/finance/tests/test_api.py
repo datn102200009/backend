@@ -89,6 +89,7 @@ class TestFinancePayrollAPIViews:
         # Arrange
         emp1 = EmployeeFactory(employee_id="EMP_API_5")
         emp2 = EmployeeFactory(employee_id="EMP_API_6")
+        emp3 = EmployeeFactory(employee_id="EMP_API_7")
         SalarySlipFactory(
             employee=emp1,
             salary_period="2026-06",
@@ -100,6 +101,12 @@ class TestFinancePayrollAPIViews:
             salary_period="2026-06",
             status="calculated",
             net_pay=Decimal("4000000.00"),
+        )
+        SalarySlipFactory(
+            employee=emp3,
+            salary_period="2026-06",
+            status="approved",
+            net_pay=Decimal("2000000.00"),
         )
         url = reverse("salary-slip-bulk-approve-pay")
         data = {"salary_period": "2026-06", "payment_method": "cash"}

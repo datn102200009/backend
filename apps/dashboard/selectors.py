@@ -1192,10 +1192,22 @@ def get_finance_pending_cashflow_approval():
     """
     Widget: Lệnh Duyệt Giao Dịch (CashFlow pending_approval).
     Tối ưu: chỉ lấy 5 dòng đầu, đếm tổng trong queryset count().
+
+    PERFORMANCE NOTE:
+    Đã select_related các FK sau: purchase_order, sales_order,
+    purchase_invoice, sales_invoice, fixed_asset.
+    Khi mở rộng payload, cần update select_related tương ứng để tránh N+1.
+    Ví dụ: nếu cần tx.purchase_order.vendor.name, cần thêm "purchase_order__vendor".
     """
     qs = (
         CashFlowTransaction.objects.filter(status="pending_approval")
-        .select_related("purchase_order", "sales_order", "purchase_invoice", "sales_invoice", "fixed_asset")
+        .select_related(
+            "purchase_order",
+            "sales_order",
+            "purchase_invoice",
+            "sales_invoice",
+            "fixed_asset",
+        )
         .order_by("-payment_date", "-created_at", "id")
     )
     total_count = qs.count()

@@ -1066,7 +1066,40 @@ def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payme
     return tx
 
 
-def _process_payroll_chunk(
+def _process_payroll_approve_chunk(
+    chunk: list[SalarySlip],
+    creator: Optional[User],
+    slips_to_update: list[SalarySlip],
+    logs_to_create: list[Any],
+):
+    """
+    Xử lý 1 chunk slip pending_finance_review → chuyển sang approved.
+    """
+    from apps.accounts.models import SystemLog
+
+    for slip in chunk:
+        old_status = slip.status
+        slip.status = "approved"
+        slip.approved_by = creator
+        slip.approved_at = timezone.now()
+        slips_to_update.append(slip)
+        logs_to_create.append(
+            SystemLog(
+                user=creator,
+                action="update",
+                table_name="salary_slip",
+                record_id=str(slip.id),
+                old_value={"status": old_status},
+                new_value={
+                    "status": "approved",
+                    "approved_by_id": str(creator.id) if creator else None,
+                    "approved_at": str(slip.approved_at),
+                },
+            )
+        )
+
+
+def _process_payroll_pay_chunk(
     chunk: list[SalarySlip],
     payment_method: str,
     creator: Optional[User],
@@ -1154,10 +1187,10 @@ def payroll_pay_slip(*, user: User, salary_slip_id: str, payment_method: str = "
     except SalarySlip.DoesNotExist:
         raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
 
+    if slip.status == "paid":
+        raise ValidationException("Phiếu lương này đã được thanh toán trước đó. Không thể chi trả lại.")
     if slip.status != "approved":
         raise ValidationException("Chỉ chi trả phiếu ở trạng thái 'approved'")
-    if slip.status == "paid":
-        raise ValidationException("Phiếu đã thanh toán - không thể chỉnh sửa")
 
     old_status = slip.status
     slip.status = "paid"
@@ -1263,34 +1296,80 @@ def payroll_reject_slip(*, user: User, salary_slip_id: str, reason: str) -> Sala
 
 
 @transaction.atomic
-def payroll_bulk_approve_and_pay(
+def payroll_bulk_approve(
     *,
     salary_period: str,
-    payment_method: str,
     creator: Optional[User] = None,
 ) -> list[SalarySlip]:
+    """
+    Duyệt hàng loạt phiếu lương ở trạng thái pending_finance_review → approved.
+    Permission: finance.payroll_approve.
+    """
     if creator:
-        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+        PermissionChecker.check_permission(creator, "finance.payroll_approve")
 
-    slips_qs = SalarySlip.objects.filter(
-        salary_period=salary_period, status__in=["pending_finance_review", "approved", "calculated"]
-    ).select_related("employee")
+    slips_qs = SalarySlip.objects.filter(salary_period=salary_period, status="pending_finance_review").select_related(
+        "employee"
+    )
 
     slips_to_update = []
-    txs_to_create = []
     logs_to_create = []
-
     chunk_size = 1000
     chunk = []
     for slip in slips_qs.iterator(chunk_size=chunk_size):
         chunk.append(slip)
         if len(chunk) >= chunk_size:
-            _process_payroll_chunk(
+            _process_payroll_approve_chunk(chunk, creator, slips_to_update, logs_to_create)
+            chunk = []
+    if chunk:
+        _process_payroll_approve_chunk(chunk, creator, slips_to_update, logs_to_create)
+
+    if not slips_to_update:
+        return []
+
+    for i in range(0, len(slips_to_update), 1000):
+        SalarySlip.objects.bulk_update(
+            slips_to_update[i : i + 1000],
+            fields=["status", "approved_by", "approved_at"],
+        )
+    from apps.accounts.models import SystemLog
+
+    for i in range(0, len(logs_to_create), 1000):
+        SystemLog.objects.bulk_create(logs_to_create[i : i + 1000])
+
+    return slips_to_update
+
+
+@transaction.atomic
+def payroll_bulk_pay(
+    *,
+    salary_period: str,
+    payment_method: str,
+    creator: Optional[User] = None,
+) -> list[SalarySlip]:
+    """
+    Trả hàng loạt phiếu lương ở trạng thái approved → paid.
+    Permission: finance.change_salaryslip.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    slips_qs = SalarySlip.objects.filter(salary_period=salary_period, status="approved").select_related("employee")
+
+    slips_to_update = []
+    txs_to_create = []
+    logs_to_create = []
+    chunk_size = 1000
+    chunk = []
+    for slip in slips_qs.iterator(chunk_size=chunk_size):
+        chunk.append(slip)
+        if len(chunk) >= chunk_size:
+            _process_payroll_pay_chunk(
                 chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
             )
             chunk = []
     if chunk:
-        _process_payroll_chunk(
+        _process_payroll_pay_chunk(
             chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
         )
 
@@ -1335,3 +1414,23 @@ def payroll_bulk_approve_and_pay(
             SystemLog.objects.bulk_create(logs_to_create[i : i + 1000])
 
     return slips_to_update
+
+
+@transaction.atomic
+def payroll_bulk_approve_and_pay(
+    *,
+    salary_period: str,
+    payment_method: str,
+    creator: Optional[User] = None,
+) -> list[SalarySlip]:
+    """
+    DEPRECATED: Duyệt + trả hàng loạt trong 1 lần gọi.
+    Dùng payroll_bulk_approve + payroll_bulk_pay riêng để dễ audit.
+    Giữ để tương thích ngược với API endpoint cũ.
+    """
+    payroll_bulk_approve(salary_period=salary_period, creator=creator)
+    return payroll_bulk_pay(
+        salary_period=salary_period,
+        payment_method=payment_method,
+        creator=creator,
+    )

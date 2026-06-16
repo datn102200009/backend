@@ -3,9 +3,16 @@ from django.db import migrations
 
 def rename_payroll_approve(apps, schema_editor):
     Permission = apps.get_model("accounts", "Permission")
-    Permission.objects.filter(code="hrm.payroll_approve").update(
-        code="finance.payroll_approve", name="Phê duyệt phiếu lương (Finance)"
-    )
+    old_perm = Permission.objects.filter(code="hrm.payroll_approve").first()
+    if old_perm:
+        old_perm.code = "finance.payroll_approve"
+        old_perm.name = "Phê duyệt phiếu lương (Finance)"
+        old_perm.save(update_fields=["code", "name"])
+    else:
+        Permission.objects.get_or_create(
+            code="finance.payroll_approve",
+            defaults={"name": "Phê duyệt phiếu lương (Finance)"},
+        )
 
 
 def reverse_rename_payroll_approve(apps, schema_editor):

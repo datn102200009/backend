@@ -27,6 +27,136 @@ from apps.master_data.models import Employee
 
 logger = logging.getLogger(__name__)
 
+# Quyết toán lương - các hằng số nghiệp vụ
+RESIGNATION_FINE_HALF_MONTH = Decimal("0.5")  # Nửa tháng lương (Điều 40 BLLĐ 2019)
+SOCIAL_INSURANCE_RATE = Decimal("0.105")  # 10.5% BHXH (người lao động đóng)
+SOCIAL_INSURANCE_MIN_DAYS = 14  # Số ngày làm việc tối thiểu để đóng BHXH tháng đó
+DEFAULT_STANDARD_WORKING_DAYS = Decimal("26.00")  # Ngày công chuẩn fallback
+
+
+def _disable_linked_user(*, employee: Employee, terminator: Optional[User] = None) -> None:
+    """
+    Vô hiệu hoá tài khoản User liên kết với employee_id.
+
+    - Idempotent: nếu User đã inactive → không tạo log thừa.
+    - Tạo SystemLog khi thay đổi trạng thái is_active.
+    - Dùng chung cho contract_terminate và _handle_termination_side_effects.
+    """
+    linked_user = User.objects.filter(employee_id=employee.employee_id).first()
+    if not linked_user or not linked_user.is_active:
+        return
+
+    old_active = linked_user.is_active
+    linked_user.is_active = False
+    linked_user.save(update_fields=["is_active"])
+
+    if terminator:
+        create_system_log(
+            user=terminator,
+            action="update",
+            table_name="user",
+            record_id=str(linked_user.id),
+            old_value={"is_active": old_active},
+            new_value={"is_active": False},
+        )
+
+
+def _terminate_active_contract(
+    *,
+    employee: Employee,
+    termination_date: date,
+    reason: str,
+    file_url: Optional[str],
+    terminator: User,
+    is_lawful: bool = True,
+) -> None:
+    """
+    Terminate HĐLĐ đang active (bao gồm quyết toán lương cuối kỳ).
+    Raises ValidationException nếu không terminate được.
+    """
+    active_contract = EmploymentContract.objects.select_for_update().filter(employee=employee, status="active").first()
+    if not active_contract:
+        return
+
+    try:
+        contract_terminate(
+            contract_id=str(active_contract.id),
+            termination_date=termination_date,
+            reason=reason,
+            file_url=file_url,
+            terminator=terminator,
+            is_lawful=is_lawful,
+        )
+    except ValidationException as e:
+        raise ValidationException(f"Không thể sa thải nhân viên: {str(e)}")
+
+
+def _deactivate_employee(
+    *,
+    employee: Employee,
+    termination_date: date,
+    terminator: User,
+) -> None:
+    """
+    Set Employee.employment_status = 'inactive' + leave_date.
+    Dùng khi nhân viên không có HĐLĐ active (vd: nhân viên thử việc).
+    """
+    if employee.employment_status == "inactive":
+        raise ValidationException("Nhân viên này đã bị sa thải hoặc ngưng hoạt động trước đó.")
+
+    old_emp_status = employee.employment_status
+    old_leave_date = employee.leave_date
+    employee.employment_status = "inactive"
+    employee.leave_date = termination_date
+    employee.save(update_fields=["employment_status", "leave_date"])
+
+    create_system_log(
+        user=terminator,
+        action="update",
+        table_name="employee",
+        record_id=str(employee.id),
+        old_value={
+            "employment_status": old_emp_status,
+            "leave_date": str(old_leave_date) if old_leave_date else None,
+        },
+        new_value={
+            "employment_status": "inactive",
+            "leave_date": str(termination_date),
+            "note": "Sa thải theo kỷ luật - không có HĐLĐ active",
+        },
+    )
+
+    _disable_linked_user(employee=employee, terminator=terminator)
+
+
+def _create_termination_document(
+    *,
+    employee: Employee,
+    file_url: str,
+    terminator: User,
+) -> None:
+    """
+    Lưu EmployeeDocument cho file quyết định sa thải.
+    """
+    doc = EmployeeDocument.objects.create(
+        employee=employee,
+        doc_type="disciplinary_minutes",
+        title=f"Quyết định sa thải kỷ luật - {employee.full_name}",
+        file_url=file_url,
+        uploaded_by=terminator,
+    )
+    create_system_log(
+        user=terminator,
+        action="create",
+        table_name="employee_document",
+        record_id=str(doc.id),
+        new_value={
+            "doc_type": doc.doc_type,
+            "title": doc.title,
+            "file_url": doc.file_url,
+        },
+    )
+
 
 @transaction.atomic
 def employee_create_with_user(
@@ -489,20 +619,7 @@ def contract_terminate(
     )
 
     # 5. Vô hiệu hóa tài khoản User liên kết qua employee_id
-    linked_user = User.objects.filter(employee_id=employee.employee_id).first()
-    if linked_user:
-        old_active = linked_user.is_active
-        linked_user.is_active = False
-        linked_user.save(update_fields=["is_active"])
-
-        create_system_log(
-            user=terminator,
-            action="update",
-            table_name="user",
-            record_id=str(linked_user.id),
-            old_value={"is_active": old_active},
-            new_value={"is_active": False},
-        )
+    _disable_linked_user(employee=employee, terminator=terminator)
 
     # 6. Lưu tài liệu quyết định thôi việc nếu có file_url
     if file_url:
@@ -1930,81 +2047,38 @@ def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRe
 def _handle_termination_side_effects(*, discipline: DisciplineRecord, approver: User) -> None:
     """
     Hàm nội bộ: xử lý hậu quả khi kỷ luật Sa thải được phê duyệt.
-
-    - Terminate EmploymentContract đang active (gồm quyết toán lương cuối kỳ).
-    - Set Employee sang inactive + điền leave_date.
-    - Disable User liên kết.
-    - Lưu EmployeeDocument cho file quyết định (nếu có).
-
-    Idempotent: nếu employee không có HĐLĐ active → vẫn set Employee inactive,
-    không raise lỗi (case nhân viên thử việc chưa có HĐLĐ chính thức).
+    Orchestrator: gọi các helper con theo đúng case.
     """
     employee = discipline.employee
     discipline_date = discipline.discipline_date
+    had_active_contract = EmploymentContract.objects.filter(employee=employee, status="active").exists()
 
-    # 1. Terminate HĐLĐ đang active
-    active_contract = EmploymentContract.objects.select_for_update().filter(employee=employee, status="active").first()
-
-    if active_contract:
-        try:
-            contract_terminate(
-                contract_id=str(active_contract.id),
-                termination_date=discipline_date,
-                reason=f"[Sa thải theo kỷ luật] {discipline.description}",
-                file_url=discipline.file_url or None,
-                terminator=approver,
-                is_lawful=True,
-            )
-        except ValidationException as e:
-            raise ValidationException(f"Không thể sa thải nhân viên: {str(e)}")
-    else:
-        if employee.employment_status == "inactive":
-            raise ValidationException("Nhân viên này đã bị sa thải hoặc ngưng hoạt động trước đó.")
-
-        old_emp_status = employee.employment_status
-        old_leave_date = employee.leave_date
-        employee.employment_status = "inactive"
-        employee.leave_date = discipline_date
-        employee.save(update_fields=["employment_status", "leave_date"])
-
-        create_system_log(
-            user=approver,
-            action="update",
-            table_name="employee",
-            record_id=str(employee.id),
-            old_value={
-                "employment_status": old_emp_status,
-                "leave_date": str(old_leave_date) if old_leave_date else None,
-            },
-            new_value={
-                "employment_status": "inactive",
-                "leave_date": str(discipline_date),
-                "note": "Sa thải theo kỷ luật - không có HĐLĐ active",
-            },
-        )
-
-        _disable_linked_user(employee=employee, terminator=approver)
-
-    if not active_contract and discipline.file_url:
-        doc = EmployeeDocument.objects.create(
+    # 1. Terminate HĐLĐ (nếu có)
+    if had_active_contract:
+        _terminate_active_contract(
             employee=employee,
-            doc_type="disciplinary_minutes",
-            title=f"Quyết định sa thải kỷ luật - {employee.full_name}",
-            file_url=discipline.file_url,
-            uploaded_by=approver,
+            termination_date=discipline_date,
+            reason=f"[Sa thải theo kỷ luật] {discipline.description}",
+            file_url=discipline.file_url or None,
+            terminator=approver,
         )
-        create_system_log(
-            user=approver,
-            action="create",
-            table_name="employee_document",
-            record_id=str(doc.id),
-            new_value={
-                "doc_type": doc.doc_type,
-                "title": doc.title,
-                "file_url": doc.file_url,
-            },
+    else:
+        # 2. Hoặc deactivate Employee (nếu không có HĐLĐ)
+        _deactivate_employee(
+            employee=employee,
+            termination_date=discipline_date,
+            terminator=approver,
         )
 
+    # 3. Lưu EmployeeDocument (nếu không có HĐLĐ và có file_url)
+    if not had_active_contract and discipline.file_url:
+        _create_termination_document(
+            employee=employee,
+            file_url=discipline.file_url,
+            terminator=approver,
+        )
+
+    # 4. Log tổng kết
     create_system_log(
         user=approver,
         action="terminated_by_discipline",
@@ -2013,30 +2087,9 @@ def _handle_termination_side_effects(*, discipline: DisciplineRecord, approver: 
         new_value={
             "employee_id": str(employee.id),
             "termination_date": str(discipline_date),
-            "had_active_contract": bool(active_contract),
+            "had_active_contract": had_active_contract,
         },
     )
-
-
-def _disable_linked_user(*, employee: Employee, terminator: User) -> None:
-    """
-    Helper: disable User tài khoản liên kết với employee_id.
-    Mirror logic trong contract_terminate (services.py:676-680).
-    """
-    linked_user = User.objects.filter(employee_id=employee.employee_id).first()
-    if linked_user and linked_user.is_active:
-        old_active = linked_user.is_active
-        linked_user.is_active = False
-        linked_user.save(update_fields=["is_active"])
-
-        create_system_log(
-            user=terminator,
-            action="update",
-            table_name="user",
-            record_id=str(linked_user.id),
-            old_value={"is_active": old_active},
-            new_value={"is_active": False},
-        )
 
 
 @transaction.atomic
@@ -2075,11 +2128,25 @@ def payroll_calculate_terminated_salary(
             "Hãy set trước khi gọi payroll_calculate_terminated_salary."
         )
 
-    # ===== BƯỚC 1: Tính 4 thành phần định kỳ =====
+    # ===== BƯỚC 1: Lưu lại salary_segments từ lần calculate trước (nếu có) =====
+    existing_salary_segments = None
+    if slip.breakdown and slip.breakdown.get("salary_segments"):
+        existing_salary_segments = slip.breakdown["salary_segments"]
+
+    # ===== BƯỚC 2: Tính 4 thành phần định kỳ =====
     payroll_calculate_salary(salary_slip_id=str(slip.id), creator=creator)
     slip.refresh_from_db()
 
-    # ===== BƯỚC 2: Tính 4 thành phần quyết toán =====
+    # ===== BƯỚC 3: Đảm bảo salary_segments vẫn còn sau khi calculate =====
+    # Nếu payroll_calculate_salary không ghi hoặc ghi rỗng salary_segments, dùng lại của lần trước
+    has_segments = slip.breakdown and slip.breakdown.get("salary_segments")
+    if existing_salary_segments and not has_segments:
+        slip.breakdown = {
+            **(slip.breakdown or {}),
+            "salary_segments": existing_salary_segments,
+        }
+
+    # ===== BƯỚC 4: Tính 4 thành phần quyết toán =====
     employee = slip.employee
     salary_base = get_salary_at_date(employee, termination_date) or Decimal("0.00")
 
@@ -2169,24 +2236,24 @@ def _calc_termination_compensation(
     standard_working_days: int = 26,
 ) -> Dict[str, Decimal]:
     """Tính 4 thành phần quyết toán thôi việc. Pure function (không query DB)."""
+    # 1. Thanh toán phép năm chưa nghỉ (Điều 113-114 BLLĐ 2019)
     divisor = Decimal(str(standard_working_days))
     if divisor <= 0:
-        divisor = Decimal("26.00")
+        divisor = DEFAULT_STANDARD_WORKING_DAYS
 
-    # 1. Thanh toán phép năm chưa nghỉ (Điều 113-114 BLLĐ 2019)
     unused_leave_compensation = ((salary_base / divisor) * Decimal(str(unused_leave_days))).quantize(Decimal("0.01"))
 
     # 2. BHXH 10.5% nếu làm >= 14 ngày trong tháng
     social_insurance_deduction = Decimal("0.00")
-    if (working_days + paid_leave_days) >= 14:
-        social_insurance_deduction = (salary_base * Decimal("0.105")).quantize(Decimal("0.01"))
+    if (working_days + paid_leave_days) >= SOCIAL_INSURANCE_MIN_DAYS:
+        social_insurance_deduction = (salary_base * SOCIAL_INSURANCE_RATE).quantize(Decimal("0.01"))
 
     # 3. Bồi thường nghỉ ngang (chỉ áp dụng khi !is_lawful)
     resignation_fine = Decimal("0.00")
     fine_half_month = Decimal("0.00")
     fine_unnotified = Decimal("0.00")
     if not is_lawful:
-        fine_half_month = (salary_base * Decimal("0.5")).quantize(Decimal("0.01"))
+        fine_half_month = (salary_base * RESIGNATION_FINE_HALF_MONTH).quantize(Decimal("0.01"))
         fine_unnotified = ((salary_base / divisor) * Decimal(str(unnotified_days))).quantize(Decimal("0.01"))
         resignation_fine = fine_half_month + fine_unnotified
 
