@@ -850,6 +850,45 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+  /hrm/employment-histories/{id}/reject/:
+    post:
+      summary: Từ chối đề xuất thay đổi nhân sự
+      description: BGĐ từ chối đề xuất thay đổi nhân sự (lương, chức danh, phòng ban). Nếu là đề xuất tái ký gộp, tự động rollback (xóa) hợp đồng mới vừa được tạo nháp.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  example: "Không đồng ý tăng mức lương cơ bản do chưa đạt KPI kỳ trước"
+      responses:
+        '200':
+          description: Từ chối thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmploymentHistory'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/contracts/:
     post:
       summary: Tạo mới hoặc gia hạn hợp đồng lao động
@@ -964,6 +1003,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmploymentContract'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/contracts/{id}/handle-expiration/:
+    post:
+      summary: Xử lý hợp đồng lao động hết hạn
+      description: Thực hiện các hành động xử lý đối với hợp đồng lao động hết hạn (renew, renew_with_salary_change, terminate, defer).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum: [renew, renew_with_salary_change, terminate, defer]
+                  example: "renew_with_salary_change"
+                new_salary_base:
+                  type: number
+                  description: Lương cơ bản mới (bắt buộc khi action=renew_with_salary_change)
+                  example: 35000000
+                new_title:
+                  type: string
+                  description: Chức danh mới (optional)
+                  example: "Senior Developer"
+                start_date:
+                  type: string
+                  format: date
+                  description: Ngày bắt đầu của hợp đồng mới (optional, mặc định là ngày kết thúc cũ + 1 ngày)
+                  example: "2026-06-01"
+                reason:
+                  type: string
+                  description: Lý do (optional)
+                  example: "Tái ký hợp đồng mới kèm nâng lương định kỳ"
+      responses:
+        '200':
+          description: Xử lý thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contract:
+                    $ref: '#/components/schemas/EmploymentContract'
+                  history:
+                    $ref: '#/components/schemas/EmploymentHistory'
         '400':
           $ref: '#/components/responses/BadRequestError'
         '401':
@@ -1310,6 +1411,105 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+
+  /hrm/salary-slips/partial/:
+    post:
+      summary: Tạo phiếu lương cho một phần của kỳ lương
+      description: Tạo phiếu lương nháp cho một nhân sự trong giai đoạn ngắn cụ thể của tháng (ví dụ cho nhân sự mới hoặc khi thôi việc).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employee_id
+                - period_start
+                - period_end
+                - name
+              properties:
+                employee_id:
+                  type: string
+                  format: uuid
+                  example: "00000000-0000-0000-0000-000000000000"
+                period_start:
+                  type: string
+                  format: date
+                  example: "2026-06-01"
+                period_end:
+                  type: string
+                  format: date
+                  example: "2026-06-15"
+                name:
+                  type: string
+                  example: "SALARY-NV099-202606-PARTIAL"
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/{id}/submit-for-review/:
+    post:
+      summary: HRM gửi phiếu lương chờ duyệt
+      description: HR gửi phiếu lương đã tính toán xong để chờ Finance phê duyệt và thanh toán. Đổi status từ 'calculated' sang 'pending_finance_review'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Gửi duyệt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/salary-slips/{id}/recall/:
+    post:
+      summary: HRM rút lại phiếu lương chờ duyệt
+      description: HR rút lại phiếu lương đang chờ duyệt về calculated để tính toán hoặc sửa đổi. Đổi status từ 'pending_finance_review' sang 'calculated'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Rút lại thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
 
   /hrm/rewards/:
     get:

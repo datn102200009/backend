@@ -22,6 +22,11 @@ urlpatterns = [
     # Contracts
     path("contracts/", views.contract_create_or_renew_view, name="contract_create_or_renew"),
     path("contracts/<uuid:pk>/terminate/", views.contract_terminate_view, name="contract_terminate"),
+    path(
+        "contracts/<uuid:pk>/handle-expiration/",
+        views.contract_handle_expiration_view,
+        name="contract_handle_expiration",
+    ),
     # Attendances
     path("attendances/", views.attendance_list_view, name="attendance_list"),
     path("attendances/batch/", views.attendance_batch_view, name="attendance_batch"),
@@ -34,6 +39,13 @@ urlpatterns = [
     path("salary-periods/", views.salary_periods_list_view, name="salary_periods_list"),
     path("salary-slips/initialize/", views.salary_slip_initialize_view, name="salary_slip_initialize"),
     path("salary-slips/<uuid:pk>/calculate/", views.salary_slip_calculate_view, name="salary_slip_calculate"),
+    path("salary-slips/partial/", views.partial_salary_slip_create_view, name="partial_salary_slip_create"),
+    path(
+        "salary-slips/<uuid:pk>/submit-for-review/",
+        views.payroll_submit_view,
+        name="payroll_submit_for_review",
+    ),
+    path("salary-slips/<uuid:pk>/recall/", views.payroll_recall_view, name="payroll_recall_to_calculated"),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
     path("rewards/<uuid:pk>/approve/", views.reward_approve_view, name="reward_approve"),
@@ -44,6 +56,11 @@ urlpatterns = [
         "employment-histories/<uuid:pk>/approve/",
         views.employment_history_approve_view,
         name="employment_history_approve",
+    ),
+    path(
+        "employment-histories/<uuid:pk>/reject/",
+        views.employment_history_reject_view,
+        name="employment_history_reject",
     ),
     # Public Holidays
     path("public-holidays/", views.public_holiday_list_create_view, name="public_holiday_list_create"),

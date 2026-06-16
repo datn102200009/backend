@@ -582,3 +582,34 @@ class SalarySlipBulkConfirmInputSerializer(serializers.Serializer):
         if not re.match(r"^\d{4}-\d{2}$", value):
             raise serializers.ValidationError("Kỳ lương phải ở định dạng YYYY-MM.")
         return value
+
+
+class ContractHandleExpirationInputSerializer(serializers.Serializer):
+    """
+    Serializer for contract expiration handling input.
+    """
+
+    action = serializers.ChoiceField(choices=["renew", "renew_with_salary_change", "terminate", "defer"])
+    new_salary_base = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    new_title = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class PartialSalarySlipInputSerializer(serializers.Serializer):
+    """
+    Serializer for creating a partial salary slip.
+    """
+
+    employee_id = serializers.UUIDField()
+    period_start = serializers.DateField()
+    period_end = serializers.DateField()
+    name = serializers.CharField(max_length=255)
+
+
+class EmploymentHistoryRejectInputSerializer(serializers.Serializer):
+    """
+    Serializer for rejecting an employment history proposal.
+    """
+
+    reason = serializers.CharField(required=True, min_length=1)

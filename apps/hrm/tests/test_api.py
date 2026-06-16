@@ -629,3 +629,71 @@ class TestHrmAPI:
         response = auth_client.get(url)
         assert response.status_code == 200
         assert response.data == ["2026-06", "2026-05"]
+
+    def test_contract_handle_expiration_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory
+
+        employee = EmployeeFactory()
+        contract = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-EXP-API",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="active",
+        )
+
+        url = f"/api/v1/hrm/contracts/{contract.id}/handle-expiration/"
+        data = {"action": "renew"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["contract"] is not None
+        assert response.data["contract"]["contract_no"] == "CON-EXP-API-RENEW"
+
+    def test_partial_salary_slip_create_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory
+
+        employee = EmployeeFactory()
+        url = "/api/v1/hrm/salary-slips/partial/"
+        data = {
+            "employee_id": str(employee.id),
+            "period_start": "2026-06-01",
+            "period_end": "2026-06-15",
+            "name": "SALARY-API-PARTIAL",
+        }
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 201
+        assert response.data["status"] == "draft"
+        assert response.data["breakdown"]["is_partial"] is True
+
+    def test_payroll_submit_and_recall_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, SalarySlipFactory
+
+        employee = EmployeeFactory()
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+
+        # Submit
+        submit_url = f"/api/v1/hrm/salary-slips/{slip.id}/submit-for-review/"
+        response = auth_client.post(submit_url)
+        assert response.status_code == 200
+        assert response.data["status"] == "pending_finance_review"
+
+        # Recall
+        recall_url = f"/api/v1/hrm/salary-slips/{slip.id}/recall/"
+        response = auth_client.post(recall_url)
+        assert response.status_code == 200
+        assert response.data["status"] == "calculated"
+
+    def test_employment_history_reject_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, EmploymentHistoryFactory
+
+        employee = EmployeeFactory()
+        history = EmploymentHistoryFactory(employee=employee, status="pending_approval")
+
+        url = f"/api/v1/hrm/employment-histories/{history.id}/reject/"
+        data = {"reason": "Not approved"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["status"] == "rejected"

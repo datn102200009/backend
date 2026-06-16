@@ -6,6 +6,7 @@ import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.accounts.models import SystemLog, User
+from apps.common.xlib.exceptions import ValidationException
 from apps.hrm.models import (
     Attendance,
     DisciplineRecord,
@@ -18,15 +19,20 @@ from apps.hrm.models import (
 from apps.hrm.services import (
     attendance_batch_record,
     contract_create_or_renew,
+    contract_handle_expiration,
     contract_terminate,
+    create_partial_salary_slip,
     discipline_record_create,
     employee_create_with_user,
     employee_update,
     employee_update_salary_or_title,
+    employment_history_reject,
     leave_request_approve,
     leave_request_create,
     payroll_calculate_salary,
     payroll_initialize_period,
+    payroll_recall_to_calculated,
+    payroll_submit_for_review,
     reward_record_create,
 )
 from apps.hrm.tests.factories import (
@@ -1790,3 +1796,259 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Tổng base_salary của slip phải bằng tổng earned của 2 segment
         expected_total = Decimal(str(segments[0]["earned"])) + Decimal(str(segments[1]["earned"]))
         assert calculated_slip.base_salary == expected_total
+
+
+@pytest.mark.django_db
+class TestPR4Services:
+
+    def test_contract_create_or_renew_overlap(self):
+        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_pr4_test1")
+
+        # HĐLĐ cũ
+        contract1 = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-001",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 30),
+            status="active",
+        )
+
+        # Tái ký sớm: HĐLĐ mới bắt đầu từ 15/06
+        contract2 = contract_create_or_renew(
+            employee_id=str(employee.id),
+            contract_data={
+                "contract_no": "CON-002",
+                "contract_type": "definite_term",
+                "start_date": date(2026, 6, 15),
+                "end_date": date(2026, 12, 31),
+            },
+            creator=admin,
+        )
+
+        # Verify old contract's end_date adjusted
+        contract1.refresh_from_db()
+        assert contract1.end_date == date(2026, 6, 14)
+        assert contract2.status == "active"
+
+        # Validate start_date mới phải >= start_date HĐLĐ cũ
+        with pytest.raises(ValidationException) as exc_info:
+            contract_create_or_renew(
+                employee_id=str(employee.id),
+                contract_data={
+                    "contract_no": "CON-003",
+                    "contract_type": "definite_term",
+                    "start_date": date(2026, 6, 10),
+                },
+                creator=admin,
+            )
+        assert "phải >= start_date HĐLĐ cũ" in str(exc_info.value)
+
+    def test_contract_handle_expiration_renew(self):
+        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_pr4_test2")
+        contract = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-EXP-1",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="active",
+        )
+
+        result = contract_handle_expiration(
+            contract_id=str(contract.id),
+            action="renew",
+            handler=admin,
+        )
+
+        assert result["contract"] is not None
+        assert result["contract"].contract_no == "CON-EXP-1-RENEW"
+        assert result["contract"].start_date == date(2026, 6, 1)
+        assert result["history"] is None
+
+    def test_contract_handle_expiration_renew_with_salary_change(self):
+        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_pr4_test3")
+        contract = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-EXP-2",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="active",
+        )
+
+        result = contract_handle_expiration(
+            contract_id=str(contract.id),
+            action="renew_with_salary_change",
+            new_salary_base=Decimal("12000000.00"),
+            new_title="Senior Developer",
+            handler=admin,
+        )
+
+        assert result["contract"] is not None
+        assert result["contract"].contract_no == "CON-EXP-2-RENEW"
+        assert result["history"] is not None
+        assert result["history"].change_type == "other"
+        assert result["history"].new_salary_base == Decimal("12000000.00")
+        assert result["history"].new_title == "Senior Developer"
+
+    def test_contract_handle_expiration_terminate(self):
+        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_pr4_test4")
+        contract = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-EXP-3",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="active",
+        )
+
+        result = contract_handle_expiration(
+            contract_id=str(contract.id),
+            action="terminate",
+            handler=admin,
+        )
+
+        assert result["contract"] is None
+        contract.refresh_from_db()
+        assert contract.status == "terminated"
+
+    def test_contract_handle_expiration_defer(self):
+        employee = EmployeeFactory()
+        admin = UserFactory(username="admin_pr4_test5")
+        contract = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-EXP-4",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="active",
+        )
+
+        result = contract_handle_expiration(
+            contract_id=str(contract.id),
+            action="defer",
+            handler=admin,
+        )
+
+        assert result["contract"] is None
+        assert result["history"] is None
+        log = SystemLog.objects.filter(
+            table_name="employment_contract", record_id=str(contract.id), action="defer"
+        ).first()
+        assert log is not None
+
+    def test_create_partial_salary_slip_success(self):
+        employee = EmployeeFactory()
+        admin = UserFactory(username="admin_pr4_test6")
+
+        slip = create_partial_salary_slip(
+            employee_id=str(employee.id),
+            period_start=date(2026, 6, 1),
+            period_end=date(2026, 6, 15),
+            name="SALARY-NV99-PARTIAL",
+            creator=admin,
+        )
+
+        assert slip.status == "draft"
+        assert slip.salary_period == "2026-06"
+        assert slip.breakdown["is_partial"] is True
+        assert slip.breakdown["period_start"] == "2026-06-01"
+        assert slip.breakdown["period_end"] == "2026-06-15"
+
+    def test_create_partial_salary_slip_validation(self):
+        employee = EmployeeFactory()
+        admin = UserFactory(username="admin_pr4_test7")
+
+        with pytest.raises(ValidationException):
+            create_partial_salary_slip(
+                employee_id=str(employee.id),
+                period_start=date(2026, 6, 15),
+                period_end=date(2026, 6, 15),
+                name="SALARY-INVALID",
+                creator=admin,
+            )
+
+        with pytest.raises(ValidationException):
+            create_partial_salary_slip(
+                employee_id=str(employee.id),
+                period_start=date(2026, 6, 15),
+                period_end=date(2026, 7, 5),
+                name="SALARY-INVALID",
+                creator=admin,
+            )
+
+    def test_payroll_calculate_salary_partial(self):
+        employee = EmployeeFactory(salary_base=Decimal("26000000.00"))
+        admin = UserFactory(username="admin_pr4_test8")
+
+        EmploymentContractFactory(
+            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+        )
+
+        for d in range(1, 6):
+            AttendanceFactory(employee=employee, date=date(2026, 6, d), status="working", work_hours=Decimal("8.00"))
+
+        slip = create_partial_salary_slip(
+            employee_id=str(employee.id),
+            period_start=date(2026, 6, 1),
+            period_end=date(2026, 6, 5),
+            name="SALARY-NV099-PARTIAL",
+            creator=admin,
+        )
+
+        calculated_slip = payroll_calculate_salary(salary_slip_id=str(slip.id), creator=admin)
+
+        assert calculated_slip.status == "calculated"
+        assert calculated_slip.breakdown["is_partial"] is True
+        assert calculated_slip.base_salary == Decimal("5000000.00")
+
+    def test_payroll_submit_and_recall(self):
+        employee = EmployeeFactory()
+        admin = UserFactory(username="admin_pr4_test9")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+
+        submitted_slip = payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
+        assert submitted_slip.status == "pending_finance_review"
+
+        recalled_slip = payroll_recall_to_calculated(salary_slip_id=str(slip.id), user=admin)
+        assert recalled_slip.status == "calculated"
+
+        recalled_slip.status = "draft"
+        recalled_slip.save()
+        with pytest.raises(ValidationException):
+            payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
+
+    def test_employment_history_reject_rollback(self):
+        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
+        admin = UserFactory(username="admin_pr4_test10")
+
+        contract1 = EmploymentContractFactory(
+            employee=employee,
+            contract_no="CON-ROLL-1",
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 31),
+            status="expired",
+        )
+
+        result = contract_handle_expiration(
+            contract_id=str(contract1.id),
+            action="renew_with_salary_change",
+            new_salary_base=Decimal("12000000.00"),
+            new_title="Lead Developer",
+            handler=admin,
+        )
+        new_contract = result["contract"]
+        history = result["history"]
+
+        assert new_contract.status == "active"
+        assert history.status == "pending_approval"
+
+        history_id = str(history.id)
+        rejected_history = employment_history_reject(
+            user=admin,
+            history_id=history_id,
+            reason="Không duyệt tăng lương đợt này",
+        )
+
+        assert rejected_history.status == "rejected"
+        assert not EmploymentContract.objects.filter(id=new_contract.id).exists()
