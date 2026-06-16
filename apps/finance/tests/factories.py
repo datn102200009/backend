@@ -48,7 +48,6 @@ class FixedAssetFactory(factory.django.DjangoModelFactory):
         return 10000
 
     accumulated_depreciation = fuzzy.FuzzyDecimal(0, 0, 2)
-    department = factory.Faker("word")
     status = "active"
     purchase_date = factory.LazyFunction(lambda: timezone.now().date())
     disposal_date = None

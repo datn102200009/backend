@@ -71,7 +71,6 @@ class Employee(BaseModel):
     department = models.CharField(max_length=255, null=True, blank=True)
     position_title = models.CharField(max_length=255, null=True, blank=True)
     salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    is_union_member = models.BooleanField(default=False)
     email = models.EmailField(null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
     gender = models.CharField(
@@ -125,9 +124,8 @@ class Item(BaseModel):
     minimum_threshold = models.DecimalField(
         max_digits=18,
         decimal_places=3,
-        null=True,
-        blank=True,
-        help_text="Ngưỡng tối thiểu tồn kho. Nếu NULL sẽ dùng fallback theo UOM.",
+        default=0.0,
+        help_text="Ngưỡng tối thiểu tồn kho. Bắt buộc nhập.",
     )
     description = models.TextField(null=True, blank=True)
 

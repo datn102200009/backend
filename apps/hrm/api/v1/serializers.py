@@ -107,6 +107,8 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
 
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    cancelled_by_username = serializers.CharField(source="cancelled_by.username", read_only=True)
 
     class Meta:
         model = RewardRecord
@@ -122,6 +124,10 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
             "salary_slip_id",
             "status",
             "approved_by_id",
+            "approved_by_username",
+            "cancelled_by_id",
+            "cancelled_by_username",
+            "cancelled_at",
             "created_at",
         ]
 
@@ -133,6 +139,8 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
 
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    cancelled_by_username = serializers.CharField(source="cancelled_by.username", read_only=True)
 
     class Meta:
         model = DisciplineRecord
@@ -150,6 +158,10 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
             "file_url",
             "status",
             "approved_by_id",
+            "approved_by_username",
+            "cancelled_by_id",
+            "cancelled_by_username",
+            "cancelled_at",
             "created_at",
         ]
 
@@ -168,7 +180,6 @@ class EmployeeOutputSerializer(serializers.ModelSerializer):
             "department",
             "position_title",
             "salary_base",
-            "is_union_member",
             "email",
             "phone",
             "gender",
@@ -282,7 +293,6 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
             "allowance_amount",
             "reward_amount_total",
             "discipline_deduction_total",
-            "union_fee_2pct",
             "gross_pay",
             "deductions",
             "net_pay",
@@ -307,7 +317,6 @@ class SalarySlipOutputSerializer(serializers.ModelSerializer):
             ],
             "deductions": [
                 {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(obj.discipline_deduction_total or 0)},
-                {"name": "Phí công đoàn (2%)", "amount": float(obj.union_fee_2pct or 0)},
             ],
         }
 
@@ -345,7 +354,6 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
     department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    is_union_member = serializers.BooleanField(default=False)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
@@ -384,7 +392,6 @@ class EmployeeUpdateInputSerializer(serializers.Serializer):
     department = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     position_title = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
     salary_base = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
-    is_union_member = serializers.BooleanField(required=False)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     gender = serializers.ChoiceField(
@@ -540,9 +547,9 @@ class RewardRecordCreateInputSerializer(serializers.Serializer):
     reward_type = serializers.ChoiceField(
         choices=[
             ("performance_bonus", "Thưởng hiệu quả công việc"),
-            ("initiative", "Sáng kiến"),
+            ("initiative", "Thưởng sáng kiến"),
             ("holiday_bonus", "Thưởng lễ tết"),
-            ("other", "Khác"),
+            ("other", "Thưởng khác"),
         ]
     )
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
@@ -587,3 +594,92 @@ class SalarySlipBulkConfirmInputSerializer(serializers.Serializer):
         if not re.match(r"^\d{4}-\d{2}$", value):
             raise serializers.ValidationError("Kỳ lương phải ở định dạng YYYY-MM.")
         return value
+
+
+class ContractHandleExpirationInputSerializer(serializers.Serializer):
+    """
+    Serializer for contract expiration handling input.
+    """
+
+    action = serializers.ChoiceField(choices=["renew", "renew_with_salary_change", "terminate", "defer"])
+    new_salary_base = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    new_title = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class PartialSalarySlipInputSerializer(serializers.Serializer):
+    """
+    Serializer for creating a partial salary slip.
+    """
+
+    employee_id = serializers.UUIDField()
+    period_start = serializers.DateField()
+    period_end = serializers.DateField()
+    name = serializers.CharField(max_length=255)
+
+
+class EmploymentHistoryRejectInputSerializer(serializers.Serializer):
+    """
+    Serializer for rejecting an employment history proposal.
+    """
+
+    reason = serializers.CharField(required=True, min_length=1)
+
+
+class RewardRecordUpdateInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating reward record update.
+    """
+
+    reward_date = serializers.DateField(required=False)
+    reward_type = serializers.ChoiceField(
+        choices=[
+            ("performance_bonus", "Thưởng hiệu quả công việc"),
+            ("initiative", "Thưởng sáng kiến"),
+            ("holiday_bonus", "Thưởng lễ tết"),
+            ("other", "Thưởng khác"),
+        ],
+        required=False,
+    )
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    description = serializers.CharField(required=False)
+    salary_slip_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class DisciplineRecordUpdateInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating discipline record update.
+    """
+
+    incident_date = serializers.DateField(required=False)
+    discipline_date = serializers.DateField(required=False)
+    discipline_type = serializers.ChoiceField(
+        choices=[
+            ("reprimand", "Khiển trách"),
+            ("warning", "Cảnh cáo"),
+            ("salary_deduction", "Khấu trừ lương"),
+            ("termination", "Sa thải"),
+            ("other", "Khác"),
+        ],
+        required=False,
+    )
+    description = serializers.CharField(required=False)
+    penalty_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    salary_slip_id = serializers.UUIDField(required=False, allow_null=True)
+    file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+
+
+class CancelRecordInputSerializer(serializers.Serializer):
+    """
+    Serializer for cancelling a record.
+    Lý do huỷ phải từ 10 ký tự trở lên để đảm bảo audit trail.
+    """
+
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        min_length=10,
+        help_text="Lý do huỷ (tối thiểu 10 ký tự, nếu có)",
+    )

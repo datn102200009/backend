@@ -39,3 +39,59 @@ class TestFinanceAPIViews:
         url = reverse("cash-flow-list-create")
         response = client.get(url)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_purchase_invoice_list_filtering(self, authenticated_client):
+        from apps.purchasing.models import PurchaseInvoice
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory
+
+        PurchaseInvoiceFactory(status=PurchaseInvoice.Status.PAID)
+        PurchaseInvoiceFactory(status=PurchaseInvoice.Status.UNPAID)
+        PurchaseInvoiceFactory(status=PurchaseInvoice.Status.PARTIAL)
+
+        url = reverse("purchase-invoice-list")
+
+        # 1. Filter single status: status=paid
+        response = authenticated_client.get(url, {"status": "paid"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 1
+        assert response.data["results"][0]["status"] == "paid"
+
+        # 2. Filter multiple statuses: status=unpaid,partial
+        response = authenticated_client.get(url, {"status": "unpaid,partial"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 2
+        statuses = {res["status"] for res in response.data["results"]}
+        assert statuses == {"unpaid", "partial"}
+
+        # 3. No filter (all statuses)
+        response = authenticated_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 3
+
+    def test_sales_invoice_list_filtering(self, authenticated_client):
+        from apps.sales.models import SalesInvoice
+        from apps.sales.tests.factories import SalesInvoiceFactory
+
+        SalesInvoiceFactory(status=SalesInvoice.Status.PAID)
+        SalesInvoiceFactory(status=SalesInvoice.Status.UNPAID)
+        SalesInvoiceFactory(status=SalesInvoice.Status.PARTIAL)
+
+        url = reverse("sales-invoice-list")
+
+        # 1. Filter single status: status=paid
+        response = authenticated_client.get(url, {"status": "paid"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 1
+        assert response.data["results"][0]["status"] == "paid"
+
+        # 2. Filter multiple statuses: status=unpaid,partial
+        response = authenticated_client.get(url, {"status": "unpaid,partial"})
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 2
+        statuses = {res["status"] for res in response.data["results"]}
+        assert statuses == {"unpaid", "partial"}
+
+        # 3. No filter (all statuses)
+        response = authenticated_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 3

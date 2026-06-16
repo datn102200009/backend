@@ -144,3 +144,147 @@ class TestWorkOrderHook:
         qs = fixed_asset_list(status_filter=["idle"])
         assert qs.count() == 1
         assert qs.first().status == "idle"
+
+    def test_set_fixed_assets_blocks_asset_used_by_other_active_wo(self, user, setup_wo_and_assets):
+        """MỚI: 1 TSCĐ không thể gán cho WO khác nếu đang được gán cho WO active."""
+        from apps.inventory.tests.factories import BOMFactory, BOMItemFactory, ItemFactory, WarehouseFactory
+        from apps.master_data.models import WorkOrder
+
+        shared_asset = setup_wo_and_assets["asset_idle"]
+        wo_a = setup_wo_and_assets["work_order"]
+
+        # Tạo WO B
+        item = ItemFactory()
+        bom = BOMFactory(item=item, is_active=True)
+        BOMItemFactory(parent=bom, item=item, quantity=Decimal("1.00"))
+        src = WarehouseFactory()
+        prod = WarehouseFactory()
+        tgt = WarehouseFactory()
+        wo_b = WorkOrder.objects.create(
+            name="WO-B",
+            bom=bom,
+            production_item=item,
+            quantity=Decimal("5.00"),
+            source_warehouse=src,
+            target_warehouse=tgt,
+            production_warehouse=prod,
+            status="pending_approval",
+            planned_start_date=timezone.now().date(),
+        )
+
+        # Gán asset cho WO A (pending_approval)
+        work_order_set_fixed_assets(
+            user=user, work_order_id=str(wo_a.id), fixed_asset_ids=[str(shared_asset.id)], check_perm=False
+        )
+
+        # Giả lập WO A ở trạng thái active (in_progress) nhưng asset vẫn giữ trạng thái idle
+        wo_a.status = "in_progress"
+        wo_a.save()
+
+        # Gán asset cho WO B -> phải lỗi vì asset đang thuộc WO A (in_progress)
+        with pytest.raises(ValidationException, match="tối đa một lệnh sản xuất"):
+            work_order_set_fixed_assets(
+                user=user, work_order_id=str(wo_b.id), fixed_asset_ids=[str(shared_asset.id)], check_perm=False
+            )
+
+    def test_validate_fixed_assets_for_workorder_start_detects_conflict(self, user, setup_wo_and_assets):
+        """MỚI: validate_fixed_assets_for_workorder_start chặn approve WO B nếu asset bị WO A active giành trước (race condition)."""
+        from apps.inventory.models import StockLedger
+        from apps.inventory.tests.factories import BOMFactory, BOMItemFactory, ItemFactory, WarehouseFactory
+        from apps.master_data.models import WorkOrder
+
+        shared_asset = setup_wo_and_assets["asset_idle"]
+        wo_a = setup_wo_and_assets["work_order"]
+
+        # Tạo WO B
+        item = ItemFactory()
+        bom = BOMFactory(item=item, is_active=True)
+        BOMItemFactory(parent=bom, item=item, quantity=Decimal("1.00"))
+        src = WarehouseFactory()
+        prod = WarehouseFactory()
+        tgt = WarehouseFactory()
+        wo_b = WorkOrder.objects.create(
+            name="WO-B-Conflict",
+            bom=bom,
+            production_item=item,
+            quantity=Decimal("5.00"),
+            source_warehouse=src,
+            target_warehouse=tgt,
+            production_warehouse=prod,
+            status="pending_approval",
+            planned_start_date=timezone.now().date(),
+        )
+
+        # Tạo tồn kho cho nguyên liệu của WO B tại src
+        StockLedger.objects.create(
+            item=item,
+            warehouse=src,
+            actual_quantity=Decimal("100.00"),
+            posting_date=timezone.now(),
+            voucher_number="VOUCHER-STOCK-INIT-B",
+            voucher_type="Stock Adjustment",
+        )
+
+        # Cả hai WO đều gán chung asset (khi cả hai còn pending_approval, asset vẫn idle)
+        work_order_set_fixed_assets(
+            user=user, work_order_id=str(wo_a.id), fixed_asset_ids=[str(shared_asset.id)], check_perm=False
+        )
+        work_order_set_fixed_assets(
+            user=user, work_order_id=str(wo_b.id), fixed_asset_ids=[str(shared_asset.id)], check_perm=False
+        )
+
+        # WO A approve trước -> WO A thành active (in_progress), asset thành active
+        work_order_approve(user=user, work_order_id=str(wo_a.id))
+
+        # WO B approve sau -> phải bị chặn bởi validate_fixed_assets_for_workorder_start (status asset không còn idle)
+        with pytest.raises(ValidationException, match="chưa ở trạng thái 'idle'"):
+            work_order_approve(user=user, work_order_id=str(wo_b.id))
+
+        # Giả lập race condition: asset status bằng cách nào đó vẫn là idle nhưng WO A đã active
+        shared_asset.status = "idle"
+        shared_asset.save()
+
+        # WO B approve sau -> vẫn phải bị chặn do check xung đột WO active
+        with pytest.raises(ValidationException, match="Phát hiện xung đột: Một số tài sản đã được gán"):
+            work_order_approve(user=user, work_order_id=str(wo_b.id))
+
+    def test_set_fixed_assets_allows_reuse_after_wo_completed(self, user, setup_wo_and_assets):
+        """MỚI: Sau khi WO hoàn thành, asset có thể gán cho WO khác."""
+        asset = setup_wo_and_assets["asset_idle"]
+        wo = setup_wo_and_assets["work_order"]
+
+        # Gán + approve + hoàn thành WO A
+        work_order_set_fixed_assets(
+            user=user, work_order_id=str(wo.id), fixed_asset_ids=[str(asset.id)], check_perm=False
+        )
+        wo = work_order_approve(user=user, work_order_id=str(wo.id))
+        wo.produced_qty = wo.quantity
+        wo.save()
+        work_order_complete(user=user, work_order_id=str(wo.id))
+
+        # Tạo WO B
+        from apps.inventory.tests.factories import BOMFactory, BOMItemFactory, ItemFactory, WarehouseFactory
+        from apps.master_data.models import WorkOrder
+
+        item = ItemFactory()
+        bom = BOMFactory(item=item, is_active=True)
+        BOMItemFactory(parent=bom, item=item, quantity=Decimal("1.00"))
+        src = WarehouseFactory()
+        prod = WarehouseFactory()
+        tgt = WarehouseFactory()
+        wo_b = WorkOrder.objects.create(
+            name="WO-B-Reuse",
+            bom=bom,
+            production_item=item,
+            quantity=Decimal("5.00"),
+            source_warehouse=src,
+            target_warehouse=tgt,
+            production_warehouse=prod,
+            status="pending_approval",
+            planned_start_date=timezone.now().date(),
+        )
+
+        # Gán lại asset cho WO B — phải OK
+        work_order_set_fixed_assets(
+            user=user, work_order_id=str(wo_b.id), fixed_asset_ids=[str(asset.id)], check_perm=False
+        )

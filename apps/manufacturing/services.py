@@ -279,6 +279,26 @@ def bom_delete(*, user: User, bom_id: str) -> None:
 
 # ======================== Work Order (Lệnh sản xuất) ========================
 
+WO_ACTIVE_STATUSES_FOR_ASSET = ("in_progress", "pending_production_complete")
+
+
+def _get_assets_currently_assigned_to_other_wos(
+    *, asset_ids: List[str], exclude_work_order_id: Optional[str] = None
+) -> List[Any]:
+    """
+    Trả về các link WorkOrderFixedAsset mà asset đang bị gán cho WO khác
+    (đang ở trạng thái active). Dùng để validate trước khi gán.
+    """
+    from apps.master_data.models import WorkOrderFixedAsset
+
+    qs = WorkOrderFixedAsset.objects.select_related("work_order", "fixed_asset").filter(
+        fixed_asset_id__in=asset_ids,
+        work_order__status__in=WO_ACTIVE_STATUSES_FOR_ASSET,
+    )
+    if exclude_work_order_id:
+        qs = qs.exclude(work_order_id=exclude_work_order_id)
+    return list(qs)
+
 
 @transaction.atomic
 def work_order_set_fixed_assets(
@@ -321,6 +341,22 @@ def work_order_set_fixed_assets(
                 f"Tài sản '{asset.asset_code}' không dùng phương pháp UOP. "
                 f"Chỉ gán được tài sản có phương pháp khấu hao sản lượng (UOP)."
             )
+
+    # === MỚI: Check asset có đang bị gán cho WO active khác không ===
+    conflicting_links = _get_assets_currently_assigned_to_other_wos(
+        asset_ids=fixed_asset_ids,
+        exclude_work_order_id=str(work_order.id),
+    )
+    if conflicting_links:
+        details = "\n".join(
+            f"- [{link.fixed_asset.asset_code}] {link.fixed_asset.asset_name} "
+            f"(đang gán cho WO '{link.work_order.name}' - trạng thái: {link.work_order.status})"
+            for link in conflicting_links
+        )
+        raise ValidationException(
+            "Một tài sản cố định chỉ có thể được gán cho tối đa một lệnh sản xuất "
+            f"đang hoạt động. Vui lòng kiểm tra các tài sản sau:\n{details}"
+        )
 
     # Replace all links
     work_order.fixed_asset_links.all().delete()

@@ -92,6 +92,13 @@ WIDGETS_REGISTRY = {
         "title": "Theo dõi khấu hao tài sản",
         "quick_links": ["/finance/fixed-assets"],
     },
+    "finance_pending_cashflow_approval": {
+        "permission": "finance.approve_cash_flow",
+        "type": "kpi_list",
+        "size": "2x2",
+        "title": "Lệnh Duyệt Giao Dịch",
+        "quick_links": ["/finance?tab=cashflow&status=pending_approval"],
+    },
     "hrm_payroll_lifecycle_status": {
         "permission": "finance.view_salaryslip",
         "type": "kpi_list",

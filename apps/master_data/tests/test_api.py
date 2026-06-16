@@ -44,7 +44,11 @@ class TestItemAPI:
 
     def test_create_item(self, mock_check, auth_client):
         url = "/api/v1/master-data/items/create/"
-        data = {"item_code": "API-001", "item_name": "API Item"}
+        data = {
+            "item_code": "API-001",
+            "item_name": "API Item",
+            "minimum_threshold": "15.0",
+        }
         response = auth_client.post(url, data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -54,7 +58,10 @@ class TestItemAPI:
     def test_update_item(self, mock_check, auth_client):
         item = ItemFactory(item_code="API-UPD-001", item_name="Old")
         url = f"/api/v1/master-data/items/{item.item_code}/update/"
-        data = {"item_name": "New"}
+        data = {
+            "item_name": "New",
+            "minimum_threshold": "25.0",
+        }
 
         response = auth_client.put(url, data, format="json")
 

@@ -1,5 +1,11 @@
 from django.urls import path
 
+from .salary_slip_views import (
+    SalarySlipApproveAPIView,
+    SalarySlipBulkApprovePayAPIView,
+    SalarySlipPayAPIView,
+    SalarySlipRejectAPIView,
+)
 from .views import (
     CashFlowApproveAPIView,
     CashFlowDetailAPIView,
@@ -40,4 +46,11 @@ urlpatterns = [
     path("invoices/sales/", SalesInvoiceListAPIView.as_view(), name="sales-invoice-list"),
     path("invoices/sales/<uuid:pk>/", SalesInvoiceDetailAPIView.as_view(), name="sales-invoice-detail"),
     path("invoices/sales/<uuid:pk>/collect/", SalesInvoiceCollectAPIView.as_view(), name="sales-invoice-collect"),
+    # Salary Slips (Finance Approval & Payment)
+    path(
+        "salary-slips/bulk-approve-pay/", SalarySlipBulkApprovePayAPIView.as_view(), name="salary-slip-bulk-approve-pay"
+    ),
+    path("salary-slips/<uuid:id>/approve/", SalarySlipApproveAPIView.as_view(), name="salary-slip-approve"),
+    path("salary-slips/<uuid:id>/reject/", SalarySlipRejectAPIView.as_view(), name="salary-slip-reject"),
+    path("salary-slips/<uuid:id>/pay/", SalarySlipPayAPIView.as_view(), name="salary-slip-pay"),
 ]

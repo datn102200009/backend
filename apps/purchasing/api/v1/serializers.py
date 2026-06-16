@@ -152,17 +152,52 @@ class ShipmentSerializer(serializers.ModelSerializer):
         po = obj.purchase_order
         if not po:
             return []
-        return [
-            {
-                "id": str(line.id),
-                "item_id": str(line.item.id),
-                "item_code": line.item.item_code,
-                "item_name": line.item.item_name,
-                "quantity": str(line.quantity),
-                "unit": line.item.stock_uom.name if line.item.stock_uom else "",
-            }
-            for line in po.lines.all()
-        ]
+
+        # Tính số lượng đã nhận trước đó (loại trừ chính shipment hiện tại nếu là draft/inspecting)
+        from decimal import Decimal
+
+        from django.db.models import Sum
+
+        from apps.inventory.models import StockEntryDetail
+
+        # Tổng đã nhận từ TẤT CẢ các shipment của PO này (kể cả shipment hiện tại nếu đã posted)
+        received_qs = (
+            StockEntryDetail.objects.filter(parent__purchase_order=po, parent__status="posted")
+            .values("item_id")
+            .annotate(total_qty=Sum("quantity"))
+        )
+        received_map = {str(r["item_id"]): r["total_qty"] for r in received_qs}
+
+        # Tính số lượng đã nhận trong shipment hiện tại (chỉ áp dụng khi shipment ở trạng thái inspecting/draft)
+        current_received_map = {}
+        if obj.status in ["draft", "inspecting"]:
+            for se in obj.stock_entries.all():
+                for d in se.details.all():
+                    current_received_map[str(d.item_id)] = (
+                        current_received_map.get(str(d.item_id), Decimal("0.00")) + d.quantity
+                    )
+
+        result = []
+        for line in po.lines.all():
+            item_id_str = str(line.item.id)
+            total_received = Decimal(str(received_map.get(item_id_str, "0")))
+            # Trừ phần đã nhận trong chính shipment hiện tại (vì user đang sửa trên UI)
+            already_in_other_shipments = total_received - Decimal(str(current_received_map.get(item_id_str, "0")))
+            remaining = max(Decimal("0.00"), line.quantity - already_in_other_shipments)
+
+            result.append(
+                {
+                    "id": str(line.id),
+                    "item_id": item_id_str,
+                    "item_code": line.item.item_code,
+                    "item_name": line.item.item_name,
+                    "quantity": str(line.quantity),  # số lượng đặt gốc (giữ cho audit)
+                    "remaining_quantity": str(remaining),  # SL CÒN LẠI - dùng để hiển thị chính
+                    "received_quantity": str(already_in_other_shipments),  # ĐÃ NHẬN TRƯỚC - hiển thị phụ
+                    "unit": line.item.stock_uom.name if line.item.stock_uom else "",
+                }
+            )
+        return result
 
 
 class ShipmentDetailCompleteSerializer(serializers.Serializer):

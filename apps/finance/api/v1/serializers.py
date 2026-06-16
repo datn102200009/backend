@@ -113,7 +113,6 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             "designed_capacity",
             "accumulated_depreciation",
             "remaining_value",
-            "department",
             "is_active",
             "status",
             "purchase_date",
@@ -321,5 +320,24 @@ class CollectInvoiceInputSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
     payment_method = serializers.ChoiceField(
         choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản ngân hàng")],
+        default="bank_transfer",
+    )
+
+
+class SalarySlipPaymentInputSerializer(serializers.Serializer):
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
+        default="bank_transfer",
+    )
+
+
+class SalarySlipRejectInputSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, required=True)
+
+
+class SalarySlipBulkApprovePayInputSerializer(serializers.Serializer):
+    salary_period = serializers.CharField(max_length=10, required=True)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
         default="bank_transfer",
     )

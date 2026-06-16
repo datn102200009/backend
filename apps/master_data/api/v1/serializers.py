@@ -80,7 +80,7 @@ class ItemCreateInputSerializer(serializers.Serializer):
     is_import = serializers.BooleanField(default=False)
     status = serializers.ChoiceField(choices=["active", "inactive", "discontinued"], default="active")
     minimum_threshold = serializers.DecimalField(
-        max_digits=18, decimal_places=3, required=False, allow_null=True, min_value=0
+        max_digits=18, decimal_places=3, required=True, allow_null=False, min_value=0
     )
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
@@ -101,6 +101,6 @@ class ItemUpdateInputSerializer(serializers.Serializer):
     is_import = serializers.BooleanField(required=False)
     status = serializers.ChoiceField(choices=["active", "inactive", "discontinued"], required=False)
     minimum_threshold = serializers.DecimalField(
-        max_digits=18, decimal_places=3, required=False, allow_null=True, min_value=0
+        max_digits=18, decimal_places=3, required=True, allow_null=False, min_value=0
     )
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)

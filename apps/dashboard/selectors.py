@@ -6,7 +6,7 @@ from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import TruncDate, TruncWeek
 from django.utils import timezone
 
-from apps.finance.models import FixedAsset, FixedAssetDepreciationLog, SalarySlip
+from apps.finance.models import CashFlowTransaction, FixedAsset, FixedAssetDepreciationLog, SalarySlip
 from apps.hrm.models import Attendance, EmploymentContract, LeaveRequest
 from apps.inventory.models import StockEntry, StockLedger
 from apps.master_data.models import BOMItem, Employee, Item, Warehouse, WorkOrder
@@ -917,16 +917,6 @@ def get_finance_depreciation_status():
                     }
                 )
 
-            if asset.depreciation_method == "unit_of_production":
-                if len(asset.work_order_links.all()) == 0:
-                    alerts.append(
-                        {
-                            "category": "uop_unassigned",
-                            "level": "warning",
-                            "reason": "Tài sản UOP chưa được gán cho lệnh sản xuất nào.",
-                        }
-                    )
-
         items_list.append(
             {
                 "id": str(asset.id),
@@ -972,11 +962,11 @@ def get_hrm_payroll_lifecycle_status():
         period_groups[period].append(row)
 
     pending_periods = []
-    status_weights = {"draft": 0, "calculated": 1, "submitted": 2, "approved": 3}
+    status_weights = {"draft": 0, "calculated": 1, "pending_finance_review": 2, "approved": 3}
     status_labels = {
         "draft": "Bản nháp",
         "calculated": "Đã tính toán",
-        "submitted": "Chờ phê duyệt",
+        "pending_finance_review": "Chờ phê duyệt",
         "approved": "Chờ thanh toán",
     }
 
@@ -1198,6 +1188,48 @@ def get_manufacturing_pending_completion():
     }
 
 
+def get_finance_pending_cashflow_approval():
+    """
+    Widget: Lệnh Duyệt Giao Dịch (CashFlow pending_approval).
+    Tối ưu: chỉ lấy 5 dòng đầu, đếm tổng trong queryset count().
+
+    PERFORMANCE NOTE:
+    Đã select_related các FK sau: purchase_order, sales_order,
+    purchase_invoice, sales_invoice, fixed_asset.
+    Khi mở rộng payload, cần update select_related tương ứng để tránh N+1.
+    Ví dụ: nếu cần tx.purchase_order.vendor.name, cần thêm "purchase_order__vendor".
+    """
+    qs = (
+        CashFlowTransaction.objects.filter(status="pending_approval")
+        .select_related(
+            "purchase_order",
+            "sales_order",
+            "purchase_invoice",
+            "sales_invoice",
+            "fixed_asset",
+        )
+        .order_by("-payment_date", "-created_at", "id")
+    )
+    total_count = qs.count()
+    items = [
+        {
+            "id": str(tx.id),
+            "name": tx.name,
+            "payment_type": tx.payment_type,
+            "amount": str(tx.amount),
+            "payment_date": tx.payment_date.isoformat() if tx.payment_date else None,
+            "category": tx.category or "",
+            "payment_method": tx.payment_method,
+            "purchase_order_id": str(tx.purchase_order_id) if tx.purchase_order_id else None,
+            "sales_order_id": str(tx.sales_order_id) if tx.sales_order_id else None,
+            "fixed_asset_code": tx.fixed_asset.asset_code if tx.fixed_asset else None,
+            "created_at": tx.created_at.isoformat(),
+        }
+        for tx in qs[:5]
+    ]
+    return {"total_count": total_count, "top_items": items}
+
+
 # Map widget_code to selector function
 SELECTORS_MAP = {
     "sales_today_revenue": get_sales_today_revenue,
@@ -1220,4 +1252,5 @@ SELECTORS_MAP = {
     "manufacturing_pending_wo_approval": get_manufacturing_pending_wo_approval,
     "manufacturing_active_wos": get_manufacturing_active_wos,
     "manufacturing_pending_completion": get_manufacturing_pending_completion,
+    "finance_pending_cashflow_approval": get_finance_pending_cashflow_approval,
 }

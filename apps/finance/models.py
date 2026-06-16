@@ -17,7 +17,6 @@ class SalarySlip(BaseModel):
     allowance_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     reward_amount_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     discipline_deduction_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, default=0, null=True, blank=True)
     gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     net_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -28,11 +27,11 @@ class SalarySlip(BaseModel):
         blank=True,
     )
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=[
             ("draft", "Draft"),
             ("calculated", "Calculated"),
-            ("submitted", "Submitted"),
+            ("pending_finance_review", "Pending Finance Review"),
             ("approved", "Approved"),
             ("paid", "Paid"),
         ],
@@ -210,7 +209,6 @@ class FixedAsset(BaseModel):
     remaining_life_months = models.IntegerField(null=True, blank=True)
     designed_capacity = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     accumulated_depreciation = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
-    department = models.CharField(max_length=100, null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=[
