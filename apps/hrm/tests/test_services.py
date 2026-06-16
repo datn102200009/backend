@@ -12,7 +12,6 @@ from apps.hrm.models import (
     DisciplineRecord,
     EmployeeDocument,
     EmploymentContract,
-    EmploymentHistory,
     LeaveRequest,
     RewardRecord,
 )
@@ -20,15 +19,13 @@ from apps.hrm.services import (
     _calc_termination_compensation,
     attendance_batch_record,
     contract_create_or_renew,
-    contract_handle_expiration,
+    contract_renew,
     contract_terminate,
     create_partial_salary_slip,
     discipline_record_approve,
     discipline_record_create,
-    employee_create_with_user,
+    employee_create_with_contract,
     employee_update,
-    employee_update_salary_or_title,
-    employment_history_reject,
     leave_request_approve,
     leave_request_create,
     payroll_bulk_calculate,
@@ -45,7 +42,6 @@ from apps.hrm.tests.factories import (
     DisciplineRecordFactory,
     EmployeeFactory,
     EmploymentContractFactory,
-    EmploymentHistoryFactory,
     LeaveRequestFactory,
     RewardRecordFactory,
     SalarySlipFactory,
@@ -67,62 +63,74 @@ class TestEmployeeServices:
     def test_employee_create_without_user(self):
         # Arrange
         data = {
-            "employee_id": "EMP9999",
+            "employee_id": "NV9999",
             "full_name": "Nguyen Van A",
             "email": "vna@example.com",
             "phone": "0123456789",
             "gender": "male",
-            "department": "IT",
-            "position_title": "Developer",
-            "salary_base": Decimal("15000000.00"),
             "create_user": False,
+        }
+        contract_data = {
+            "contract_no": "HDLD-NV9999",
+            "contract_type": "definite_term",
+            "start_date": date(2026, 1, 1),
+            "end_date": date(2027, 1, 1),
+            "salary_base": Decimal("15000000.00"),
         }
 
         # Act
-        employee = employee_create_with_user(data=data, creator=None)
+        employee, contract = employee_create_with_contract(data=data, contract_data=contract_data, creator=None)
 
         # Assert
         assert employee is not None
-        assert employee.employee_id == "EMP9999"
+        assert employee.employee_id == "NV9999"
         assert employee.full_name == "Nguyen Van A"
         assert employee.employment_status == "active"
-        assert not User.objects.filter(employee_id="EMP9999").exists()
+        assert contract is not None
+        assert contract.contract_no == "HDLD-NV9999"
+        assert not User.objects.filter(employee_id="NV9999").exists()
 
         # Verify audit log
         log = SystemLog.objects.filter(table_name="employee", record_id=str(employee.id)).first()
         assert log is not None
         assert log.action == "create"
-        assert log.new_value["employee_id"] == "EMP9999"
+        assert log.new_value["employee_id"] == "NV9999"
         assert log.new_value["full_name"] == "Nguyen Van A"
 
     def test_employee_create_with_user(self):
         # Arrange
         role = RoleFactory(name="Employee")
         data = {
-            "employee_id": "EMP8888",
+            "employee_id": "NV8888",
             "full_name": "Tran Thi B",
             "email": "ttb@example.com",
             "phone": "0987654321",
             "gender": "female",
-            "department": "Sales",
-            "position_title": "Sales Agent",
-            "salary_base": Decimal("12000000.00"),
             "create_user": True,
             "username": "tranthib",
             "password": "SecurePassword123",
             "role_id": str(role.id),
         }
+        contract_data = {
+            "contract_no": "HDLD-NV8888",
+            "contract_type": "definite_term",
+            "start_date": date(2025, 1, 1),
+            "end_date": date(2026, 1, 1),
+            "salary_base": Decimal("12000000.00"),
+        }
         admin = UserFactory(username="admin_creator")
 
         # Act
-        employee = employee_create_with_user(data=data, creator=admin)
+        employee, contract = employee_create_with_contract(data=data, contract_data=contract_data, creator=admin)
 
         # Assert
         assert employee is not None
-        assert employee.employee_id == "EMP8888"
+        assert employee.employee_id == "NV8888"
+        assert contract is not None
+        assert contract.contract_no == "HDLD-NV8888"
 
         # Verify User was created and linked
-        user = User.objects.filter(employee_id="EMP8888").first()
+        user = User.objects.filter(employee_id="NV8888").first()
         assert user is not None
         assert user.username == "tranthib"
         assert user.email == "ttb@example.com"
@@ -137,6 +145,47 @@ class TestEmployeeServices:
         user_log = SystemLog.objects.filter(table_name="user", record_id=str(user.id), user=admin).first()
         assert user_log is not None
         assert user_log.action == "create"
+
+    def test_employee_create_with_contract(self):
+        # Arrange
+        data = {
+            "employee_id": "NV7777",
+            "full_name": "Le Van C",
+            "email": "lvc@example.com",
+            "phone": "0912345678",
+            "gender": "male",
+            "create_user": False,
+        }
+        contract_data = {
+            "contract_no": "HDLD-2026-NV7",
+            "contract_type": "definite_term",
+            "start_date": date(2026, 6, 16),
+            "end_date": date(2027, 6, 16),
+            "note": "Hợp đồng lao động mẫu",
+            "file_url": "http://example.com/lvc.pdf",
+            "salary_base": Decimal("10000000.00"),
+        }
+        admin = UserFactory(username="admin_contract_creator")
+
+        # Act
+        employee, contract = employee_create_with_contract(data=data, contract_data=contract_data, creator=admin)
+
+        # Assert
+        assert employee is not None
+        assert employee.employee_id == "NV7777"
+        assert contract is not None
+        assert contract.contract_no == "HDLD-2026-NV7"
+        assert contract.employee == employee
+        assert contract.contract_type == "definite_term"
+        assert contract.status == "active"
+
+        # Verify audit logs
+        emp_log = SystemLog.objects.filter(table_name="employee", record_id=str(employee.id), user=admin).first()
+        assert emp_log is not None
+        contract_log = SystemLog.objects.filter(
+            table_name="employment_contract", record_id=str(contract.id), user=admin
+        ).first()
+        assert contract_log is not None
 
     def test_employee_update_basic_info(self):
         # Arrange
@@ -287,141 +336,6 @@ class TestContractServices:
         ).first()
         assert user_log is not None
         assert user_log.new_value["is_active"] is False
-
-
-@pytest.mark.django_db
-class TestEmploymentHistoryServices:
-
-    def test_update_salary_creates_history_and_logs(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP1111", salary_base=Decimal("10000000.00"))
-        admin = UserFactory(username="admin_history")
-        change_data = {
-            "change_type": "salary_change",
-            "new_salary_base": Decimal("13000000.00"),
-            "effective_date": date(2026, 6, 1),
-            "reason": "Điều chỉnh lương cơ bản theo hiệu suất",
-        }
-
-        # Act
-        history = employee_update_salary_or_title(
-            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
-        )
-
-        # Assert before approval
-        employee.refresh_from_db()
-        assert employee.salary_base == Decimal("10000000.00")
-
-        # Approve the proposal
-        from apps.hrm.services import employment_history_approve
-
-        employment_history_approve(user=admin, history_id=str(history.id))
-
-        employee.refresh_from_db()
-        assert employee.salary_base == Decimal("13000000.00")
-
-        # Verify EmploymentHistory details
-        history.refresh_from_db()
-        assert history.change_type == "salary_change"
-        assert history.old_salary_base == Decimal("10000000.00")
-        assert history.new_salary_base == Decimal("13000000.00")
-        assert history.effective_date == date(2026, 6, 1)
-        assert history.reason == "Điều chỉnh lương cơ bản theo hiệu suất"
-
-        # Verify SystemLog was written
-        log = SystemLog.objects.filter(
-            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
-        ).first()
-        assert log is not None
-        assert log.action == "create"
-        assert Decimal(str(log.new_value["new_salary_base"])) == Decimal("13000000.00")
-
-        # Verify approval SystemLog
-        approve_log = SystemLog.objects.filter(
-            table_name="employment_history", record_id=str(history.id), user=admin, action="approve"
-        ).first()
-        assert approve_log is not None
-
-    def test_update_title_creates_history_and_logs(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP2222", position_title="Junior Developer")
-        admin = UserFactory(username="admin_history_2")
-        change_data = {
-            "change_type": "title_change",
-            "new_title": "Senior Developer",
-            "effective_date": date(2026, 6, 1),
-            "reason": "Thăng chức sau kỳ đánh giá",
-        }
-
-        # Act
-        history = employee_update_salary_or_title(
-            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
-        )
-
-        # Assert before approval
-        employee.refresh_from_db()
-        assert employee.position_title == "Junior Developer"
-
-        # Approve the proposal
-        from apps.hrm.services import employment_history_approve
-
-        employment_history_approve(user=admin, history_id=str(history.id))
-
-        employee.refresh_from_db()
-        assert employee.position_title == "Senior Developer"
-
-        # Verify EmploymentHistory
-        history.refresh_from_db()
-        assert history.change_type == "title_change"
-        assert history.old_title == "Junior Developer"
-        assert history.new_title == "Senior Developer"
-        assert history.effective_date == date(2026, 6, 1)
-
-        # Verify SystemLog
-        log = SystemLog.objects.filter(
-            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
-        ).first()
-        assert log is not None
-
-    def test_update_department_creates_history_and_logs(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP3333", department="IT")
-        admin = UserFactory(username="admin_history_3")
-        change_data = {
-            "change_type": "department_transfer",
-            "new_department": "R&D",
-            "effective_date": date(2026, 6, 1),
-            "reason": "Điều chuyển nhân sự dự án mới",
-        }
-
-        # Act
-        history = employee_update_salary_or_title(
-            employee_id=employee.id, change_data=change_data, approved_by_user_id=admin.id
-        )
-
-        # Assert before approval
-        employee.refresh_from_db()
-        assert employee.department == "IT"
-
-        # Approve the proposal
-        from apps.hrm.services import employment_history_approve
-
-        employment_history_approve(user=admin, history_id=str(history.id))
-
-        employee.refresh_from_db()
-        assert employee.department == "R&D"
-
-        # Verify EmploymentHistory
-        history.refresh_from_db()
-        assert history.change_type == "department_transfer"
-        assert history.old_department == "IT"
-        assert history.new_department == "R&D"
-
-        # Verify SystemLog
-        log = SystemLog.objects.filter(
-            table_name="employment_history", record_id=str(history.id), user=admin, action="create"
-        ).first()
-        assert log is not None
 
 
 @pytest.mark.django_db
@@ -919,10 +833,10 @@ class TestPayrollAndRewardDisciplineServices:
 
     def test_contract_terminate_lawful_resignation_with_bhxh(self):
         # Arrange
-        employee = EmployeeFactory(
-            employee_id="EMP9003", salary_base=Decimal("13000000.00"), employment_status="active"
+        employee = EmployeeFactory(employee_id="NV9003", salary_base__create_contract=False, employment_status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-9003", status="active", salary_base=Decimal("13000000.00")
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9003", status="active")
         admin = UserFactory(username="admin_test_3")
 
         # Chấm công trong tháng 5/2026 từ ngày 1 đến 15 (15 ngày công thực tế)
@@ -969,10 +883,10 @@ class TestPayrollAndRewardDisciplineServices:
 
     def test_contract_terminate_unlawful_resignation_without_bhxh(self):
         # Arrange
-        employee = EmployeeFactory(
-            employee_id="EMP9004", salary_base=Decimal("26000000.00"), employment_status="active"
+        employee = EmployeeFactory(employee_id="NV9004", salary_base__create_contract=False, employment_status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-9004", status="active", salary_base=Decimal("26000000.00")
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-9004", status="active")
         admin = UserFactory(username="admin_test_4")
 
         # Chấm công trong tháng 5/2026 từ ngày 1 đến 10 (10 ngày công thực tế)
@@ -1054,52 +968,6 @@ class TestHrmPermissionAndBypass:
                 approved_by_user_id=str(approver.id),
             )
         assert "không có quyền: hrm.change_leaverequest" in str(exc_info.value)
-
-    def test_employee_update_salary_or_title_fails_if_approver_does_not_exist(self):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP9986")
-        change_data = {
-            "change_type": "salary_change",
-            "new_salary_base": Decimal("13000000.00"),
-            "effective_date": date(2026, 6, 1),
-            "reason": "Tăng lương",
-        }
-
-        # Act & Assert
-        from apps.common.xlib.exceptions import ValidationException
-
-        with pytest.raises(ValidationException) as exc_info:
-            employee_update_salary_or_title(
-                employee_id=employee.id,
-                change_data=change_data,
-                approved_by_user_id="00000000-0000-0000-0000-000000000000",
-            )
-        assert "Người đề xuất không tồn tại" in str(exc_info.value)
-
-    def test_employee_update_salary_or_title_fails_if_no_permission(self, mock_check_permission):
-        # Arrange
-        employee = EmployeeFactory(employee_id="EMP9985")
-        approver = UserFactory(username="no_permission_approver_2")
-        change_data = {
-            "change_type": "salary_change",
-            "new_salary_base": Decimal("13000000.00"),
-            "effective_date": date(2026, 6, 1),
-            "reason": "Tăng lương",
-        }
-
-        # Mock check_permission raise PermissionException
-        from apps.common.xlib.exceptions import PermissionException
-
-        mock_check_permission.side_effect = PermissionException("Người dùng không có quyền: hrm.change_employee")
-
-        # Act & Assert
-        with pytest.raises(PermissionException) as exc_info:
-            employee_update_salary_or_title(
-                employee_id=employee.id,
-                change_data=change_data,
-                approved_by_user_id=str(approver.id),
-            )
-        assert "không có quyền: hrm.change_employee" in str(exc_info.value)
 
     def test_payroll_calculate_salary_with_public_holiday(self):
         from apps.hrm.models import PublicHoliday
@@ -1544,11 +1412,13 @@ class TestHrmCompensatoryHolidayRules:
 
         # Arrange
         employee = EmployeeFactory(
-            employee_id="EMP8806",
-            salary_base=Decimal("10400000.00"),  # 400.000 / day, 50.000 / hour
+            employee_id="NV8806",
+            salary_base__create_contract=False,
             employment_status="active",
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-8806", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-8806", status="active", salary_base=Decimal("10400000.00")
+        )
         admin = UserFactory(username="admin_comp_term")
 
         # May 3rd, 2026 is Sunday, May 4th is compensatory holiday
@@ -1696,14 +1566,21 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
 
         # Arrange
         employee = EmployeeFactory(
-            employee_id="EMP_TIMELINE_2", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="NV_TIMELINE_2", salary_base=Decimal("10000000.00"), employment_status="active"
         )
-        # Thay đổi lương có hiệu lực ngày 16
-        EmploymentHistoryFactory(
+        # Update default contract to end on June 15
+        default_contract = employee.contracts.first()
+        default_contract.end_date = date(2026, 6, 15)
+        default_contract.save()
+
+        # Create renewed contract starting June 16
+        EmploymentContractFactory(
             employee=employee,
-            new_salary_base=Decimal("12000000.00"),
-            effective_date=date(2026, 6, 16),
-            status="approved",
+            contract_no="HDLD-NV-TIMELINE-2-NEW",
+            start_date=date(2026, 6, 16),
+            end_date=date(2026, 12, 31),
+            status="active",
+            salary_base=Decimal("12000000.00"),
         )
         period_start = date(2026, 6, 1)
         period_end = date(2026, 6, 30)
@@ -1721,21 +1598,27 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
 
         # Arrange
         employee = EmployeeFactory(
-            employee_id="EMP_TIMELINE_3", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="NV_TIMELINE_3", salary_base=Decimal("10000000.00"), employment_status="active"
         )
-        # Thay đổi lương 1: ngày 10
-        EmploymentHistoryFactory(
+        default_contract = employee.contracts.first()
+        default_contract.end_date = date(2026, 6, 9)
+        default_contract.save()
+
+        EmploymentContractFactory(
             employee=employee,
-            new_salary_base=Decimal("12000000.00"),
-            effective_date=date(2026, 6, 10),
-            status="approved",
+            contract_no="HDLD-TIMELINE-3-C2",
+            start_date=date(2026, 6, 10),
+            end_date=date(2026, 6, 19),
+            status="active",
+            salary_base=Decimal("12000000.00"),
         )
-        # Thay đổi lương 2: ngày 20
-        EmploymentHistoryFactory(
+        EmploymentContractFactory(
             employee=employee,
-            new_salary_base=Decimal("15000000.00"),
-            effective_date=date(2026, 6, 20),
-            status="approved",
+            contract_no="HDLD-TIMELINE-3-C3",
+            start_date=date(2026, 6, 20),
+            end_date=date(2026, 12, 31),
+            status="active",
+            salary_base=Decimal("15000000.00"),
         )
         period_start = date(2026, 6, 1)
         period_end = date(2026, 6, 30)
@@ -1761,17 +1644,25 @@ class TestPayrollPeriodConstraintsAndEmployeeProtection:
         # Arrange
         # Tạo nhân viên với hợp đồng active
         employee = EmployeeFactory(
-            employee_id="EMP_SEG_1", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="NV_SEG_1", salary_base__create_contract=False, employment_status="active"
         )
+        # Contract 1: June 1 to June 15
         EmploymentContractFactory(
-            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 12, 31), status="active"
-        )
-        # Tăng lương ngày 16
-        EmploymentHistoryFactory(
             employee=employee,
-            new_salary_base=Decimal("12000000.00"),
-            effective_date=date(2026, 6, 16),
-            status="approved",
+            contract_no="HDLD-SEG-1",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 15),
+            status="active",
+            salary_base=Decimal("10000000.00"),
+        )
+        # Contract 2: June 16 to Dec 31
+        EmploymentContractFactory(
+            employee=employee,
+            contract_no="HDLD-SEG-2",
+            start_date=date(2026, 6, 16),
+            end_date=date(2026, 12, 31),
+            status="active",
+            salary_base=Decimal("12000000.00"),
         )
 
         admin = UserFactory(username="admin_seg_test")
@@ -1853,9 +1744,9 @@ class TestPR4Services:
             )
         assert "phải >= start_date HĐLĐ cũ" in str(exc_info.value)
 
-    def test_contract_handle_expiration_renew(self):
+    def test_contract_renew_basic(self):
         employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
-        admin = UserFactory(username="admin_pr4_test2")
+        admin = UserFactory(username="admin_pr4_renew1")
         contract = EmploymentContractFactory(
             employee=employee,
             contract_no="CON-EXP-1",
@@ -1864,87 +1755,56 @@ class TestPR4Services:
             status="active",
         )
 
-        result = contract_handle_expiration(
+        result = contract_renew(
             contract_id=str(contract.id),
-            action="renew",
-            handler=admin,
+            new_contract_no="CON-EXP-1-RENEW",
+            new_contract_type="definite_term",
+            start_date=date(2026, 6, 1),
+            renewer=admin,
         )
 
-        assert result["contract"] is not None
-        assert result["contract"].contract_no == "CON-EXP-1-RENEW"
-        assert result["contract"].start_date == date(2026, 6, 1)
-        assert result["history"] is None
+        new_contract = result["contract"]
 
-    def test_contract_handle_expiration_renew_with_salary_change(self):
-        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
-        admin = UserFactory(username="admin_pr4_test3")
+        assert new_contract is not None
+        assert new_contract.contract_no == "CON-EXP-1-RENEW"
+        assert new_contract.start_date == date(2026, 6, 1)
+        assert new_contract.status == "active"
+
+        # Verify old contract is expired
+        contract.refresh_from_db()
+        assert contract.status == "expired"
+
+    def test_contract_renew_with_salary_change(self):
+        employee = EmployeeFactory(salary_base__create_contract=False)
+        admin = UserFactory(username="admin_pr4_renew2")
         contract = EmploymentContractFactory(
             employee=employee,
             contract_no="CON-EXP-2",
             start_date=date(2026, 5, 1),
             end_date=date(2026, 5, 31),
             status="active",
+            salary_base=Decimal("10000000.00"),
         )
 
-        result = contract_handle_expiration(
+        result = contract_renew(
             contract_id=str(contract.id),
-            action="renew_with_salary_change",
+            new_contract_no="CON-EXP-2-RENEW",
+            new_contract_type="definite_term",
+            start_date=date(2026, 6, 1),
             new_salary_base=Decimal("12000000.00"),
-            new_title="Senior Developer",
-            handler=admin,
+            renewer=admin,
         )
 
-        assert result["contract"] is not None
-        assert result["contract"].contract_no == "CON-EXP-2-RENEW"
-        assert result["history"] is not None
-        assert result["history"].change_type == "other"
-        assert result["history"].new_salary_base == Decimal("12000000.00")
-        assert result["history"].new_title == "Senior Developer"
+        new_contract = result["contract"]
 
-    def test_contract_handle_expiration_terminate(self):
-        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
-        admin = UserFactory(username="admin_pr4_test4")
-        contract = EmploymentContractFactory(
-            employee=employee,
-            contract_no="CON-EXP-3",
-            start_date=date(2026, 5, 1),
-            end_date=date(2026, 5, 31),
-            status="active",
-        )
+        assert new_contract is not None
+        assert new_contract.contract_no == "CON-EXP-2-RENEW"
+        assert new_contract.salary_base == Decimal("12000000.00")
 
-        result = contract_handle_expiration(
-            contract_id=str(contract.id),
-            action="terminate",
-            handler=admin,
-        )
+        # Verify employee's salary updated immediately
+        from apps.hrm.selectors import get_salary_at_date
 
-        assert result["contract"] is None
-        contract.refresh_from_db()
-        assert contract.status == "terminated"
-
-    def test_contract_handle_expiration_defer(self):
-        employee = EmployeeFactory()
-        admin = UserFactory(username="admin_pr4_test5")
-        contract = EmploymentContractFactory(
-            employee=employee,
-            contract_no="CON-EXP-4",
-            start_date=date(2026, 5, 1),
-            end_date=date(2026, 5, 31),
-            status="active",
-        )
-
-        result = contract_handle_expiration(
-            contract_id=str(contract.id),
-            action="defer",
-            handler=admin,
-        )
-
-        assert result["contract"] is None
-        assert result["history"] is None
-        log = SystemLog.objects.filter(
-            table_name="employment_contract", record_id=str(contract.id), action="defer"
-        ).first()
-        assert log is not None
+        assert get_salary_at_date(employee, date(2026, 6, 1)) == Decimal("12000000.00")
 
     def test_create_partial_salary_slip_success(self):
         employee = EmployeeFactory()
@@ -1987,11 +1847,17 @@ class TestPR4Services:
             )
 
     def test_payroll_calculate_salary_partial(self):
-        employee = EmployeeFactory(salary_base=Decimal("26000000.00"))
+        employee = EmployeeFactory(
+            employee_id="NV_PARTIAL", salary_base__create_contract=False, employment_status="active"
+        )
         admin = UserFactory(username="admin_pr4_test8")
 
         EmploymentContractFactory(
-            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+            employee=employee,
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 30),
+            status="active",
+            salary_base=Decimal("26000000.00"),
         )
 
         for d in range(1, 6):
@@ -2024,41 +1890,6 @@ class TestPR4Services:
         submitted_slip.save()
         with pytest.raises(ValidationException):
             payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
-
-    def test_employment_history_reject_rollback(self):
-        employee = EmployeeFactory(salary_base=Decimal("10000000.00"))
-        admin = UserFactory(username="admin_pr4_test10")
-
-        contract1 = EmploymentContractFactory(
-            employee=employee,
-            contract_no="CON-ROLL-1",
-            start_date=date(2026, 5, 1),
-            end_date=date(2026, 5, 31),
-            status="expired",
-        )
-
-        result = contract_handle_expiration(
-            contract_id=str(contract1.id),
-            action="renew_with_salary_change",
-            new_salary_base=Decimal("12000000.00"),
-            new_title="Lead Developer",
-            handler=admin,
-        )
-        new_contract = result["contract"]
-        history = result["history"]
-
-        assert new_contract.status == "active"
-        assert history.status == "pending_approval"
-
-        history_id = str(history.id)
-        rejected_history = employment_history_reject(
-            user=admin,
-            history_id=history_id,
-            reason="Không duyệt tăng lương đợt này",
-        )
-
-        assert rejected_history.status == "rejected"
-        assert not EmploymentContract.objects.filter(id=new_contract.id).exists()
 
     def test_reward_record_create_blocked_when_period_paid(self):
         # Arrange: create a paid salary slip for the period
@@ -2484,7 +2315,9 @@ class TestRewardDisciplineStandardizedLabels:
 class TestDisciplineRecordTerminationSideEffects:
 
     def test_discipline_approve_termination_terminates_active_contract(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_1", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_1", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-1", status="active")
         admin = UserFactory(username="admin_term_1")
         discipline = DisciplineRecordFactory(
@@ -2506,7 +2339,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert contract.end_date == date(2026, 6, 15)
 
     def test_discipline_approve_termination_disables_user(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_2", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_2", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-2", status="active")
         user = UserFactory(username="term_user_2", employee_id="EMP_TERM_2", is_active=True)
         admin = UserFactory(username="admin_term_2")
@@ -2524,7 +2359,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert user.is_active is False
 
     def test_discipline_approve_termination_sets_employee_inactive(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_3", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_3", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-3", status="active")
         admin = UserFactory(username="admin_term_3")
         discipline = DisciplineRecordFactory(
@@ -2544,7 +2381,9 @@ class TestDisciplineRecordTerminationSideEffects:
     def test_discipline_approve_termination_creates_final_salary_slip(self):
         from apps.finance.models import SalarySlip
 
-        employee = EmployeeFactory(employee_id="EMP_TERM_4", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_4", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-4", status="active")
         admin = UserFactory(username="admin_term_4")
         discipline = DisciplineRecordFactory(
@@ -2560,7 +2399,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert SalarySlip.objects.filter(employee=employee, salary_period="2026-06").exists()
 
     def test_discipline_approve_termination_creates_employee_document(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_5", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_5", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-5", status="active")
         admin = UserFactory(username="admin_term_5")
         discipline = DisciplineRecordFactory(
@@ -2579,9 +2420,11 @@ class TestDisciplineRecordTerminationSideEffects:
         assert doc.file_url == "https://example.com/dec.pdf"
 
     def test_discipline_approve_termination_no_active_contract_handles_gracefully(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_6", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="NV_TERM_6", salary_base__create_contract=False, employment_status="active"
+        )
         admin = UserFactory(username="admin_term_6")
-        user = UserFactory(username="term_user_6", employee_id="EMP_TERM_6", is_active=True)
+        user = UserFactory(username="term_user_6", employee_id="NV_TERM_6", is_active=True)
         discipline = DisciplineRecordFactory(
             employee=employee,
             discipline_type="termination",
@@ -2625,7 +2468,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert employee.employment_status == "inactive"
 
     def test_discipline_approve_termination_fails_if_unpaid_previous_payroll(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_8", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_8", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-8", status="active")
         admin = UserFactory(username="admin_term_8")
 
@@ -2647,7 +2492,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert discipline.status == "pending_approval"
 
     def test_discipline_approve_termination_rolls_back_on_contract_terminate_failure(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_9", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_9", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-9", status="active")
         admin = UserFactory(username="admin_term_9")
 
@@ -2667,7 +2514,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert discipline.status == "pending_approval"
 
     def test_discipline_approve_non_termination_does_not_terminate_employee(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_10", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_10", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-10", status="active")
         user = UserFactory(username="term_user_10", employee_id="EMP_TERM_10", is_active=True)
         admin = UserFactory(username="admin_term_10")
@@ -2692,7 +2541,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert user.is_active is True
 
     def test_discipline_approve_termination_creates_system_logs(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_11", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_11", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-11", status="active")
         user = UserFactory(username="term_user_11", employee_id="EMP_TERM_11", is_active=True)
         admin = UserFactory(username="admin_term_11")
@@ -2719,7 +2570,9 @@ class TestDisciplineRecordTerminationSideEffects:
         assert SystemLog.objects.filter(table_name="user", record_id=str(user.id), action="update").exists()
 
     def test_discipline_approve_termination_transaction_atomic(self):
-        employee = EmployeeFactory(employee_id="EMP_TERM_12", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="EMP_TERM_12", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-TERM-12", status="active")
         admin = UserFactory(username="admin_term_12")
 
@@ -2744,9 +2597,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_creates_slip_in_pending_finance_review_status(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_1", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="EMP_NEW_1", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-1", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-1", status="active", salary_base=Decimal("10000000.00")
+        )
         admin = UserFactory(username="admin_new_1")
         contract_terminate(
             contract_id=contract.id,
@@ -2764,9 +2619,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_does_not_create_cash_flow_transaction(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_2", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="EMP_NEW_2", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-2", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-2", status="active", salary_base=Decimal("10000000.00")
+        )
         admin = UserFactory(username="admin_new_2")
         from apps.finance.models import CashFlowTransaction
 
@@ -2784,9 +2641,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_route_through_finance_can_be_paid(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_3", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="NV_NEW_3", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-3", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-3", status="active", salary_base=Decimal("10000000.00")
+        )
         admin = UserFactory(username="admin_new_3")
 
         # Thêm chấm công để có lương net_pay > 0
@@ -2821,9 +2680,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_with_prorated_calculation_mid_month(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_4", salary_base=Decimal("26000000.00"), employment_status="active"
+            employee_id="NV_NEW_4", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-4", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-4", status="active", salary_base=Decimal("26000000.00")
+        )
         admin = UserFactory(username="admin_new_4")
         # Attendance 15 days in May 2026
         for day in range(1, 16):
@@ -2848,9 +2709,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_full_month_calculation_end_of_month(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_5", salary_base=Decimal("26000000.00"), employment_status="active"
+            employee_id="NV_NEW_5", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-5", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-5", status="active", salary_base=Decimal("26000000.00")
+        )
         admin = UserFactory(username="admin_new_5")
         # Attendance 26 working days in May 2026
         # May 2026 has 31 days. Let's record working days
@@ -2876,9 +2739,11 @@ class TestDisciplineRecordTerminationSideEffects:
 
     def test_contract_terminate_rollback_when_terminated_calculate_fails(self):
         employee = EmployeeFactory(
-            employee_id="EMP_NEW_6", salary_base=Decimal("10000000.00"), employment_status="active"
+            employee_id="NV_NEW_6", salary_base__create_contract=False, employment_status="active"
         )
-        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-NEW-6", status="active")
+        contract = EmploymentContractFactory(
+            employee=employee, contract_no="HDLD-NEW-6", status="active", salary_base=Decimal("10000000.00")
+        )
         admin = UserFactory(username="admin_new_6")
 
         from unittest.mock import patch

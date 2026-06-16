@@ -102,6 +102,7 @@ class EmploymentContract(BaseModel):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     note = models.TextField(null=True, blank=True)
     file_url = models.CharField(max_length=255, null=True, blank=True)
+    salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
 
     class Meta:
         db_table = "employment_contract"
@@ -140,56 +141,6 @@ class EmployeeDocument(BaseModel):
 
     def __str__(self):
         return f"{self.title} ({self.get_doc_type_display()}) - {self.employee.full_name}"
-
-
-class EmploymentHistory(BaseModel):
-    """
-    Ghi vết tất cả những thay đổi quan trọng về chức vụ, bộ phận hoặc lương cơ bản của nhân viên.
-    """
-
-    CHANGE_TYPES = [
-        ("salary_change", "Thay đổi lương"),
-        ("title_change", "Thay đổi chức danh"),
-        ("department_transfer", "Điều chuyển phòng ban"),
-        ("other", "Khác"),
-    ]
-
-    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="employment_histories")
-    change_type = models.CharField(max_length=50, choices=CHANGE_TYPES)
-    old_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    new_salary_base = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    old_title = models.CharField(max_length=100, null=True, blank=True)
-    new_title = models.CharField(max_length=100, null=True, blank=True)
-    old_department = models.CharField(max_length=100, null=True, blank=True)
-    new_department = models.CharField(max_length=100, null=True, blank=True)
-    effective_date = models.DateField()
-    approved_by = models.ForeignKey(
-        User, on_delete=models.SET_NULL, related_name="approved_histories", null=True, blank=True
-    )
-    approved_at = models.DateTimeField(null=True, blank=True)
-    reason = models.TextField(null=True, blank=True)
-    status = models.CharField(
-        max_length=20,
-        choices=[
-            ("pending_approval", "Pending Approval"),
-            ("approved", "Approved"),
-            ("rejected", "Rejected"),
-        ],
-        default="pending_approval",
-        db_index=True,
-    )
-
-    class Meta:
-        db_table = "employment_history"
-        verbose_name = "Employment History"
-        verbose_name_plural = "Employment Histories"
-        ordering = ["-effective_date", "-created_at"]
-        indexes = [
-            models.Index(fields=["status", "effective_date"]),
-        ]
-
-    def __str__(self):
-        return f"{self.employee.full_name} - {self.get_change_type_display()} ({self.effective_date})"
 
 
 class RewardRecord(BaseModel):

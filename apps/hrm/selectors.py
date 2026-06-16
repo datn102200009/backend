@@ -6,21 +6,21 @@ Always optimize with select_related() and prefetch_related() to avoid N+1 querie
 """
 
 from datetime import timedelta
+from typing import Optional
 
 from django.db import models
 
-from apps.hrm.models import EmploymentContract, EmploymentHistory, LeaveRequest
+from apps.hrm.models import EmploymentContract, LeaveRequest
 from apps.master_data.models import Employee
 
 
 def employee_get_detail_with_relations(employee_id: str) -> Employee:
     """
     Lấy thông tin chi tiết nhân viên cùng các quan hệ:
-    Hợp đồng, Lịch sử thay đổi, Tài liệu, Khen thưởng, Kỷ luật.
+    Hợp đồng, Tài liệu, Khen thưởng, Kỷ luật.
     """
     return Employee.objects.prefetch_related(
         "contracts",
-        "employment_histories",
         "documents",
         "rewards",
         "disciplines",
@@ -37,19 +37,39 @@ def is_salary_period_fully_paid(salary_period: str) -> bool:
     ).exists()
 
 
+def get_active_contract_at_date(employee, target_date) -> Optional[EmploymentContract]:
+    """Trả về EmploymentContract đang active tại target_date, hoặc None.
+    Quy tắc "mới nhất thắng": nếu có nhiều HĐ overlap, lấy HĐ có start_date lớn nhất.
+    """
+    return (
+        EmploymentContract.objects.filter(
+            employee=employee,
+            start_date__lte=target_date,
+        )
+        .filter(models.Q(end_date__isnull=True) | models.Q(end_date__gte=target_date))
+        .order_by("-start_date")
+        .first()
+    )
+
+
 def get_salary_timeline(employee, period_start, period_end):
-    """Trả về [(date, salary_base)] - các điểm thay đổi lương trong kỳ."""
-    histories = EmploymentHistory.objects.filter(
-        employee=employee,
-        status="approved",
-        effective_date__lte=period_end,
-    ).order_by("effective_date")
-    earliest = histories.filter(effective_date__lt=period_start).order_by("-effective_date").first()
-    base_at_start = earliest.new_salary_base if earliest else employee.salary_base
-    timeline = [(period_start, base_at_start)]
-    for h in histories:
-        if period_start < h.effective_date <= period_end:
-            timeline.append((h.effective_date, h.new_salary_base))
+    """
+    Trả về [(date, salary_base)] - các điểm thay đổi lương trong kỳ.
+    NGUỒN CHÂN LÝ: EmploymentContract. KHÔNG dùng EmploymentHistory.
+    """
+    contracts = (
+        EmploymentContract.objects.filter(
+            employee=employee,
+            start_date__lte=period_end,
+        )
+        .filter(models.Q(end_date__isnull=True) | models.Q(end_date__gte=period_start))
+        .order_by("start_date")
+    )
+
+    timeline = []
+    for contract in contracts:
+        effective_start = max(contract.start_date, period_start)
+        timeline.append((effective_start, contract.salary_base))
     return timeline
 
 
@@ -103,13 +123,19 @@ def get_salary_for_day(employee, target_date):
 
 
 def get_salary_at_date(employee, target_date):
-    history = (
-        EmploymentHistory.objects.filter(
-            employee=employee,
-            status="approved",
-            effective_date__lte=target_date,
-        )
-        .order_by("-effective_date")
-        .first()
-    )
-    return history.new_salary_base if history else employee.salary_base
+    """
+    Trả về mức lương cơ bản tại một ngày cụ thể.
+    NGUỒN CHÂN LÝ: EmploymentContract active tại target_date.
+    """
+    contract = get_active_contract_at_date(employee, target_date)
+    from decimal import Decimal
+
+    return contract.salary_base if (contract and contract.salary_base is not None) else Decimal("0.00")
+
+
+def count_active_contracts(employee, exclude_contract_id: Optional[str] = None) -> int:
+    """Đếm số hợp đồng đang active cho một nhân viên."""
+    qs = EmploymentContract.objects.filter(employee=employee, status="active")
+    if exclude_contract_id:
+        qs = qs.exclude(id=exclude_contract_id)
+    return qs.count()

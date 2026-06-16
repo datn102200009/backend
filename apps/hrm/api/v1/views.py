@@ -22,19 +22,18 @@ from apps.hrm.api.v1.serializers import (
     AttendanceOutputSerializer,
     CancelRecordInputSerializer,
     ContractCreateOrRenewInputSerializer,
-    ContractHandleExpirationInputSerializer,
+    ContractRenewInputSerializer,
     ContractTerminateInputSerializer,
     DisciplineRecordCreateInputSerializer,
     DisciplineRecordOutputSerializer,
     DisciplineRecordUpdateInputSerializer,
+    EmployeeAdjustSalaryInputSerializer,
     EmployeeCreateInputSerializer,
     EmployeeDetailOutputSerializer,
     EmployeeOutputSerializer,
     EmployeeUpdateInputSerializer,
-    EmployeeUpdateSalaryTitleInputSerializer,
+    EmployeeWithContractCreateInputSerializer,
     EmploymentContractOutputSerializer,
-    EmploymentHistoryOutputSerializer,
-    EmploymentHistoryRejectInputSerializer,
     LeaveRequestApproveInputSerializer,
     LeaveRequestCreateInputSerializer,
     LeaveRequestOutputSerializer,
@@ -48,20 +47,12 @@ from apps.hrm.api.v1.serializers import (
     SalarySlipInitializeInputSerializer,
     SalarySlipOutputSerializer,
 )
-from apps.hrm.models import (
-    Attendance,
-    DisciplineRecord,
-    EmploymentContract,
-    EmploymentHistory,
-    LeaveRequest,
-    PublicHoliday,
-    RewardRecord,
-)
+from apps.hrm.models import Attendance, DisciplineRecord, EmploymentContract, LeaveRequest, PublicHoliday, RewardRecord
 from apps.hrm.selectors import employee_get_detail_with_relations
 from apps.hrm.services import (
     attendance_batch_record,
     contract_create_or_renew,
-    contract_handle_expiration,
+    contract_renew,
     contract_terminate,
     create_partial_salary_slip,
     discipline_record_approve,
@@ -69,11 +60,9 @@ from apps.hrm.services import (
     discipline_record_create,
     discipline_record_delete,
     discipline_record_update,
-    employee_create_with_user,
+    employee_adjust_salary_apply,
+    employee_create_with_contract,
     employee_update,
-    employee_update_salary_or_title,
-    employment_history_approve,
-    employment_history_reject,
     leave_request_approve,
     leave_request_create,
     payroll_bulk_calculate,
@@ -147,7 +136,7 @@ def employee_list_view(request):
 @throttle_classes([UserRateThrottle])
 def employee_create_view(request):
     """
-    Tạo mới một nhân viên (và tài khoản người dùng nếu được yêu cầu).
+    Tạo mới một nhân viên (và tài khoản người dùng, hợp đồng lao động nếu được yêu cầu).
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -155,19 +144,36 @@ def employee_create_view(request):
 
     PermissionChecker.check_permission(user, "hrm.add_employee")
 
-    serializer = EmployeeCreateInputSerializer(data=request.data)
+    serializer = EmployeeWithContractCreateInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    # Tách contract_data
+    contract_data = {
+        "contract_no": data.get("contract_no"),
+        "contract_type": data.get("contract_type"),
+        "start_date": data.get("contract_start_date"),
+        "end_date": data.get("contract_end_date"),
+        "note": data.get("contract_note"),
+        "file_url": data.get("contract_file_url"),
+    }
+    if "contract_salary_base" in data:
+        contract_data["salary_base"] = data["contract_salary_base"]
 
     try:
-        employee = employee_create_with_user(
-            data=serializer.validated_data,
+        employee, contract = employee_create_with_contract(
+            data=data,
+            contract_data=contract_data,
             creator=user,
         )
     except IntegrityError:
         raise ValidationException("Dữ liệu bị trùng lặp hoặc vi phạm ràng buộc CSDL. Vui lòng kiểm tra lại.")
 
-    out_serializer = EmployeeOutputSerializer(employee)
-    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+    emp_out = EmployeeOutputSerializer(employee).data
+    resp = {"employee": emp_out}
+    if contract:
+        resp["contract"] = EmploymentContractOutputSerializer(contract).data
+    return Response(resp, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])
@@ -225,28 +231,31 @@ def employee_update_view(request, pk):
 
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
-def employee_update_salary_title_view(request, pk):
+def employee_adjust_salary_view(request, pk):
     """
-    Điều chỉnh lương cơ bản, chức danh, hoặc phòng ban của nhân viên (tự động lưu lịch sử).
+    Điều chỉnh lương cơ bản của nhân viên (áp dụng trực tiếp).
     """
     user = request.user
     if not user or not user.is_authenticated:
         return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
 
-    PermissionChecker.check_permission(user, "hrm.change_employee")
+    PermissionChecker.check_permission(user, "hrm.adjust_salary")
 
-    serializer = EmployeeUpdateSalaryTitleInputSerializer(data=request.data)
+    serializer = EmployeeAdjustSalaryInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    history = employee_update_salary_or_title(
+    result = employee_adjust_salary_apply(
         employee_id=pk,
-        change_data=serializer.validated_data,
-        approved_by_user_id=str(user.id),
-        approved_by=user,
+        new_salary_base=serializer.validated_data.get("new_salary_base"),
+        reason=serializer.validated_data.get("reason"),
+        actor=user,
     )
 
-    out_serializer = EmploymentHistoryOutputSerializer(history)
-    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+    response_data = {
+        "contract": EmploymentContractOutputSerializer(result["contract"]).data,
+        "affected_payslips": SalarySlipOutputSerializer(result["affected_payslips"], many=True).data,
+    }
+    return Response(response_data, status=status.HTTP_200_OK)
 
 
 # =============================================================================
@@ -1040,72 +1049,6 @@ def public_holiday_detail_update_delete_view(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(["GET"])
-def employment_history_list_view(request):
-    """
-    Xem danh sách đề xuất nhân sự (lịch sử công tác).
-    Hỗ trợ lọc theo status và employee_id, kèm phân trang limit/offset.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.view_employee")
-
-    status_param = request.query_params.get("status")
-    employee_id = request.query_params.get("employee_id")
-
-    try:
-        limit = int(request.query_params.get("limit", 20))
-        offset = int(request.query_params.get("offset", 0))
-        limit = min(limit, 100)
-    except ValueError:
-        limit = 20
-        offset = 0
-
-    qs = (
-        EmploymentHistory.objects.all()
-        .select_related("employee", "approved_by")
-        .order_by("-effective_date", "-created_at")
-    )
-
-    if status_param:
-        qs = qs.filter(status=status_param)
-    if employee_id:
-        qs = qs.filter(employee_id=employee_id)
-
-    count = qs.count()
-    results = qs[offset : offset + limit]
-    total_pages = (count + limit - 1) // limit if limit > 0 else 1
-
-    serializer = EmploymentHistoryOutputSerializer(results, many=True)
-    return Response(
-        {
-            "count": count,
-            "total_pages": total_pages,
-            "next": None,
-            "previous": None,
-            "results": serializer.data,
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def employment_history_approve_view(request, pk):
-    """
-    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-    history = employment_history_approve(user=user, history_id=pk)
-    return Response(EmploymentHistoryOutputSerializer(history).data, status=status.HTTP_200_OK)
-
-
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
 def reward_approve_view(request, pk):
@@ -1138,46 +1081,40 @@ def discipline_approve_view(request, pk):
 
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
-def contract_handle_expiration_view(request, pk):
+def contract_renew_view(request, pk):
     """
-    Xử lý hợp đồng hết hạn.
+    Gia hạn hợp đồng lao động (tái ký), có thể kèm điều chỉnh lương cơ bản.
     """
     user = request.user
     if not user or not user.is_authenticated:
         return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
 
+    PermissionChecker.check_permission(user, "hrm.change_employmentcontract")
+
     try:
-        contract = EmploymentContract.objects.get(id=pk)
+        old_contract = EmploymentContract.objects.get(id=pk)
     except EmploymentContract.DoesNotExist:
         raise NotFoundException("Không tìm thấy hợp đồng lao động")
 
-    PermissionChecker.check_permission(user, "hrm.change_employmentcontract")
-
-    serializer = ContractHandleExpirationInputSerializer(data=request.data)
+    serializer = ContractRenewInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
-    result = contract_handle_expiration(
+    result = contract_renew(
         contract_id=pk,
-        action=data["action"],
-        new_salary_base=data.get("new_salary_base"),
-        new_title=data.get("new_title"),
+        new_contract_no=data.get("new_contract_no"),
+        new_contract_type=data.get("new_contract_type"),
         start_date=data.get("start_date"),
-        handler=user,
+        new_salary_base=data.get("new_salary_base"),
+        file_url=data.get("file_url"),
+        note=data.get("note"),
+        renewer=user,
     )
 
-    resp_data = {}
-    if result["contract"]:
-        resp_data["contract"] = EmploymentContractOutputSerializer(result["contract"]).data
-    else:
-        resp_data["contract"] = None
-
-    if result["history"]:
-        resp_data["history"] = EmploymentHistoryOutputSerializer(result["history"]).data
-    else:
-        resp_data["history"] = None
-
-    return Response(resp_data, status=status.HTTP_200_OK)
+    resp_data = {
+        "contract": EmploymentContractOutputSerializer(result["contract"]).data,
+    }
+    return Response(resp_data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
@@ -1222,27 +1159,6 @@ def payroll_submit_view(request, pk):
 
     slip = payroll_submit_for_review(salary_slip_id=pk, user=user)
     out_serializer = SalarySlipOutputSerializer(slip)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def employment_history_reject_view(request, pk):
-    """
-    Từ chối đề xuất thay đổi lương / chuyển bộ phận.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-
-    serializer = EmploymentHistoryRejectInputSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    reason = serializer.validated_data["reason"]
-
-    history = employment_history_reject(user=user, history_id=pk, reason=reason)
-    out_serializer = EmploymentHistoryOutputSerializer(history)
     return Response(out_serializer.data, status=status.HTTP_200_OK)
 
 

@@ -52,44 +52,83 @@ class TestHrmAPI:
     def test_create_employee(self, mock_check, auth_client):
         url = "/api/v1/hrm/employees/create/"
         data = {
-            "employee_id": "EMP8888",
+            "employee_id": "NV8888",
             "full_name": "Nguyen Van Test",
-            "department": "IT",
-            "position_title": "Developer",
-            "salary_base": 15000000.00,
+            "contract_salary_base": 15000000.00,
             "email": "testemail8888@example.com",
             "phone": "0123456789",
             "gender": "male",
             "date_of_birth": "1995-10-10",
             "join_date": "2026-01-01",
+            "contract_no": "HDLD-2026-NV8",
+            "contract_type": "definite_term",
+            "contract_start_date": "2026-01-01",
+            "contract_end_date": "2027-01-01",
         }
         response = auth_client.post(url, data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.data["employee_id"] == "EMP8888"
-        assert Employee.objects.filter(employee_id="EMP8888").exists()
+        assert response.data["employee"]["employee_id"] == "NV8888"
+        assert response.data["contract"] is not None
+        assert response.data["contract"]["contract_no"] == "HDLD-2026-NV8"
+        assert Employee.objects.filter(employee_id="NV8888").exists()
 
     def test_create_employee_with_user(self, mock_check, auth_client):
         url = "/api/v1/hrm/employees/create/"
         role = RoleFactory()
         data = {
-            "employee_id": "EMP9999",
+            "employee_id": "NV9999",
             "full_name": "Tran Thi User",
-            "salary_base": 12000000.00,
+            "contract_salary_base": 12000000.00,
             "create_user": True,
             "username": "tranthiuser",
             "password": "secretpassword123",
             "role_id": str(role.id),
+            "contract_no": "HDLD-2026-NV9",
+            "contract_type": "definite_term",
+            "contract_start_date": "2026-01-01",
+            "contract_end_date": "2027-01-01",
         }
         response = auth_client.post(url, data, format="json")
 
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.data["employee_id"] == "EMP9999"
+        assert response.data["employee"]["employee_id"] == "NV9999"
+        assert response.data["contract"] is not None
+        assert response.data["contract"]["contract_no"] == "HDLD-2026-NV9"
 
         # Verify user account creation
         from apps.accounts.models import User
 
-        assert User.objects.filter(username="tranthiuser", employee_id="EMP9999").exists()
+        assert User.objects.filter(username="tranthiuser", employee_id="NV9999").exists()
+
+    def test_create_employee_with_contract(self, mock_check, auth_client):
+        from apps.hrm.models import EmploymentContract
+
+        url = "/api/v1/hrm/employees/create/"
+        data = {
+            "employee_id": "NV7777",
+            "full_name": "Nguyen Van Contract",
+            "contract_salary_base": 15000000.00,
+            "email": "testcontract7777@example.com",
+            "phone": "0123456789",
+            "gender": "male",
+            "date_of_birth": "1995-10-10",
+            "join_date": "2026-06-16",
+            "create_contract": True,
+            "contract_no": "HDLD-2026-NV7",
+            "contract_type": "definite_term",
+            "contract_start_date": "2026-06-16",
+            "contract_end_date": "2027-06-16",
+            "contract_note": "Gia hạn hợp đồng mẫu",
+        }
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["employee"]["employee_id"] == "NV7777"
+        assert response.data["contract"] is not None
+        assert response.data["contract"]["contract_no"] == "HDLD-2026-NV7"
+        assert Employee.objects.filter(employee_id="NV7777").exists()
+        assert EmploymentContract.objects.filter(contract_no="HDLD-2026-NV7").exists()
 
     def test_detail_employee(self, mock_check, auth_client):
         employee = EmployeeFactory()
@@ -100,12 +139,11 @@ class TestHrmAPI:
         assert response.data["employee_id"] == employee.employee_id
         # detail output should have relations
         assert "contracts" in response.data
-        assert "employment_histories" in response.data
 
     def test_update_employee(self, mock_check, auth_client):
-        employee = EmployeeFactory(full_name="Old Name", department="Sales")
+        employee = EmployeeFactory(full_name="Old Name")
         url = f"/api/v1/hrm/employees/{employee.id}/update/"
-        data = {"full_name": "New Name", "department": "Marketing"}
+        data = {"full_name": "New Name"}
 
         response = auth_client.patch(url, data, format="json")
 
@@ -114,34 +152,6 @@ class TestHrmAPI:
 
         employee.refresh_from_db()
         assert employee.full_name == "New Name"
-        assert employee.department == "Marketing"
-
-    def test_update_salary_title(self, mock_check, auth_client):
-        employee = EmployeeFactory(salary_base=10000000.00, position_title="Staff")
-        url = f"/api/v1/hrm/employees/{employee.id}/update-salary-title/"
-        data = {
-            "change_type": "salary_change",
-            "new_salary_base": 12500000.00,
-            "effective_date": "2026-06-01",
-            "reason": "Tang luong theo nang luc",
-        }
-
-        response = auth_client.post(url, data, format="json")
-
-        assert response.status_code == status.HTTP_201_CREATED
-        employee.refresh_from_db()
-        assert employee.salary_base == 10000000.00
-
-        history_id = response.data["id"]
-        approve_url = f"/api/v1/hrm/employment-histories/{history_id}/approve/"
-        approve_response = auth_client.post(approve_url)
-        assert approve_response.status_code == status.HTTP_200_OK
-
-        employee.refresh_from_db()
-        assert employee.salary_base == 12500000.00
-
-        # Verify employment history was written
-        assert employee.employment_histories.filter(change_type="salary_change").exists()
 
     # =========================================================================
     # CONTRACT API TESTS
@@ -669,7 +679,7 @@ class TestHrmAPI:
         assert response.status_code == 200
         assert response.data == ["2026-06", "2026-05"]
 
-    def test_contract_handle_expiration_api(self, mock_check, auth_client):
+    def test_contract_renew_api(self, mock_check, auth_client):
         from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory
 
         employee = EmployeeFactory()
@@ -681,13 +691,20 @@ class TestHrmAPI:
             status="active",
         )
 
-        url = f"/api/v1/hrm/contracts/{contract.id}/handle-expiration/"
-        data = {"action": "renew"}
+        url = f"/api/v1/hrm/contracts/{contract.id}/renew/"
+        data = {
+            "new_contract_no": "CON-EXP-API-RENEW",
+            "new_contract_type": "definite_term",
+            "start_date": "2026-06-01",
+            "new_salary_base": "12000000.00",
+            "note": "Gia hạn hợp đồng mẫu",
+        }
         response = auth_client.post(url, data, format="json")
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         assert response.data["contract"] is not None
         assert response.data["contract"]["contract_no"] == "CON-EXP-API-RENEW"
+        assert Decimal(response.data["contract"]["salary_base"]) == Decimal("12000000.00")
 
     def test_partial_salary_slip_create_api(self, mock_check, auth_client):
         from apps.hrm.tests.factories import EmployeeFactory
@@ -723,30 +740,25 @@ class TestHrmAPI:
         response = auth_client.post(recall_url)
         assert response.status_code == 404
 
-    def test_employment_history_reject_api(self, mock_check, auth_client):
-        from apps.hrm.tests.factories import EmployeeFactory, EmploymentHistoryFactory
-
-        employee = EmployeeFactory()
-        history = EmploymentHistoryFactory(employee=employee, status="pending_approval")
-
-        url = f"/api/v1/hrm/employment-histories/{history.id}/reject/"
-        data = {"reason": "Not approved"}
-        response = auth_client.post(url, data, format="json")
-
-        assert response.status_code == 200
-        assert response.data["status"] == "rejected"
-
     def test_salary_slip_bulk_calculate_api(self, mock_check, auth_client):
         from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory, SalarySlipFactory
 
-        employee1 = EmployeeFactory(salary_base=10000000)
-        employee2 = EmployeeFactory(salary_base=12000000)
+        employee1 = EmployeeFactory(salary_base__create_contract=False)
+        employee2 = EmployeeFactory(salary_base__create_contract=False)
 
         EmploymentContractFactory(
-            employee=employee1, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+            employee=employee1,
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 30),
+            status="active",
+            salary_base=Decimal("10000000.00"),
         )
         EmploymentContractFactory(
-            employee=employee2, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+            employee=employee2,
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 30),
+            status="active",
+            salary_base=Decimal("12000000.00"),
         )
 
         SalarySlipFactory(employee=employee1, salary_period="2026-06", status="draft")
@@ -977,7 +989,9 @@ class TestRewardDisciplineCRUDAPI:
         from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory, EmploymentContractFactory
         from apps.master_data.models import Employee
 
-        employee = EmployeeFactory(employee_id="EMP_API_1", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="NV_API_1", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-API-1", status="active")
         discipline = DisciplineRecordFactory(
             employee=employee,
@@ -1006,7 +1020,9 @@ class TestRewardDisciplineCRUDAPI:
             SalarySlipFactory,
         )
 
-        employee = EmployeeFactory(employee_id="EMP_API_2", employment_status="active")
+        employee = EmployeeFactory(
+            employee_id="NV_API_2", salary_base__create_contract=False, employment_status="active"
+        )
         contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-API-2", status="active")
 
         SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")

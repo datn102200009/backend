@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -17,7 +18,6 @@ from apps.hrm.models import (
     DisciplineRecord,
     EmployeeDocument,
     EmploymentContract,
-    EmploymentHistory,
     LeaveRequest,
     PublicHoliday,
     RewardRecord,
@@ -158,21 +158,50 @@ def _create_termination_document(
     )
 
 
+def generate_employee_id() -> str:
+    """
+    Tự động sinh mã nhân viên dạng NV#### (ví dụ: NV0001, NV0002...).
+    Tìm mã NV có số thứ tự lớn nhất hiện tại trong Database và cộng thêm 1.
+    Padding tối thiểu là 4 chữ số, tự động nở rộng thành 5 chữ số từ NV10000.
+    """
+    max_num = 0
+    # Lấy các mã NV bắt đầu bằng "NV" hiện tại trong DB
+    employee_ids = Employee.objects.filter(employee_id__startswith="NV").values_list("employee_id", flat=True)
+
+    for emp_id in employee_ids:
+        match = re.match(r"^NV(\d+)$", emp_id)
+        if match:
+            num = int(match.group(1))
+            if num > max_num:
+                max_num = num
+
+    next_num = max_num + 1
+    num_str = str(next_num).zfill(4)
+    return f"NV{num_str}"
+
+
 @transaction.atomic
-def employee_create_with_user(
+def employee_create_with_contract(
     *,
     data: Dict[str, Any],
+    contract_data: Dict[str, Any],
     creator: Optional[User] = None,
-) -> Employee:
+) -> tuple[Employee, EmploymentContract]:
     """
-    Tạo mới một Employee và tùy chọn tạo tài khoản User liên kết qua employee_id.
+    Tạo mới một Employee, tài khoản User và hợp đồng lao động EmploymentContract bắt buộc đi kèm.
     """
+    if not contract_data:
+        raise ValidationException("Thông tin hợp đồng lao động là bắt buộc")
+
     if creator:
         PermissionChecker.check_permission(creator, "hrm.add_employee")
+        PermissionChecker.check_permission(creator, "hrm.add_employmentcontract")
 
     employee_id = data.get("employee_id")
     if not employee_id:
-        raise ValidationException("Mã nhân viên (employee_id) là bắt buộc")
+        employee_id = generate_employee_id()
+    elif not re.match(r"^NV\d{4,}$", employee_id):
+        raise ValidationException("Mã nhân viên phải có format NV#### (ví dụ: NV0001)")
 
     if Employee.objects.filter(employee_id=employee_id).exists():
         raise ValidationException(f"Mã nhân viên {employee_id} đã tồn tại")
@@ -183,9 +212,6 @@ def employee_create_with_user(
     employee = Employee.objects.create(
         employee_id=employee_id,
         full_name=data.get("full_name"),
-        department=data.get("department"),
-        position_title=data.get("position_title"),
-        salary_base=data.get("salary_base"),
         email=data.get("email"),
         phone=data.get("phone"),
         gender=data.get("gender"),
@@ -201,9 +227,6 @@ def employee_create_with_user(
     employee_data_for_log = {
         "employee_id": employee.employee_id,
         "full_name": employee.full_name,
-        "department": employee.department,
-        "position_title": employee.position_title,
-        "salary_base": str(employee.salary_base) if employee.salary_base is not None else None,
         "email": employee.email,
         "employment_status": employee.employment_status,
     }
@@ -255,7 +278,54 @@ def employee_create_with_user(
             new_value=user_data_for_log,
         )
 
-    return employee
+    # Tạo EmploymentContract bắt buộc
+    from apps.hrm.selectors import count_active_contracts
+
+    active_count = count_active_contracts(employee)
+    if active_count > 0:
+        raise ValidationException(
+            f"Nhân viên {employee.employee_id} đã có {active_count} hợp đồng đang active. "
+            "Không thể tạo hợp đồng mới."
+        )
+
+    contract_no = contract_data.get("contract_no")
+    if not contract_no:
+        raise ValidationException("Số hợp đồng (contract_no) là bắt buộc")
+    if EmploymentContract.objects.filter(contract_no=contract_no).exists():
+        raise ValidationException(f"Số hợp đồng {contract_no} đã tồn tại")
+
+    contract = EmploymentContract.objects.create(
+        employee=employee,
+        contract_no=contract_no,
+        contract_type=contract_data.get("contract_type"),
+        start_date=contract_data.get("start_date"),
+        end_date=contract_data.get("end_date"),
+        status="active",
+        note=contract_data.get("note"),
+        file_url=contract_data.get("file_url"),
+        salary_base=(
+            Decimal(str(contract_data["salary_base"])) if contract_data.get("salary_base") is not None else None
+        ),
+    )
+
+    # Log contract creation
+    contract_data_for_log = {
+        "contract_no": contract.contract_no,
+        "contract_type": contract.contract_type,
+        "start_date": str(contract.start_date),
+        "end_date": str(contract.end_date) if contract.end_date else None,
+        "employee_id": str(employee.id),
+        "salary_base": str(contract.salary_base) if contract.salary_base is not None else None,
+    }
+    create_system_log(
+        user=creator,
+        action="create",
+        table_name="employment_contract",
+        record_id=str(contract.id),
+        new_value=contract_data_for_log,
+    )
+
+    return employee, contract
 
 
 @transaction.atomic
@@ -273,9 +343,6 @@ def employee_update(
 
     fields_to_update = [
         "full_name",
-        "department",
-        "position_title",
-        "salary_base",
         "email",
         "phone",
         "gender",
@@ -354,11 +421,23 @@ def contract_create_or_renew(
         raise ValidationException(f"Số hợp đồng {contract_no} đã tồn tại")
 
     # 1. Tìm các hợp đồng active cũ của nhân viên để chuyển sang expired hoặc điều chỉnh ngày (overlap)
-    active_contracts = EmploymentContract.objects.filter(employee=employee, status="active")
-    for old_contract in active_contracts:
-        new_start = contract_data["start_date"]
+    from apps.hrm.selectors import count_active_contracts
 
-        # Đảm bảo start_date của HĐLĐ mới >= start_date của HĐLĐ cũ
+    active_count = count_active_contracts(employee)
+    if active_count > 1:
+        raise ValidationException(
+            f"Nhân viên {employee.employee_id} đã có {active_count} hợp đồng đang active. "
+            "Vui lòng dọn dẹp dữ liệu trước khi tạo mới."
+        )
+
+    # Lấy start_date mới
+    new_start = contract_data.get("start_date")
+    if not new_start:
+        new_start = date.today()
+        contract_data["start_date"] = new_start
+
+    active_contracts = EmploymentContract.objects.select_for_update().filter(employee=employee, status="active")
+    for old_contract in active_contracts:
         if new_start < old_contract.start_date:
             raise ValidationException(
                 f"start_date mới ({new_start}) phải >= start_date HĐLĐ cũ ({old_contract.start_date})"
@@ -367,11 +446,13 @@ def contract_create_or_renew(
         old_status = old_contract.status
         old_end_date = old_contract.end_date
 
+        # CHUYỂN status sang expired TRƯỚC khi tạo HĐ mới để không vi phạm partial unique index
+        old_contract.status = "expired"
+
         if old_contract.end_date and new_start <= old_contract.end_date:
-            # Tái ký sớm (overlap): cập nhật end_date cũ
             new_end_for_old = new_start - timedelta(days=1)
             old_contract.end_date = new_end_for_old
-            old_contract.save(update_fields=["end_date"])
+            old_contract.save(update_fields=["status", "end_date"])
 
             # Log old contract update
             create_system_log(
@@ -379,12 +460,10 @@ def contract_create_or_renew(
                 action="update",
                 table_name="employment_contract",
                 record_id=str(old_contract.id),
-                old_value={"end_date": str(old_end_date) if old_end_date else None},
-                new_value={"end_date": str(new_end_for_old)},
+                old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
+                new_value={"status": "expired", "end_date": str(new_end_for_old)},
             )
         else:
-            # Hết hạn tự nhiên
-            old_contract.status = "expired"
             old_contract.save(update_fields=["status"])
 
             # Log old contract update
@@ -407,6 +486,9 @@ def contract_create_or_renew(
         status="active",
         note=contract_data.get("note"),
         file_url=contract_data.get("file_url"),
+        salary_base=(
+            Decimal(str(contract_data["salary_base"])) if contract_data.get("salary_base") is not None else None
+        ),
     )
 
     # Log new contract creation
@@ -416,6 +498,7 @@ def contract_create_or_renew(
         "start_date": str(contract.start_date),
         "end_date": str(contract.end_date) if contract.end_date else None,
         "status": contract.status,
+        "salary_base": str(contract.salary_base) if contract.salary_base is not None else None,
     }
     create_system_log(
         user=creator,
@@ -448,8 +531,120 @@ def contract_create_or_renew(
                 "file_url": doc.file_url,
             },
         )
-
     return contract
+
+
+@transaction.atomic
+def contract_renew(
+    *,
+    contract_id: str,
+    new_contract_no: Optional[str] = None,
+    new_contract_type: Optional[str] = None,
+    start_date: Optional[date] = None,
+    new_salary_base: Optional[Decimal] = None,
+    file_url: Optional[str] = None,
+    note: Optional[str] = None,
+    renewer: Optional[User] = None,
+) -> Dict[str, Any]:
+    """
+    Gia hạn hợp đồng lao động (tái ký) cho nhân viên, có thể kèm điều chỉnh lương.
+    """
+    if renewer:
+        PermissionChecker.check_permission(renewer, "hrm.change_employmentcontract")
+        if new_salary_base is not None:
+            PermissionChecker.check_permission(renewer, "hrm.change_employee")
+
+    try:
+        old_contract = EmploymentContract.objects.select_for_update().get(id=contract_id)
+    except EmploymentContract.DoesNotExist:
+        raise ValidationException("Hợp đồng không tồn tại")
+
+    employee = old_contract.employee
+    actual_start = start_date or (old_contract.end_date + timedelta(days=1) if old_contract.end_date else date.today())
+    if actual_start < old_contract.start_date:
+        raise ValidationException(
+            f"start_date mới ({actual_start}) phải >= start_date HĐLĐ cũ ({old_contract.start_date})"
+        )
+
+    # 1. Xử lý HĐLĐ cũ: nếu overlap thì rút end_date, nếu không thì set expired
+    old_status = old_contract.status
+    old_end_date = old_contract.end_date
+    old_contract.status = "expired"
+
+    if old_contract.end_date and actual_start <= old_contract.end_date:
+        new_end_for_old = actual_start - timedelta(days=1)
+        old_contract.end_date = new_end_for_old
+        old_contract.save(update_fields=["status", "end_date"])
+
+        create_system_log(
+            user=renewer,
+            action="update",
+            table_name="employment_contract",
+            record_id=str(old_contract.id),
+            old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
+            new_value={"status": "expired", "end_date": str(new_end_for_old)},
+        )
+    else:
+        old_contract.save(update_fields=["status"])
+
+        create_system_log(
+            user=renewer,
+            action="update",
+            table_name="employment_contract",
+            record_id=str(old_contract.id),
+            old_value={"status": old_status},
+            new_value={"status": "expired"},
+        )
+
+    # 2. Tạo HĐLĐ mới
+    new_contract = EmploymentContract.objects.create(
+        employee=employee,
+        contract_no=new_contract_no or f"{old_contract.contract_no}-RENEW",
+        contract_type=new_contract_type or old_contract.contract_type,
+        start_date=actual_start,
+        status="active",
+        file_url=file_url,
+        note=note,
+        salary_base=new_salary_base if new_salary_base is not None else old_contract.salary_base,
+    )
+
+    create_system_log(
+        user=renewer,
+        action="create",
+        table_name="employment_contract",
+        record_id=str(new_contract.id),
+        new_value={
+            "contract_no": new_contract.contract_no,
+            "contract_type": new_contract.contract_type,
+            "start_date": str(new_contract.start_date),
+            "status": new_contract.status,
+            "renewed_from": str(old_contract.id),
+            "salary_base": str(new_contract.salary_base) if new_contract.salary_base is not None else None,
+        },
+    )
+
+    # 4. Lưu file scan hợp đồng (nếu có)
+    if file_url:
+        doc = EmployeeDocument.objects.create(
+            employee=employee,
+            doc_type="contract_scan",
+            title=f"Scan HĐLĐ gia hạn {new_contract.contract_no}",
+            file_url=file_url,
+            uploaded_by=renewer,
+        )
+
+        create_system_log(
+            user=renewer,
+            action="create",
+            table_name="employee_document",
+            record_id=str(doc.id),
+            new_value={
+                "doc_type": doc.doc_type,
+                "title": doc.title,
+                "file_url": doc.file_url,
+            },
+        )
+    return {"contract": new_contract}
 
 
 @transaction.atomic
@@ -647,179 +842,112 @@ def contract_terminate(
 
 
 @transaction.atomic
-def employee_update_salary_or_title(
+def employee_adjust_salary_apply(
     *,
     employee_id: str,
-    change_data: Dict[str, Any],
-    approved_by_user_id: str,  # This acts as the proposing user now
-    approved_by: Optional[User] = None,
-) -> EmploymentHistory:
+    new_salary_base: Decimal,
+    reason: Optional[str] = None,
+    actor: Optional[User] = None,
+) -> Dict[str, Any]:
     """
-    Tạo đề xuất thay đổi lương cơ bản, chức danh hoặc phòng ban của nhân viên ở trạng thái Chờ duyệt.
+    Áp dụng điều chỉnh lương cơ bản (Cách B - apply trực tiếp).
     """
+    if actor:
+        PermissionChecker.check_permission(actor, "hrm.adjust_salary")
+
+    today = date.today()
+
     try:
-        employee = Employee.objects.get(id=employee_id)
+        employee = Employee.objects.select_for_update().get(id=employee_id)
     except Employee.DoesNotExist:
-        raise ValidationException("Nhân viên không tồn tại")
+        raise NotFoundException("Nhân viên không tồn tại")
 
-    if not approved_by:
-        try:
-            approved_by = User.objects.get(id=approved_by_user_id)
-        except User.DoesNotExist:
-            raise ValidationException("Người đề xuất không tồn tại")
+    if new_salary_base is None:
+        raise ValidationException("Lương cơ bản mới là bắt buộc")
+    new_salary_base = Decimal(str(new_salary_base))
 
-    PermissionChecker.check_permission(approved_by, "hrm.change_employee")
-
-    change_type = change_data.get("change_type")
-    if not change_type:
-        raise ValidationException("Loại thay đổi (change_type) là bắt buộc")
-
-    effective_date = change_data.get("effective_date")
-    if not effective_date:
-        raise ValidationException("Ngày có hiệu lực (effective_date) là bắt buộc")
-
-    # Lưu giá trị cũ
-    old_salary_base = employee.salary_base
-    old_title = employee.position_title
-    old_department = employee.department
-
-    # Khởi tạo giá trị mới
-    new_salary_base = change_data.get("new_salary_base")
-    new_title = change_data.get("new_title")
-    new_department = change_data.get("new_department")
-
-    # Kiểm tra tính hợp lệ ban đầu của các trường mới theo change_type
-    if change_type == "salary_change":
-        if new_salary_base is None:
-            raise ValidationException("Lương cơ bản mới là bắt buộc cho thay đổi lương")
-    elif change_type == "title_change":
-        if not new_title:
-            raise ValidationException("Chức danh mới là bắt buộc cho thay đổi chức danh")
-    elif change_type == "department_transfer":
-        if not new_department:
-            raise ValidationException("Phòng ban mới là bắt buộc cho điều chuyển phòng ban")
-    elif change_type != "other":
-        raise ValidationException(f"Loại thay đổi không hợp lệ: {change_type}")
-
-    # Tạo bản ghi EmploymentHistory ở trạng thái pending_approval (chưa áp dụng lên Employee)
-    history = EmploymentHistory.objects.create(
-        employee=employee,
-        change_type=change_type,
-        old_salary_base=old_salary_base,
-        new_salary_base=Decimal(str(new_salary_base)) if new_salary_base is not None else None,
-        old_title=old_title,
-        new_title=new_title,
-        old_department=old_department,
-        new_department=new_department,
-        effective_date=effective_date,
-        approved_by=None,
-        approved_at=None,
-        status="pending_approval",
-        reason=change_data.get("reason"),
+    # Tìm HĐLĐ active
+    active_contract = (
+        EmploymentContract.objects.select_for_update()
+        .filter(employee=employee, status="active")
+        .order_by("-start_date")
+        .first()
     )
 
-    # Ghi log tạo đề xuất cho EmploymentHistory
-    history_log_data = {
-        "change_type": history.change_type,
-        "old_salary_base": str(history.old_salary_base) if history.old_salary_base is not None else None,
-        "new_salary_base": str(history.new_salary_base) if history.new_salary_base is not None else None,
-        "old_title": history.old_title,
-        "new_title": history.new_title,
-        "old_department": history.old_department,
-        "new_department": history.new_department,
-        "effective_date": str(history.effective_date),
-        "status": history.status,
-        "reason": history.reason,
-    }
-    create_system_log(
-        user=approved_by,
-        action="create",
-        table_name="employment_history",
-        record_id=str(history.id),
-        new_value=history_log_data,
-    )
+    # Quyết định: update hoặc tạo mới
+    if active_contract and (active_contract.end_date is None or today <= active_contract.end_date):
+        # Case 1: HĐLĐ active còn hạn -> UPDATE
+        old_salary = active_contract.salary_base
+        active_contract.salary_base = new_salary_base
+        active_contract.save(update_fields=["salary_base", "updated_at"])
 
-    return history
-
-
-@transaction.atomic
-def employment_history_approve(*, user: User, history_id: str) -> EmploymentHistory:
-    """
-    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
-    Áp dụng các thay đổi từ EmploymentHistory lên hồ sơ Employee.
-    """
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-
-    history = EmploymentHistory.objects.select_for_update().filter(id=history_id).first()
-    if not history:
-        raise NotFoundException("Đề xuất thay đổi nhân sự không tồn tại.")
-
-    if history.status != "pending_approval":
-        raise ValidationException("Đề xuất thay đổi nhân sự này đã được xử lý.")
-
-    employee = Employee.objects.select_for_update().get(id=history.employee_id)
-
-    # Lưu giá trị cũ thực tế của Employee tại thời điểm duyệt
-    old_salary_base = employee.salary_base
-    old_title = employee.position_title
-    old_department = employee.department
-
-    # Cập nhật thông tin mới sang hồ sơ nhân viên
-    if history.change_type == "salary_change":
-        employee.salary_base = history.new_salary_base
-    elif history.change_type == "title_change":
-        employee.position_title = history.new_title
-    elif history.change_type == "department_transfer":
-        employee.department = history.new_department
-    elif history.change_type == "other":
-        if history.new_salary_base is not None:
-            employee.salary_base = history.new_salary_base
-        if history.new_title is not None:
-            employee.position_title = history.new_title
-        if history.new_department is not None:
-            employee.department = history.new_department
-
-    employee.save()
-
-    # Ghi log cập nhật cho Employee
-    employee_old = {}
-    employee_new = {}
-    if old_salary_base != employee.salary_base:
-        employee_old["salary_base"] = str(old_salary_base) if old_salary_base is not None else None
-        employee_new["salary_base"] = str(employee.salary_base)
-    if old_title != employee.position_title:
-        employee_old["position_title"] = old_title
-        employee_new["position_title"] = employee.position_title
-    if old_department != employee.department:
-        employee_old["department"] = old_department
-        employee_new["department"] = employee.department
-
-    if employee_new:
         create_system_log(
-            user=user,
+            user=actor,
             action="update",
-            table_name="employee",
-            record_id=str(employee.id),
-            old_value=employee_old,
-            new_value=employee_new,
+            table_name="employment_contract",
+            record_id=str(active_contract.id),
+            old_value={"salary_base": str(old_salary) if old_salary else None},
+            new_value={"salary_base": str(new_salary_base), "effective_date": str(today)},
+        )
+        result_contract = active_contract
+    else:
+        # Case 2: HĐLĐ active hết hạn (hoặc chưa có) -> TẠO MỚI
+        if active_contract:
+            old_status = active_contract.status
+            active_contract.status = "expired"
+            if active_contract.end_date is None or today <= active_contract.end_date:
+                active_contract.end_date = today - timedelta(days=1)
+            active_contract.save(update_fields=["status", "end_date", "updated_at"])
+
+            create_system_log(
+                user=actor,
+                action="update",
+                table_name="employment_contract",
+                record_id=str(active_contract.id),
+                old_value={"status": old_status},
+                new_value={"status": "expired", "end_date": str(active_contract.end_date)},
+            )
+
+        new_contract = EmploymentContract.objects.create(
+            employee=employee,
+            contract_no=f"ADJ-{today.strftime('%Y%m%d')}-{employee.employee_id}",
+            contract_type=active_contract.contract_type if active_contract else "indefinite_term",
+            start_date=today,
+            end_date=None,
+            status="active",
+            salary_base=new_salary_base,
         )
 
-    # Cập nhật trạng thái EmploymentHistory
-    history.status = "approved"
-    history.approved_by = user
-    history.approved_at = timezone.now()
-    history.save()
+        create_system_log(
+            user=actor,
+            action="create",
+            table_name="employment_contract",
+            record_id=str(new_contract.id),
+            new_value={
+                "contract_no": new_contract.contract_no,
+                "salary_base": str(new_salary_base),
+                "start_date": str(today),
+                "status": "active",
+            },
+        )
+        result_contract = new_contract
 
-    # Ghi log duyệt cho EmploymentHistory
-    create_system_log(
-        user=user,
-        action="approve",
-        table_name="employment_history",
-        record_id=str(history.id),
-        new_value={"status": history.status, "approved_by": str(user.id)},
-    )
+    # Tính lại payslip kỳ hiện tại (status < paid, bao gồm partial)
+    affected_slips = []
+    salary_period = today.strftime("%Y-%m")
+    slips_to_recalc = SalarySlip.objects.filter(employee=employee, salary_period=salary_period).exclude(status="paid")
 
-    return history
+    for slip in slips_to_recalc:
+        try:
+            updated_slip = payroll_calculate_salary(
+                salary_slip_id=str(slip.id),
+                creator=actor,
+            )
+            affected_slips.append(updated_slip)
+        except ValidationException:
+            continue
+
+    return {"contract": result_contract, "affected_payslips": affected_slips}
 
 
 @transaction.atomic
@@ -2267,90 +2395,6 @@ def _calc_termination_compensation(
 
 
 @transaction.atomic
-def contract_handle_expiration(
-    *,
-    contract_id: str,
-    action: str,
-    new_salary_base: Optional[Decimal] = None,
-    new_title: Optional[str] = None,
-    start_date: Optional[date] = None,
-    handler: Optional[User] = None,
-) -> Dict[str, Any]:
-    """
-    Xử lý hợp đồng lao động hết hạn với 4 hành động: renew, renew_with_salary_change, terminate, defer.
-    """
-    if handler:
-        PermissionChecker.check_permission(handler, "hrm.change_employmentcontract")
-
-    try:
-        contract = EmploymentContract.objects.get(id=contract_id)
-    except EmploymentContract.DoesNotExist:
-        raise ValidationException("Hợp đồng không tồn tại")
-
-    if action == "renew":
-        actual_start = start_date or (contract.end_date + timedelta(days=1)) if contract.end_date else date.today()
-        new_contract = contract_create_or_renew(
-            employee_id=str(contract.employee_id),
-            contract_data={
-                "contract_no": f"{contract.contract_no}-RENEW",
-                "contract_type": contract.contract_type,
-                "start_date": actual_start,
-            },
-            creator=handler,
-        )
-        return {"contract": new_contract, "history": None}
-
-    elif action == "renew_with_salary_change":
-        if not new_salary_base:
-            raise ValidationException("new_salary_base bắt buộc khi renew_with_salary_change")
-        actual_start = start_date or (contract.end_date + timedelta(days=1)) if contract.end_date else date.today()
-        new_contract = contract_create_or_renew(
-            employee_id=str(contract.employee_id),
-            contract_data={
-                "contract_no": f"{contract.contract_no}-RENEW",
-                "contract_type": contract.contract_type,
-                "start_date": actual_start,
-            },
-            creator=handler,
-        )
-        history = employee_update_salary_or_title(
-            employee_id=str(contract.employee_id),
-            change_data={
-                "change_type": "other",
-                "new_salary_base": str(new_salary_base),
-                "new_title": new_title,
-                "effective_date": new_contract.start_date,
-                "reason": f"Tái ký HĐLĐ {new_contract.contract_no} kèm thay đổi lương/tên chức danh",
-            },
-            approved_by_user_id=str(handler.id) if handler else None,
-            approved_by=handler,
-        )
-        return {"contract": new_contract, "history": history}
-
-    elif action == "terminate":
-        termination_date = contract.end_date or date.today()
-        contract_terminate(
-            contract_id=contract_id,
-            termination_date=termination_date,
-            reason="Hết hạn hợp đồng, không tái ký",
-            terminator=handler,
-        )
-        return {"contract": None, "history": None}
-
-    elif action == "defer":
-        create_system_log(
-            user=handler,
-            action="defer",
-            table_name="employment_contract",
-            record_id=str(contract.id),
-            new_value={"note": "HR đã xem nhưng chưa quyết định"},
-        )
-        return {"contract": None, "history": None}
-
-    raise ValidationException(f"Action không hợp lệ: {action}")
-
-
-@transaction.atomic
 def create_partial_salary_slip(
     *,
     employee_id: str,
@@ -2452,62 +2496,6 @@ def payroll_submit_for_review(
     )
 
     return slip
-
-
-@transaction.atomic
-def employment_history_reject(
-    *,
-    user: User,
-    history_id: str,
-    reason: str,
-) -> EmploymentHistory:
-    """
-    Từ chối đề xuất thay đổi lương và thực hiện rollback hợp đồng mới nếu là tái ký gộp.
-    """
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-
-    try:
-        history = EmploymentHistory.objects.select_for_update().get(id=history_id)
-    except EmploymentHistory.DoesNotExist:
-        raise ValidationException("Đề xuất thay đổi không tồn tại")
-
-    if history.status != "pending_approval":
-        raise ValidationException("Đề xuất đã xử lý.")
-
-    if history.change_type == "other" and "Tái ký" in (history.reason or ""):
-        related_contract = (
-            EmploymentContract.objects.filter(
-                employee_id=history.employee_id,
-                contract_no__contains="RENEW",
-                status="active",
-            )
-            .order_by("-created_at")
-            .first()
-        )
-        if related_contract:
-            related_contract.delete()
-            create_system_log(
-                user=user,
-                action="rollback_contract",
-                table_name="employment_contract",
-                record_id=str(related_contract.id),
-                new_value={"reason": f"BGĐ từ chối đề xuất tái ký: {reason}"},
-            )
-
-    history.status = "rejected"
-    history.approved_by = user
-    history.approved_at = timezone.now()
-    history.save()
-
-    create_system_log(
-        user=user,
-        action="reject",
-        table_name="employment_history",
-        record_id=str(history.id),
-        new_value={"status": "rejected", "reject_reason": reason},
-    )
-
-    return history
 
 
 @transaction.atomic
