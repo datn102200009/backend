@@ -962,11 +962,11 @@ def get_hrm_payroll_lifecycle_status():
         period_groups[period].append(row)
 
     pending_periods = []
-    status_weights = {"draft": 0, "calculated": 1, "submitted": 2, "approved": 3}
+    status_weights = {"draft": 0, "calculated": 1, "pending_finance_review": 2, "approved": 3}
     status_labels = {
         "draft": "Bản nháp",
         "calculated": "Đã tính toán",
-        "submitted": "Chờ phê duyệt",
+        "pending_finance_review": "Chờ phê duyệt",
         "approved": "Chờ thanh toán",
     }
 

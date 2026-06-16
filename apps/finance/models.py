@@ -31,7 +31,6 @@ class SalarySlip(BaseModel):
         choices=[
             ("draft", "Draft"),
             ("calculated", "Calculated"),
-            ("submitted", "Submitted"),
             ("pending_finance_review", "Pending Finance Review"),
             ("approved", "Approved"),
             ("paid", "Paid"),

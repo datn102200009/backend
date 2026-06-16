@@ -1205,8 +1205,8 @@ def payroll_approve_slip(*, user: User, salary_slip_id: str) -> SalarySlip:
     except SalarySlip.DoesNotExist:
         raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
 
-    if slip.status not in ["pending_finance_review", "calculated", "submitted"]:
-        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái chờ duyệt hoặc calculated/submitted")
+    if slip.status not in ["pending_finance_review", "calculated"]:
+        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái chờ duyệt hoặc calculated")
 
     old_status = slip.status
     slip.status = "approved"
@@ -1240,7 +1240,7 @@ def payroll_reject_slip(*, user: User, salary_slip_id: str, reason: str) -> Sala
     except SalarySlip.DoesNotExist:
         raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
 
-    if slip.status not in ["pending_finance_review", "approved", "submitted"]:
+    if slip.status not in ["pending_finance_review", "approved"]:
         raise ValidationException("Chỉ có thể từ chối phiếu lương ở trạng thái chờ duyệt hoặc approved")
 
     old_status = slip.status
@@ -1273,7 +1273,7 @@ def payroll_bulk_approve_and_pay(
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
     slips_qs = SalarySlip.objects.filter(
-        salary_period=salary_period, status__in=["pending_finance_review", "approved", "submitted", "calculated"]
+        salary_period=salary_period, status__in=["pending_finance_review", "approved", "calculated"]
     ).select_related("employee")
 
     slips_to_update = []
