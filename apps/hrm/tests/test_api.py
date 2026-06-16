@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -183,6 +184,44 @@ class TestHrmAPI:
         employee.refresh_from_db()
         assert employee.employment_status == "inactive"
         assert employee.leave_date == date(2026, 6, 15)
+
+        # Check slip status
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-06")
+        assert slip.status == "pending_finance_review"
+
+    def test_contract_terminate_api_returns_pending_finance_review_status(self, mock_check, auth_client):
+        employee = EmployeeFactory(employment_status="active")
+        contract = EmploymentContractFactory(employee=employee, status="active")
+        url = f"/api/v1/hrm/contracts/{contract.id}/terminate/"
+        data = {
+            "termination_date": "2026-06-15",
+            "reason": "Nghi viec theo nguyen vong",
+        }
+        response = auth_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+
+        from apps.finance.models import SalarySlip
+
+        slip = SalarySlip.objects.get(employee=employee, salary_period="2026-06")
+        assert slip.status == "pending_finance_review"
+
+    def test_contract_terminate_api_does_not_create_cash_flow(self, mock_check, auth_client):
+        employee = EmployeeFactory(employment_status="active")
+        contract = EmploymentContractFactory(employee=employee, status="active")
+        url = f"/api/v1/hrm/contracts/{contract.id}/terminate/"
+        data = {
+            "termination_date": "2026-06-15",
+            "reason": "Nghi viec theo nguyen vong",
+        }
+
+        from apps.finance.models import CashFlowTransaction
+
+        initial_count = CashFlowTransaction.objects.count()
+        response = auth_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        assert CashFlowTransaction.objects.count() == initial_count
 
     # =========================================================================
     # ATTENDANCE API TESTS
@@ -387,9 +426,9 @@ class TestHrmAPI:
         response = auth_client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) >= 2
-        assert "employee_code" in response.data[0]
-        assert "employee_name" in response.data[0]
+        assert response.data["count"] >= 2
+        assert "employee_code" in response.data["results"][0]
+        assert "employee_name" in response.data["results"][0]
 
     def test_list_disciplines(self, mock_check, auth_client):
         employee = EmployeeFactory()
@@ -398,9 +437,9 @@ class TestHrmAPI:
         response = auth_client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) >= 2
-        assert "employee_code" in response.data[0]
-        assert "employee_name" in response.data[0]
+        assert response.data["count"] >= 2
+        assert "employee_code" in response.data["results"][0]
+        assert "employee_name" in response.data["results"][0]
 
     def test_list_and_create_public_holiday(self, mock_check, auth_client):
         from datetime import timedelta
@@ -696,3 +735,292 @@ class TestHrmAPI:
 
         assert response.status_code == 200
         assert response.data["status"] == "rejected"
+
+    def test_salary_slip_bulk_calculate_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory, SalarySlipFactory
+
+        employee1 = EmployeeFactory(salary_base=10000000)
+        employee2 = EmployeeFactory(salary_base=12000000)
+
+        EmploymentContractFactory(
+            employee=employee1, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+        )
+        EmploymentContractFactory(
+            employee=employee2, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+        )
+
+        SalarySlipFactory(employee=employee1, salary_period="2026-06", status="draft")
+        SalarySlipFactory(employee=employee2, salary_period="2026-06", status="draft")
+
+        url = "/api/v1/hrm/salary-slips/bulk-calculate/"
+        data = {"salary_period": "2026-06"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["count"] == 2
+
+    def test_salary_slip_bulk_submit_api(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, SalarySlipFactory
+
+        employee1 = EmployeeFactory()
+        employee2 = EmployeeFactory()
+
+        SalarySlipFactory(employee=employee1, salary_period="2026-06", status="calculated")
+        SalarySlipFactory(employee=employee2, salary_period="2026-06", status="calculated")
+
+        url = "/api/v1/hrm/salary-slips/bulk-submit-for-review/"
+        data = {"salary_period": "2026-06"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["count"] == 2
+
+
+@pytest.mark.django_db
+@patch("apps.common.xlib.permissions.PermissionChecker.check_permission", return_value=True)
+class TestRewardDisciplineCRUDAPI:
+    def test_reward_detail_get_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee = EmployeeFactory()
+        reward = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 10),
+            reward_type="performance_bonus",
+            amount=Decimal("1000000.00"),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/rewards/{reward.id}/"
+        response = auth_client.get(url)
+
+        assert response.status_code == 200
+        assert response.data["id"] == str(reward.id)
+        assert response.data["status"] == "pending_approval"
+
+    def test_reward_detail_patch_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee = EmployeeFactory()
+        reward = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 10),
+            reward_type="performance_bonus",
+            amount=Decimal("1000000.00"),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/rewards/{reward.id}/"
+        data = {"amount": 1500000, "description": "New description via API"}
+        response = auth_client.patch(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["amount"] == "1500000.00"
+        assert response.data["description"] == "New description via API"
+
+    def test_reward_detail_delete_success(self, mock_check, auth_client):
+        from apps.hrm.models import RewardRecord
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee = EmployeeFactory()
+        reward = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 10),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/rewards/{reward.id}/"
+        response = auth_client.delete(url)
+
+        assert response.status_code == 204
+        assert not RewardRecord.objects.filter(id=reward.id).exists()
+
+    def test_reward_detail_delete_blocked_when_approved(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee = EmployeeFactory()
+        reward = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 10),
+            status="approved",
+        )
+
+        url = f"/api/v1/hrm/rewards/{reward.id}/"
+        response = auth_client.delete(url)
+
+        assert response.status_code == 400
+        assert "Chỉ có thể xóa khen thưởng ở trạng thái chờ duyệt" in response.data["error"]
+
+    def test_reward_cancel_post_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee = EmployeeFactory()
+        reward = RewardRecordFactory(
+            employee=employee,
+            reward_date=date(2026, 6, 10),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/rewards/{reward.id}/cancel/"
+        data = {"reason": "Not correct"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["status"] == "cancelled"
+
+    def test_reward_list_with_filters(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import EmployeeFactory, RewardRecordFactory
+
+        employee1 = EmployeeFactory()
+        employee2 = EmployeeFactory()
+
+        RewardRecordFactory(
+            employee=employee1,
+            reward_date=date(2026, 6, 10),
+            reward_type="performance_bonus",
+            status="approved",
+        )
+        RewardRecordFactory(
+            employee=employee2,
+            reward_date=date(2026, 6, 11),
+            reward_type="initiative",
+            status="pending_approval",
+        )
+
+        url = "/api/v1/hrm/rewards/"
+        response = auth_client.get(url, {"status": "approved"})
+
+        assert response.status_code == 200
+        assert response.data["count"] == 1
+        assert response.data["results"][0]["status"] == "approved"
+
+        # Check date range filter
+        response = auth_client.get(url, {"date_from": "2026-06-11", "date_to": "2026-06-12"})
+        assert response.status_code == 200
+        assert response.data["count"] == 1
+        assert response.data["results"][0]["reward_date"] == "2026-06-11"
+
+    def test_discipline_detail_get_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory
+
+        employee = EmployeeFactory()
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            incident_date=date(2026, 6, 10),
+            discipline_date=date(2026, 6, 12),
+            discipline_type="warning",
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/"
+        response = auth_client.get(url)
+
+        assert response.status_code == 200
+        assert response.data["id"] == str(discipline.id)
+
+    def test_discipline_detail_patch_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory
+
+        employee = EmployeeFactory()
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            incident_date=date(2026, 6, 10),
+            discipline_date=date(2026, 6, 12),
+            discipline_type="warning",
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/"
+        data = {"description": "New description via API for discipline"}
+        response = auth_client.patch(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["description"] == "New description via API for discipline"
+
+    def test_discipline_detail_delete_success(self, mock_check, auth_client):
+        from apps.hrm.models import DisciplineRecord
+        from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory
+
+        employee = EmployeeFactory()
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            incident_date=date(2026, 6, 10),
+            discipline_date=date(2026, 6, 12),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/"
+        response = auth_client.delete(url)
+
+        assert response.status_code == 204
+        assert not DisciplineRecord.objects.filter(id=discipline.id).exists()
+
+    def test_discipline_cancel_post_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory
+
+        employee = EmployeeFactory()
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            incident_date=date(2026, 6, 10),
+            discipline_date=date(2026, 6, 12),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/cancel/"
+        data = {"reason": "Not correct violation"}
+        response = auth_client.post(url, data, format="json")
+
+        assert response.status_code == 200
+        assert response.data["status"] == "cancelled"
+
+    def test_discipline_approve_termination_api_success(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import DisciplineRecordFactory, EmployeeFactory, EmploymentContractFactory
+        from apps.master_data.models import Employee
+
+        employee = EmployeeFactory(employee_id="EMP_API_1", employment_status="active")
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-API-1", status="active")
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            discipline_type="termination",
+            discipline_date=date(2026, 6, 15),
+            incident_date=date(2026, 6, 14),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/approve/"
+        response = auth_client.post(url)
+
+        assert response.status_code == 200
+        assert response.data["status"] == "approved"
+
+        employee.refresh_from_db()
+        contract.refresh_from_db()
+        assert employee.employment_status == "inactive"
+        assert contract.status == "terminated"
+
+    def test_discipline_approve_termination_api_returns_400_on_contract_error(self, mock_check, auth_client):
+        from apps.hrm.tests.factories import (
+            DisciplineRecordFactory,
+            EmployeeFactory,
+            EmploymentContractFactory,
+            SalarySlipFactory,
+        )
+
+        employee = EmployeeFactory(employee_id="EMP_API_2", employment_status="active")
+        contract = EmploymentContractFactory(employee=employee, contract_no="HDLD-API-2", status="active")
+
+        SalarySlipFactory(employee=employee, salary_period="2026-05", status="draft")
+
+        discipline = DisciplineRecordFactory(
+            employee=employee,
+            discipline_type="termination",
+            discipline_date=date(2026, 6, 15),
+            incident_date=date(2026, 6, 14),
+            status="pending_approval",
+        )
+
+        url = f"/api/v1/hrm/disciplines/{discipline.id}/approve/"
+        response = auth_client.post(url)
+
+        assert response.status_code == 400
+        assert "vẫn còn nợ lương kỳ trước chưa thanh toán" in str(response.data)

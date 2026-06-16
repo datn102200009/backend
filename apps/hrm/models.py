@@ -199,9 +199,9 @@ class RewardRecord(BaseModel):
 
     REWARD_TYPES = [
         ("performance_bonus", "Thưởng hiệu quả công việc"),
-        ("initiative", "Sáng kiến"),
+        ("initiative", "Thưởng sáng kiến"),
         ("holiday_bonus", "Thưởng lễ tết"),
-        ("other", "Khác"),
+        ("other", "Thưởng khác"),
     ]
 
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="rewards")
@@ -218,6 +218,7 @@ class RewardRecord(BaseModel):
             ("pending_approval", "Pending Approval"),
             ("approved", "Approved"),
             ("rejected", "Rejected"),
+            ("cancelled", "Cancelled"),
         ],
         default="pending_approval",
         db_index=True,
@@ -226,6 +227,10 @@ class RewardRecord(BaseModel):
         User, on_delete=models.SET_NULL, related_name="approved_rewards", null=True, blank=True
     )
     approved_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="cancelled_rewards", null=True, blank=True
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "reward_record"
@@ -269,6 +274,7 @@ class DisciplineRecord(BaseModel):
             ("pending_approval", "Pending Approval"),
             ("approved", "Approved"),
             ("rejected", "Rejected"),
+            ("cancelled", "Cancelled"),
         ],
         default="pending_approval",
         db_index=True,
@@ -277,6 +283,10 @@ class DisciplineRecord(BaseModel):
         User, on_delete=models.SET_NULL, related_name="approved_disciplines", null=True, blank=True
     )
     approved_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="cancelled_disciplines", null=True, blank=True
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "discipline_record"

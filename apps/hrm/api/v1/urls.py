@@ -41,15 +41,29 @@ urlpatterns = [
     path("salary-slips/<uuid:pk>/calculate/", views.salary_slip_calculate_view, name="salary_slip_calculate"),
     path("salary-slips/partial/", views.partial_salary_slip_create_view, name="partial_salary_slip_create"),
     path(
+        "salary-slips/bulk-calculate/",
+        views.salary_slip_bulk_calculate_view,
+        name="salary_slip_bulk_calculate",
+    ),
+    path(
+        "salary-slips/bulk-submit-for-review/",
+        views.salary_slip_bulk_submit_view,
+        name="salary_slip_bulk_submit",
+    ),
+    path(
         "salary-slips/<uuid:pk>/submit-for-review/",
         views.payroll_submit_view,
         name="payroll_submit_for_review",
     ),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
+    path("rewards/<uuid:pk>/", views.reward_detail_update_delete_view, name="reward_detail_update_delete"),
     path("rewards/<uuid:pk>/approve/", views.reward_approve_view, name="reward_approve"),
+    path("rewards/<uuid:pk>/cancel/", views.reward_cancel_view, name="reward_cancel"),
     path("disciplines/", views.discipline_list_create_view, name="discipline_list_create"),
+    path("disciplines/<uuid:pk>/", views.discipline_detail_update_delete_view, name="discipline_detail_update_delete"),
     path("disciplines/<uuid:pk>/approve/", views.discipline_approve_view, name="discipline_approve"),
+    path("disciplines/<uuid:pk>/cancel/", views.discipline_cancel_view, name="discipline_cancel"),
     path("employment-histories/", views.employment_history_list_view, name="employment_history_list"),
     path(
         "employment-histories/<uuid:pk>/approve/",

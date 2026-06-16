@@ -448,10 +448,24 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending_approval, approved, rejected]
+          enum: [pending_approval, approved, rejected, cancelled]
         approved_by_id:
           type: string
           format: uuid
+          nullable: true
+        approved_by_username:
+          type: string
+          nullable: true
+        cancelled_by_id:
+          type: string
+          format: uuid
+          nullable: true
+        cancelled_by_username:
+          type: string
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
           nullable: true
         created_at:
           type: string
@@ -492,10 +506,24 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending_approval, approved, rejected]
+          enum: [pending_approval, approved, rejected, cancelled]
         approved_by_id:
           type: string
           format: uuid
+          nullable: true
+        approved_by_username:
+          type: string
+          nullable: true
+        cancelled_by_id:
+          type: string
+          format: uuid
+          nullable: true
+        cancelled_by_username:
+          type: string
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
           nullable: true
         created_at:
           type: string
@@ -1474,6 +1502,82 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /hrm/salary-slips/bulk-calculate/:
+    post:
+      summary: Tính toán hàng loạt phiếu lương
+      description: Tính toán chi tiết các khoản thực nhận cho tất cả các phiếu lương nháp (draft) trong một kỳ lương chỉ định.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - salary_period
+              properties:
+                salary_period:
+                  type: string
+                  description: Kỳ lương cần tính toán (YYYY-MM)
+                  example: "2026-05"
+      responses:
+        '200':
+          description: Tính toán thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  slip_ids:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /hrm/salary-slips/bulk-submit-for-review/:
+    post:
+      summary: HRM gửi hàng loạt phiếu lương chờ duyệt
+      description: Gửi toàn bộ phiếu lương ở trạng thái 'calculated' của kỳ lương chỉ định sang Finance duyệt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - salary_period
+              properties:
+                salary_period:
+                  type: string
+                  description: Kỳ lương cần gửi duyệt (YYYY-MM)
+                  example: "2026-05"
+      responses:
+        '200':
+          description: Gửi duyệt thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  slip_ids:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
   /hrm/salary-slips/{id}/submit-for-review/:
     post:
       summary: HRM gửi phiếu lương chờ duyệt
@@ -1531,7 +1635,7 @@ paths:
   /hrm/rewards/:
     get:
       summary: Lấy danh sách khen thưởng
-      description: Lấy danh sách toàn bộ khen thưởng của nhân sự, hỗ trợ lọc theo employee_id.
+      description: Lấy danh sách toàn bộ khen thưởng của nhân sự, hỗ trợ lọc nâng cao và phân trang.
       parameters:
         - name: employee_id
           in: query
@@ -1540,15 +1644,60 @@ paths:
             type: string
             format: uuid
           description: Lọc theo ID nhân viên
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected, cancelled]
+          description: Lọc theo trạng thái
+        - name: reward_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [performance_bonus, initiative, holiday_bonus, other]
+          description: Lọc theo loại khen thưởng
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Ngày bắt đầu lọc (YYYY-MM-DD)
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Ngày kết thúc lọc (YYYY-MM-DD)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Số bản ghi tối đa
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Vị trí bắt đầu
       responses:
         '200':
           description: Thành công
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RewardRecord'
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RewardRecord'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
@@ -1606,6 +1755,99 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /hrm/rewards/{id}/:
+    get:
+      summary: Xem chi tiết khen thưởng
+      description: Lấy thông tin chi tiết một bản ghi khen thưởng.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    patch:
+      summary: Cập nhật khen thưởng
+      description: Cập nhật thông tin bản ghi khen thưởng khi trạng thái còn là 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reward_date:
+                  type: string
+                  format: date
+                reward_type:
+                  type: string
+                  enum: [performance_bonus, initiative, holiday_bonus, other]
+                amount:
+                  type: number
+                  format: float
+                description:
+                  type: string
+                salary_slip_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      summary: Xóa khen thưởng
+      description: Xóa bản ghi khen thưởng khi trạng thái còn là 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Xóa thành công
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/rewards/{id}/approve/:
     post:
       summary: Phê duyệt khen thưởng
@@ -1633,10 +1875,46 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+  /hrm/rewards/{id}/cancel/:
+    post:
+      summary: Hủy khen thưởng
+      description: Người lập hủy đề xuất khen thưởng ở trạng thái 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Hủy thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/disciplines/:
     get:
       summary: Lấy danh sách kỷ luật
-      description: Lấy danh sách toàn bộ kỷ luật của nhân sự, hỗ trợ lọc theo employee_id.
+      description: Lấy danh sách toàn bộ kỷ luật của nhân sự, hỗ trợ lọc nâng cao và phân trang.
       parameters:
         - name: employee_id
           in: query
@@ -1645,15 +1923,60 @@ paths:
             type: string
             format: uuid
           description: Lọc theo ID nhân viên
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected, cancelled]
+          description: Lọc theo trạng thái
+        - name: discipline_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [reprimand, warning, salary_deduction, termination, other]
+          description: Lọc theo hình thức kỷ luật
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Ngày bắt đầu lọc (YYYY-MM-DD)
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Ngày kết thúc lọc (YYYY-MM-DD)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Số bản ghi tối đa
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Vị trí bắt đầu
       responses:
         '200':
           description: Thành công
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/DisciplineRecord'
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DisciplineRecord'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
@@ -1718,6 +2041,104 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /hrm/disciplines/{id}/:
+    get:
+      summary: Xem chi tiết kỷ luật
+      description: Lấy thông tin chi tiết một bản ghi kỷ luật.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisciplineRecord'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    patch:
+      summary: Cập nhật kỷ luật
+      description: Cập nhật thông tin bản ghi kỷ luật khi trạng thái còn là 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                incident_date:
+                  type: string
+                  format: date
+                discipline_date:
+                  type: string
+                  format: date
+                discipline_type:
+                  type: string
+                  enum: [reprimand, warning, salary_deduction, termination, other]
+                description:
+                  type: string
+                penalty_amount:
+                  type: number
+                  format: float
+                salary_slip_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                file_url:
+                  type: string
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisciplineRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      summary: Xóa kỷ luật
+      description: Xóa bản ghi kỷ luật khi trạng thái còn là 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Xóa thành công
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /hrm/disciplines/{id}/approve/:
     post:
       summary: Phê duyệt kỷ luật
@@ -1732,6 +2153,42 @@ paths:
       responses:
         '200':
           description: Phê duyệt thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisciplineRecord'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /hrm/disciplines/{id}/cancel/:
+    post:
+      summary: Hủy kỷ luật
+      description: Người lập hủy đề xuất kỷ luật ở trạng thái 'pending_approval'.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Hủy thành công
           content:
             application/json:
               schema:

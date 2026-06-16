@@ -107,6 +107,8 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
 
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    cancelled_by_username = serializers.CharField(source="cancelled_by.username", read_only=True)
 
     class Meta:
         model = RewardRecord
@@ -122,6 +124,10 @@ class RewardRecordOutputSerializer(serializers.ModelSerializer):
             "salary_slip_id",
             "status",
             "approved_by_id",
+            "approved_by_username",
+            "cancelled_by_id",
+            "cancelled_by_username",
+            "cancelled_at",
             "created_at",
         ]
 
@@ -133,6 +139,8 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
 
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    cancelled_by_username = serializers.CharField(source="cancelled_by.username", read_only=True)
 
     class Meta:
         model = DisciplineRecord
@@ -150,6 +158,10 @@ class DisciplineRecordOutputSerializer(serializers.ModelSerializer):
             "file_url",
             "status",
             "approved_by_id",
+            "approved_by_username",
+            "cancelled_by_id",
+            "cancelled_by_username",
+            "cancelled_at",
             "created_at",
         ]
 
@@ -535,9 +547,9 @@ class RewardRecordCreateInputSerializer(serializers.Serializer):
     reward_type = serializers.ChoiceField(
         choices=[
             ("performance_bonus", "Thưởng hiệu quả công việc"),
-            ("initiative", "Sáng kiến"),
+            ("initiative", "Thưởng sáng kiến"),
             ("holiday_bonus", "Thưởng lễ tết"),
-            ("other", "Khác"),
+            ("other", "Thưởng khác"),
         ]
     )
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
@@ -613,3 +625,54 @@ class EmploymentHistoryRejectInputSerializer(serializers.Serializer):
     """
 
     reason = serializers.CharField(required=True, min_length=1)
+
+
+class RewardRecordUpdateInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating reward record update.
+    """
+
+    reward_date = serializers.DateField(required=False)
+    reward_type = serializers.ChoiceField(
+        choices=[
+            ("performance_bonus", "Thưởng hiệu quả công việc"),
+            ("initiative", "Thưởng sáng kiến"),
+            ("holiday_bonus", "Thưởng lễ tết"),
+            ("other", "Thưởng khác"),
+        ],
+        required=False,
+    )
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    description = serializers.CharField(required=False)
+    salary_slip_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class DisciplineRecordUpdateInputSerializer(serializers.Serializer):
+    """
+    Serializer for validating discipline record update.
+    """
+
+    incident_date = serializers.DateField(required=False)
+    discipline_date = serializers.DateField(required=False)
+    discipline_type = serializers.ChoiceField(
+        choices=[
+            ("reprimand", "Khiển trách"),
+            ("warning", "Cảnh cáo"),
+            ("salary_deduction", "Khấu trừ lương"),
+            ("termination", "Sa thải"),
+            ("other", "Khác"),
+        ],
+        required=False,
+    )
+    description = serializers.CharField(required=False)
+    penalty_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, allow_null=True)
+    salary_slip_id = serializers.UUIDField(required=False, allow_null=True)
+    file_url = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
+
+
+class CancelRecordInputSerializer(serializers.Serializer):
+    """
+    Serializer for cancelling a record.
+    """
+
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
