@@ -2,7 +2,7 @@ import pytest
 from django.contrib.auth.hashers import make_password
 
 from apps.accounts.services import auth_login
-from apps.common.xlib.exceptions import NotFoundException, ValidationException
+from apps.common.xlib.exceptions import InvalidCredentialsException, NotFoundException, ValidationException
 from apps.inventory.tests.factories import UserFactory
 
 
@@ -25,22 +25,25 @@ class TestAuthLoginService:
 
     def test_login_fails_wrong_password(self):
         user = UserFactory(username="admin_user", password_hash="secret")
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
 
-        with pytest.raises(ValidationException) as exc:
+        with pytest.raises(InvalidCredentialsException) as exc:
             auth_login(username="admin_user", password="wrong_password")
 
-        assert "Mật khẩu không chính xác" in str(exc.value)
+        assert generic_msg in str(exc.value)
 
     def test_login_fails_user_not_found(self):
-        with pytest.raises(NotFoundException) as exc:
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
+        with pytest.raises(InvalidCredentialsException) as exc:
             auth_login(username="ghost_user", password="123")
 
-        assert "Tên đăng nhập không tồn tại" in str(exc.value)
+        assert generic_msg in str(exc.value)
 
     def test_login_fails_inactive_user(self):
         user = UserFactory(username="inactive_user", password_hash="secret", is_active=False)
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
 
-        with pytest.raises(ValidationException) as exc:
+        with pytest.raises(InvalidCredentialsException) as exc:
             auth_login(username="inactive_user", password="secret")
 
-        assert "Tài khoản đã bị vô hiệu hóa" in str(exc.value)
+        assert generic_msg in str(exc.value)

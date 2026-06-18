@@ -15,7 +15,7 @@ class BOMItemCreateUpdateSerializer(serializers.Serializer):
     """Serializer cho việc tạo/cập nhật chi tiết BOM (chỉ nhận input)."""
 
     item_id = serializers.UUIDField()
-    quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
+    quantity = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0)
 
 
 class BOMCreateSerializer(serializers.Serializer):
@@ -116,6 +116,12 @@ class WorkOrderDeclareProductionSerializer(serializers.Serializer):
     produced_qty = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
 
 
+class WorkOrderDeclarePreviewRequestSerializer(serializers.Serializer):
+    """Serializer cho request preview nguyên liệu nhập liệu."""
+
+    produced_qty = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
+
+
 class WorkOrderCompleteSerializer(serializers.Serializer):
     """Serializer cho request hoàn thành Work Order."""
 
@@ -157,6 +163,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     bom_name = serializers.CharField(source="bom.name", read_only=True)
     production_item_code = serializers.CharField(source="production_item.item_code", read_only=True)
     production_item_name = serializers.CharField(source="production_item.item_name", read_only=True)
+    production_uom = serializers.CharField(source="production_item.stock_uom.name", read_only=True, allow_null=True)
     source_warehouse = serializers.CharField(source="source_warehouse.name", read_only=True)
     target_warehouse = serializers.CharField(source="target_warehouse.name", read_only=True)
     production_warehouse = serializers.CharField(source="production_warehouse.name", read_only=True)
@@ -172,6 +179,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             "production_item",
             "production_item_code",
             "production_item_name",
+            "production_uom",
             "quantity",
             "produced_qty",
             "source_warehouse",
@@ -186,6 +194,22 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class WorkOrderMaterialSerializer(serializers.Serializer):
+    item_id = serializers.UUIDField()
+    item_code = serializers.CharField()
+    item_name = serializers.CharField()
+    uom = serializers.CharField(allow_null=True)
+    required_qty = serializers.FloatField()
+    consumed_qty = serializers.FloatField()
+
+
+class WorkOrderDetailWithMaterialsSerializer(WorkOrderSerializer):
+    materials = WorkOrderMaterialSerializer(many=True, read_only=True)
+
+    class Meta(WorkOrderSerializer.Meta):
+        fields = WorkOrderSerializer.Meta.fields + ["materials"]
 
 
 class WorkOrderFixedAssetsUpdateSerializer(serializers.Serializer):

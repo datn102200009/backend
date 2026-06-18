@@ -64,6 +64,7 @@ class TestAuthLoginAPI:
 
     def test_login_endpoint_invalid_credentials(self, api_client):
         user = UserFactory(username="v_user", password_hash="valid_pass")
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
 
         # Act
         response = api_client.post(
@@ -73,10 +74,11 @@ class TestAuthLoginAPI:
         )
 
         # Assert
-        assert response.status_code == 400
-        assert response.json()["error"] == "Mật khẩu không chính xác"
+        assert response.status_code == 401
+        assert response.json()["error"] == generic_msg
 
     def test_login_endpoint_not_found(self, api_client):
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
         # Act
         response = api_client.post(
             "/api/v1/accounts/auth/login/",
@@ -85,8 +87,23 @@ class TestAuthLoginAPI:
         )
 
         # Assert
-        assert response.status_code == 404
-        assert response.json()["error"] == "Tên đăng nhập không tồn tại"
+        assert response.status_code == 401
+        assert response.json()["error"] == generic_msg
+
+    def test_login_endpoint_inactive_user(self, api_client):
+        user = UserFactory(username="in_user", password_hash="pass", is_active=False)
+        generic_msg = "Tài khoản hoặc mật khẩu không chính xác."
+
+        # Act
+        response = api_client.post(
+            "/api/v1/accounts/auth/login/",
+            data={"username": "in_user", "password": "pass"},
+            format="json",
+        )
+
+        # Assert
+        assert response.status_code == 401
+        assert response.json()["error"] == generic_msg
 
 
 @pytest.mark.django_db

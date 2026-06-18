@@ -179,6 +179,39 @@ class TestBOMServices:
         with pytest.raises(ValidationException, match="đang được sử dụng trong 1 lệnh sản xuất"):
             bom_delete(user=production_user, bom_id=str(bom.id))
 
+    def test_bom_create_duplicate_component_items(self, production_user):
+        finished_item = ItemFactory()
+        component_item = ItemFactory()
+        items_data = [
+            {"item_id": str(component_item.id), "quantity": Decimal("2.0")},
+            {"item_id": str(component_item.id), "quantity": Decimal("3.0")},
+        ]
+
+        with pytest.raises(ValidationException, match="Danh sách linh kiện không được chứa linh kiện trùng lặp"):
+            bom_create(
+                user=production_user,
+                name="Duplicate Component BOM",
+                item_id=str(finished_item.id),
+                quantity=Decimal("1.0"),
+                items=items_data,
+            )
+
+    def test_bom_update_duplicate_component_items(self, production_user):
+        bom = BOMFactory()
+        BOMItemFactory(parent=bom)
+        component_item = ItemFactory()
+        items_data = [
+            {"item_id": str(component_item.id), "quantity": Decimal("2.0")},
+            {"item_id": str(component_item.id), "quantity": Decimal("3.0")},
+        ]
+
+        with pytest.raises(ValidationException, match="Danh sách linh kiện không được chứa linh kiện trùng lặp"):
+            bom_update(
+                user=production_user,
+                bom_id=str(bom.id),
+                items=items_data,
+            )
+
 
 @pytest.mark.django_db
 class TestWorkOrderServices:
@@ -287,6 +320,16 @@ class TestWorkOrderServices:
         source = WarehouseFactory()
         target = WarehouseFactory()
         production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho sản xuất
+        StockLedgerFactory(
+            item=item1,
+            warehouse=production,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
 
         wo = WorkOrderFactory(
             bom=bom,
@@ -397,6 +440,16 @@ class TestWorkOrderServices:
         source = WarehouseFactory()
         target = WarehouseFactory()
         production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho sản xuất
+        StockLedgerFactory(
+            item=item1,
+            warehouse=production,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
 
         wo = WorkOrderFactory(
             bom=bom,
@@ -595,3 +648,175 @@ class TestWorkOrderServices:
         ) as mock_sfu:
             work_order_approve(user=production_user, work_order_id=str(wo.id))
             assert mock_sfu.called
+
+    def test_work_order_create_invalid_date_range(self, production_user):
+        bom = BOMFactory(is_active=True)
+        start_date = timezone.now().date()
+        end_date = start_date - timedelta(days=1)
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        with pytest.raises(ValidationException, match="Ngày kết thúc dự kiến phải sau hoặc bằng"):
+            work_order_create(
+                user=production_user,
+                name="Invalid Date WO",
+                bom_id=str(bom.id),
+                quantity=10,
+                source_warehouse_id=str(source.id),
+                target_warehouse_id=str(target.id),
+                production_warehouse_id=str(production.id),
+                planned_start_date=start_date,
+                planned_end_date=end_date,
+            )
+
+    def test_work_order_delete_pending_approval_success(self, production_user):
+        from apps.manufacturing.services import work_order_delete_pending_approval
+
+        wo = WorkOrderFactory(status="pending_approval")
+        wo_id = str(wo.id)
+
+        work_order_delete_pending_approval(user=production_user, work_order_id=wo_id)
+
+        assert WorkOrder.objects.filter(id=wo_id).exists() is False
+
+    def test_work_order_delete_pending_approval_invalid_status(self, production_user):
+        from apps.manufacturing.services import work_order_delete_pending_approval
+
+        wo = WorkOrderFactory(status="in_progress")
+        wo_id = str(wo.id)
+
+        with pytest.raises(ValidationException, match="Chỉ có thể xóa lệnh đang ở trạng thái 'Chờ phê duyệt'"):
+            work_order_delete_pending_approval(user=production_user, work_order_id=wo_id)
+
+        assert WorkOrder.objects.filter(id=wo_id).exists() is True
+
+    def test_declare_production_fails_when_quantity_exceeds_remaining(self, production_user):
+        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            quantity=10,
+            produced_qty=8,
+            status="in_progress",
+        )
+
+        with pytest.raises(ValidationException) as excinfo:
+            work_order_declare_production(user=production_user, work_order_id=str(wo.id), produced_qty=Decimal("3.0"))
+        assert "Số lượng nhập liệu vượt quá số lượng còn lại cần sản xuất" in str(excinfo.value)
+        assert "Còn lại: 2" in str(excinfo.value)
+        assert "đã nhập: 3.0" in str(excinfo.value)
+
+    def test_declare_production_fails_when_production_warehouse_lacks_materials(self, production_user):
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
+        item1 = ItemFactory(item_name="Resistor", item_code="RES-01")
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("4.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            quantity=10,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        # No stock seeded in production warehouse. Should fail.
+        with pytest.raises(ValidationException) as excinfo:
+            work_order_declare_production(user=production_user, work_order_id=str(wo.id), produced_qty=Decimal("5.0"))
+        assert "Không đủ nguyên liệu tại Kho Bán Thành Phẩm" in str(excinfo.value)
+        assert "Resistor (RES-01)" in str(excinfo.value)
+        assert "cần 10" in str(excinfo.value)
+        assert "tồn kho Bán Thành Phẩm chỉ có 0.00" in str(excinfo.value)
+
+    def test_declare_production_fails_when_production_warehouse_partial_materials(self, production_user):
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
+        item1 = ItemFactory(item_name="Resistor", item_code="RES-01")
+        item2 = ItemFactory(item_name="Capacitor", item_code="CAP-01")
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("4.0"))
+        BOMItemFactory(parent=bom, item=item2, quantity=Decimal("2.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        # Seed enough stock for item1 but not enough for item2
+        StockLedgerFactory(
+            item=item1,
+            warehouse=production,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+        StockLedgerFactory(
+            item=item2,
+            warehouse=production,
+            actual_quantity=Decimal("1.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            quantity=10,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        with pytest.raises(ValidationException) as excinfo:
+            work_order_declare_production(user=production_user, work_order_id=str(wo.id), produced_qty=Decimal("5.0"))
+        assert "Không đủ nguyên liệu tại Kho Bán Thành Phẩm" in str(excinfo.value)
+        assert "Capacitor (CAP-01)" in str(excinfo.value)
+        assert "cần 5" in str(excinfo.value)
+        assert "tồn kho Bán Thành Phẩm chỉ có 1" in str(excinfo.value)
+        assert "Resistor" not in str(excinfo.value)
+
+    def test_declare_production_deducts_from_production_warehouse(self, production_user):
+        from django.db.models import Sum
+
+        from apps.inventory.models import StockLedger
+
+        bom = BOMFactory(is_active=True, quantity=Decimal("2.0"))
+        item1 = ItemFactory(item_name="Resistor", item_code="RES-01")
+        BOMItemFactory(parent=bom, item=item1, quantity=Decimal("4.0"))
+
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+
+        # Seed stock
+        StockLedgerFactory(
+            item=item1,
+            warehouse=production,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            quantity=10,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        work_order_declare_production(user=production_user, work_order_id=str(wo.id), produced_qty=Decimal("5.0"))
+
+        balance = StockLedger.objects.filter(item=item1, warehouse=production).aggregate(
+            balance=Sum("actual_quantity")
+        )["balance"]
+        assert balance == Decimal("40.00")

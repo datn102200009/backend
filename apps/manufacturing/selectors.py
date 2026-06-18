@@ -55,7 +55,10 @@ def bom_detail(*, bom_id: str) -> Optional[BOM]:
         BOM object hoặc None
     """
     return (
-        BOM.objects.select_related("item", "item__stock_uom").prefetch_related("items__item").filter(id=bom_id).first()
+        BOM.objects.select_related("item", "item__stock_uom")
+        .prefetch_related("items__item", "items__item__stock_uom")
+        .filter(id=bom_id)
+        .first()
     )
 
 
@@ -170,10 +173,95 @@ def get_material_preview(*, bom_id: str, quantity: int, source_warehouse_id: str
                 "item_id": str(bom_item.item_id),
                 "item_code": bom_item.item.item_code,
                 "item_name": bom_item.item.item_name,
+                "uom": bom_item.item.stock_uom.name if bom_item.item.stock_uom else None,
                 "required_qty": float(required_qty),
                 "available_qty": float(available_qty),
                 "missing_qty": float(missing_qty),
             }
         )
 
+    return preview
+
+
+def work_order_detail_with_materials(*, work_order_id: str) -> Optional[WorkOrder]:
+    """
+    Lấy chi tiết Lệnh sản xuất kèm theo danh sách nguyên liệu và lượng tiêu hao.
+    """
+    from apps.inventory.models import StockEntry, StockEntryDetail
+
+    wo = work_order_detail(work_order_id=work_order_id)
+    if not wo:
+        return None
+
+    if not wo.bom:
+        wo.materials = []
+        return wo
+
+    bom_items = wo.bom.items.select_related("item", "item__stock_uom").all()
+    manufacture_entries = StockEntry.objects.filter(
+        purpose="manufacture",
+        work_order=wo,
+        status="posted",
+    )
+
+    consumed_map = {}
+    for sed in StockEntryDetail.objects.filter(parent__in=manufacture_entries).select_related("item"):
+        item_id_str = str(sed.item_id)
+        consumed_map[item_id_str] = consumed_map.get(item_id_str, Decimal("0.0")) + sed.quantity
+
+    materials = [
+        {
+            "item_id": str(bi.item_id),
+            "item_code": bi.item.item_code,
+            "item_name": bi.item.item_name,
+            "uom": bi.item.stock_uom.name if bi.item.stock_uom else None,
+            "required_qty": float(bi.quantity * (wo.quantity / wo.bom.quantity)),
+            "consumed_qty": float(consumed_map.get(str(bi.item_id), Decimal("0.0"))),
+        }
+        for bi in bom_items
+    ]
+
+    wo.materials = materials
+    return wo
+
+
+def get_declare_material_preview(*, work_order_id: str, produced_qty: Decimal) -> list[dict]:
+    """
+    Tính toán nguyên liệu cần tiêu hao tại production_warehouse cho 1 đợt nhập liệu.
+    Tương tự get_material_preview nhưng kiểm tra tồn kho tại production_warehouse.
+    """
+    work_order = work_order_detail(work_order_id=work_order_id)
+    if not work_order or not work_order.bom:
+        return []
+
+    item_ids = [item.item_id for item in work_order.bom.items.all()]
+
+    # Lấy tồn kho tại production_warehouse
+    stock_balances = (
+        StockLedger.objects.filter(
+            warehouse_id=work_order.production_warehouse_id,
+            item_id__in=item_ids,
+        )
+        .values("item_id")
+        .annotate(balance=Sum("actual_quantity"))
+    )
+    balance_map = {str(item["item_id"]): item["balance"] or Decimal("0.0") for item in stock_balances}
+
+    preview = []
+    for bom_item in work_order.bom.items.select_related("item", "item__stock_uom").all():
+        required_qty = bom_item.quantity * (Decimal(str(produced_qty)) / work_order.bom.quantity)
+        available_qty = balance_map.get(str(bom_item.item_id), Decimal("0.0"))
+        missing_qty = max(Decimal("0.0"), required_qty - available_qty)
+        preview.append(
+            {
+                "item_id": str(bom_item.item_id),
+                "item_code": bom_item.item.item_code,
+                "item_name": bom_item.item.item_name,
+                "uom": bom_item.item.stock_uom.name if bom_item.item.stock_uom else None,
+                "required_qty": float(required_qty),
+                "available_qty": float(available_qty),
+                "missing_qty": float(missing_qty),
+                "is_sufficient": available_qty >= required_qty,
+            }
+        )
     return preview

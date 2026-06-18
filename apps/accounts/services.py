@@ -7,7 +7,7 @@ from django.db import transaction
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import User
-from apps.common.xlib.exceptions import NotFoundException, ValidationException
+from apps.common.xlib.exceptions import InvalidCredentialsException, NotFoundException, ValidationException
 
 
 @transaction.atomic
@@ -24,18 +24,19 @@ def auth_login(*, username: str, password: str) -> dict:
     """
     # Tim user theo username
     user = User.objects.filter(username=username).first()
+    generic_invalid_msg = "Tài khoản hoặc mật khẩu không chính xác."
 
     if not user:
-        raise NotFoundException("Tên đăng nhập không tồn tại")
+        raise InvalidCredentialsException(generic_invalid_msg)
 
     # Kiểm tra password
     if not check_password(password, user.password_hash):
         # Fallback check in case dev environment uses plaintext passwords
         if password != user.password_hash:
-            raise ValidationException("Mật khẩu không chính xác")
+            raise InvalidCredentialsException(generic_invalid_msg)
 
     if not user.is_active:
-        raise ValidationException("Tài khoản đã bị vô hiệu hóa")
+        raise InvalidCredentialsException(generic_invalid_msg)
 
     # Lấy full_name từ Employee nếu có liên kết
     full_name = ""

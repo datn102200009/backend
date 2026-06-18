@@ -26,9 +26,8 @@ def api_client():
 @pytest.fixture
 def admin_user():
     """Fixture để tạo user admin (có tất cả quyền)."""
-    from apps.accounts.models import RolePermission
+    from apps.accounts.models import UserPermission
 
-    role = RoleFactory(name="Admin")
     # Gán full quyền manufacturing
     permissions = [
         "manufacturing.bom_create",
@@ -39,22 +38,21 @@ def admin_user():
         "manufacturing.work_order_approve",
         "manufacturing.work_order_declare",
         "manufacturing.work_order_complete",
+        "manufacturing.work_order_cancel",
         "manufacturing.work_order_view",
     ]
+    user = UserFactory(username="admin")
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
-    user = UserFactory(role=role, username="admin")
     return user
 
 
 @pytest.fixture
 def production_user():
     """Fixture để tạo user sản xuất (có quyền quản lý BOM và WO)."""
-    from apps.accounts.models import RolePermission
-
-    role = RoleFactory(name="Nhân viên sản xuất")
+    from apps.accounts.models import UserPermission
 
     # Tạo và gán các permissions
     permissions = [
@@ -66,26 +64,25 @@ def production_user():
         "manufacturing.work_order_approve",
         "manufacturing.work_order_declare",
         "manufacturing.work_order_complete",
+        "manufacturing.work_order_cancel",
         "manufacturing.work_order_view",
     ]
 
+    user = UserFactory(username="production_user")
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
-    user = UserFactory(role=role, username="production_user")
     return user
 
 
 @pytest.fixture
 def regular_user():
     """Fixture để tạo user thường (không có quyền manufacturing)."""
-    from apps.accounts.models import RolePermission
+    from apps.accounts.models import UserPermission
 
-    role = RoleFactory(name="Nhân viên")
-    # Không có quyền manufacturing
+    user = UserFactory(username="regular_user")
     perm = PermissionFactory(code="other.view")
-    RolePermission.objects.get_or_create(role=role, permission=perm)
+    UserPermission.objects.get_or_create(user=user, permission=perm)
 
-    user = UserFactory(role=role, username="regular_user")
     return user

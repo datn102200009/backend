@@ -49,6 +49,26 @@ class UserFactory(factory.django.DjangoModelFactory):
     password_hash = "hashed_password_123"
     employee_id = factory.Sequence(lambda n: f"EMP{n:04d}")
 
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        role_passed = "role" in kwargs
+        role = kwargs.pop("role", None)
+        if not role_passed:
+            import uuid
+
+            from apps.accounts.models import Role
+
+            role = Role.objects.create(name=f"Role-{uuid.uuid4().hex[:8]}")
+        user = super()._create(model_class, *args, **kwargs)
+        user.role = role
+        if role:
+            from apps.accounts.models import RolePermission, UserPermission
+
+            role_perms = RolePermission.objects.filter(role=role)
+            user_perms = [UserPermission(user=user, permission=rp.permission) for rp in role_perms]
+            UserPermission.objects.bulk_create(user_perms)
+        return user
+
 
 class ItemGroupFactory(factory.django.DjangoModelFactory):
     """Factory để tạo ItemGroup."""
