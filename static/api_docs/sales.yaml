@@ -85,6 +85,9 @@ components:
         line_total:
           type: number
           format: double
+        receipt_fulfillment_rate:
+          type: number
+          format: double
 
     SalesOrder:
       type: object
@@ -104,6 +107,12 @@ components:
           type: number
           format: double
         advance_paid_amount:
+          type: number
+          format: double
+        receipt_fulfillment_rate:
+          type: number
+          format: double
+        payment_fulfillment_rate:
           type: number
           format: double
         created_at:
