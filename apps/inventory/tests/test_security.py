@@ -82,7 +82,6 @@ class TestAuthorizationSecurity:
             data=json.dumps(
                 {
                     "name": "SI-001",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -246,7 +245,6 @@ class TestPermissionGranularity:
             data=json.dumps(
                 {
                     "name": "SI-KEEPER",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -267,7 +265,6 @@ class TestPermissionGranularity:
             data=json.dumps(
                 {
                     "name": "SI-STAFF",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -315,7 +312,6 @@ class TestDataInjectionSecurity:
             data=json.dumps(
                 {
                     "name": "SI'; DROP TABLE stock_entry; --",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -349,7 +345,6 @@ class TestDataInjectionSecurity:
             data=json.dumps(
                 {
                     "name": "SI-001",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": "not-a-uuid",
@@ -387,7 +382,6 @@ class TestInputValidation:
             data=json.dumps(
                 {
                     "name": "SI-001",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -420,7 +414,6 @@ class TestInputValidation:
             data=json.dumps(
                 {
                     "name": "SI-001",
-                    "posting_date": datetime.now().isoformat(),
                     "details": [
                         {
                             "item_id": str(item.id),
@@ -445,13 +438,12 @@ class TestInputValidation:
         client = APIClient()
         client.force_authenticate(user=user)
 
-        # Thiếu posting_date
+        # Thiếu name
         response = client.post(
             "/api/v1/inventory/stock-in/create/",
             data=json.dumps(
                 {
-                    "name": "SI-001",
-                    # Missing posting_date
+                    # Missing name
                     "details": [],
                 }
             ),

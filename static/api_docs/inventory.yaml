@@ -114,15 +114,25 @@ components:
         posting_date:
           type: string
           format: date-time
+          nullable: true
         posting_date_formatted:
           type: string
           format: date-time
+          nullable: true
+        posted_at:
+          type: string
+          format: date-time
+          nullable: true
+        posted_at_formatted:
+          type: string
+          format: date-time
+          nullable: true
         remarks:
           type: string
           nullable: true
         status:
           type: string
-          enum: [draft, submitted, posted]
+          enum: [draft, submitted, posted, cancelled]
         purchase_order_id:
           type: string
           format: uuid
@@ -197,14 +207,10 @@ components:
       type: object
       required:
         - name
-        - posting_date
       properties:
         name:
           type: string
           example: "STE-001"
-        posting_date:
-          type: string
-          format: date-time
         remarks:
           type: string
           nullable: true
@@ -524,5 +530,25 @@ paths:
                 $ref: '#/components/schemas/StockEntry'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /inventory/stock-entry/{stock_entry_id}/delete/:
+    post:
+      summary: Hủy (xóa cứng) một phiếu kho ở trạng thái Draft
+      parameters:
+        - in: path
+          name: stock_entry_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Xóa thành công
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
         '404':
           $ref: '#/components/responses/NotFoundError'

@@ -42,7 +42,6 @@ class TestStockInCreate:
         stock_entry = stock_in_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             details=[
                 {
                     "item_id": str(item.id),
@@ -72,7 +71,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -91,7 +89,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[],
             )
 
@@ -107,7 +104,6 @@ class TestStockInCreate:
         stock_in_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             details=[
                 {
                     "item_id": str(item.id),
@@ -122,7 +118,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -144,7 +139,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": "00000000-0000-0000-0000-000000000000",
@@ -166,7 +160,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),

@@ -71,6 +71,7 @@ class StockEntrySerializer(serializers.ModelSerializer):
     details = StockEntryDetailSerializer(many=True, read_only=True)
     created_at_formatted = serializers.DateTimeField(source="created_at", format="%Y-%m-%d %H:%M:%S", read_only=True)
     posting_date_formatted = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    posted_at_formatted = serializers.DateTimeField(source="posted_at", format="%Y-%m-%d %H:%M:%S", read_only=True)
     purchase_order_id = serializers.UUIDField(read_only=True, allow_null=True)
     sales_order_id = serializers.UUIDField(read_only=True, allow_null=True)
     vendor_name = serializers.CharField(source="purchase_order.vendor.supplier_name", read_only=True, allow_null=True)
@@ -86,6 +87,8 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "purpose",
             "posting_date",
             "posting_date_formatted",
+            "posted_at",
+            "posted_at_formatted",
             "remarks",
             "status",
             "purchase_order_id",
@@ -105,6 +108,7 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "created_at_formatted",
             "updated_at",
             "posting_date_formatted",
+            "posted_at_formatted",
         ]
 
 
@@ -112,7 +116,6 @@ class StockInCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu nhập kho."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     remarks = serializers.CharField(required=False, allow_blank=True)
     details = StockEntryDetailCreateSerializer(many=True)
 
@@ -131,7 +134,6 @@ class StockIssueCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu xuất kho."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     source_warehouse_id = serializers.UUIDField()
     remarks = serializers.CharField(required=False, allow_blank=True)
     details = StockEntryDetailCreateSerializer(many=True)
@@ -151,7 +153,6 @@ class StockTransferCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu chuyển kho nội bộ."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     source_warehouse_id = serializers.UUIDField()
     target_warehouse_id = serializers.UUIDField()
     remarks = serializers.CharField(required=False, allow_blank=True)

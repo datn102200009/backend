@@ -20,7 +20,8 @@ class StockEntry(BaseModel):
             ("adjustment", "Adjustment"),
         ],
     )
-    posting_date = models.DateTimeField()
+    posting_date = models.DateTimeField(null=True, blank=True)
+    posted_at = models.DateTimeField(null=True, blank=True, verbose_name="Thời điểm duyệt")
     remarks = models.TextField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
