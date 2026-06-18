@@ -168,11 +168,10 @@ class FixedAssetListCreateAPIView(APIView):
             user=request.user,
             asset_name=data["asset_name"],
             original_value=data["original_value"],
-            salvage_value=data.get("salvage_value", Decimal("0.00")),
+            salvage_value=Decimal("0.00"),
             depreciation_method=data["depreciation_method"],
             useful_life_months=data.get("useful_life_months"),
             designed_capacity=data.get("designed_capacity"),
-            purchase_date=str(data["purchase_date"]),
             vendor_name=data["vendor_name"],
             payment_method=data.get("payment_method", "bank_transfer"),
         )
@@ -218,7 +217,6 @@ class FixedAssetRequestDisposeAPIView(APIView):
         asset = fixed_asset_request_dispose(
             user=request.user,
             asset_id=str(pk),
-            disposal_date=str(serializer.validated_data["disposal_date"]),
             disposal_value=serializer.validated_data["disposal_value"],
             remarks=serializer.validated_data.get("remarks"),
         )

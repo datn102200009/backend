@@ -136,6 +136,7 @@ components:
           type: string
         salvage_value:
           type: string
+          description: "DEPRECATED - giá trị này không còn ý nghĩa nghiệp vụ"
         depreciation_method:
           type: string
           enum: [straight_line, unit_of_production]
@@ -191,7 +192,6 @@ components:
         - asset_name
         - original_value
         - depreciation_method
-        - purchase_date
         - vendor_name
       properties:
         asset_name:
@@ -199,9 +199,6 @@ components:
           maxLength: 255
         original_value:
           type: string
-        salvage_value:
-          type: string
-          default: '0.00'
         depreciation_method:
           type: string
           enum: [straight_line, unit_of_production]
@@ -214,9 +211,6 @@ components:
           format: double
           minimum: 0.01
           nullable: true
-        purchase_date:
-          type: string
-          format: date
         vendor_name:
           type: string
           maxLength: 255
@@ -227,12 +221,7 @@ components:
 
     FixedAssetRequestDisposeInput:
       type: object
-      required:
-        - disposal_date
       properties:
-        disposal_date:
-          type: string
-          format: date
         disposal_value:
           type: string
           default: '0.00'

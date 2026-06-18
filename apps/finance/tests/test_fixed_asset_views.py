@@ -45,10 +45,8 @@ class TestFixedAssetAPIViews:
         payload = {
             "asset_name": "Khuôn Mẫu A",
             "original_value": "50000000.00",
-            "salvage_value": "5000000.00",
             "depreciation_method": "straight_line",
             "useful_life_months": 12,
-            "purchase_date": "2026-06-15",
             "vendor_name": "NCC_TSCĐ",
             "payment_method": "bank_transfer",
         }
@@ -58,7 +56,7 @@ class TestFixedAssetAPIViews:
         # Verify decimal types are returned as string
         assert isinstance(response.data["original_value"], str)
         assert response.data["original_value"] == "50000000.00"
-        assert response.data["remaining_value"] == "45000000.00"
+        assert response.data["remaining_value"] == "50000000.00"
         mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.create_fixed_asset")
 
     def test_post_fixed_asset_permission_denied(self, mock_permission_checker, authenticated_client):
@@ -70,7 +68,7 @@ class TestFixedAssetAPIViews:
             "original_value": "50000000.00",
             "depreciation_method": "straight_line",
             "useful_life_months": 12,
-            "purchase_date": "2026-06-15",
+            "vendor_name": "NCC_TSCĐ",
         }
         response = authenticated_client.post(url, payload)
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -139,7 +137,7 @@ class TestFixedAssetAPIViews:
         response = authenticated_client.post(url, {"period": "2026-06"})
         assert response.status_code == status.HTTP_201_CREATED
         assert len(response.data) == 1
-        assert response.data[0]["depreciation_amount"] == "1000.00"
+        assert response.data[0]["depreciation_amount"] == "1200.00"
         mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.run_depreciation")
 
     def test_post_run_depreciation_permission_denied(self, mock_permission_checker, authenticated_client):
@@ -165,11 +163,12 @@ class TestFixedAssetAPIViews:
     def test_post_request_dispose_success(self, mock_permission_checker, authenticated_client):
         asset = FixedAssetFactory(status="idle")
         url = reverse("fixed-asset-request-dispose", kwargs={"pk": asset.id})
-        payload = {"disposal_date": "2026-06-15", "disposal_value": "1500.00", "remarks": "Request dispose"}
+        payload = {"disposal_value": "1500.00", "remarks": "Request dispose"}
         response = authenticated_client.post(url, payload)
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] == "pending_dispose"
         assert response.data["disposal_value"] == "1500.00"
+        assert response.data["disposal_date"] is None
         mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.update_fixed_asset")
 
     def test_get_fixed_assets_list_assignable(self, mock_permission_checker, authenticated_client):

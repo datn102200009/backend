@@ -296,9 +296,11 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
         elif tx.payment_type == "receive":
             if asset.status == "pending_dispose":
                 asset.status = "disposed"
-                if not asset.disposal_date:
-                    asset.disposal_date = tx.payment_date
+                now_date = timezone.now().date()
+                asset.disposal_date = now_date
                 asset.save()
+                tx.payment_date = now_date
+                tx.save(update_fields=["payment_date"])
                 create_system_log(
                     user=user,
                     action="auto_dispose",
@@ -628,7 +630,6 @@ def fixed_asset_request_dispose(
     *,
     user: User,
     asset_id: str,
-    disposal_date: str,
     disposal_value: Decimal,
     remarks: Optional[str] = None,
 ) -> FixedAsset:
@@ -654,7 +655,7 @@ def fixed_asset_request_dispose(
     #   - CFO từ chối CF → asset quay về "idle"
     if disposal_value > Decimal("0.00"):
         asset.status = "pending_dispose"
-        asset.disposal_date = disposal_date
+        asset.disposal_date = None
         asset.disposal_value = disposal_value
         asset.save()
 
@@ -667,7 +668,7 @@ def fixed_asset_request_dispose(
             category="Thanh lý tài sản cố định",
             payment_method="bank_transfer",
             amount=disposal_value,
-            payment_date=disposal_date,
+            payment_date=timezone.now().date(),
             status="pending_approval",
             fixed_asset=asset,
             remarks=f"Phiếu thu thanh lý tài sản cố định: {asset.asset_name} ({asset.asset_code})",
@@ -686,7 +687,7 @@ def fixed_asset_request_dispose(
     #   - Không thể từ chối (vì không có CF để reject)
     else:
         asset.status = "disposed"
-        asset.disposal_date = disposal_date
+        asset.disposal_date = timezone.now().date()
         asset.disposal_value = disposal_value
         asset.save()
 
@@ -799,16 +800,33 @@ def fixed_asset_update(
     if asset.status != "idle":
         raise ValidationException("Chỉ được phép chỉnh sửa thông tin tài sản cố định đang ở trạng thái 'idle'.")
 
-    has_depreciated = asset.depreciation_logs.exists()
-
     if asset_name is not None:
         asset.asset_name = asset_name
 
     if useful_life_months is not None:
         if asset.depreciation_method == "unit_of_production":
-            raise ValidationException("Không thể sửa số tháng sử dụng hữu ích của tài sản khấu hao theo sản lượng.")
-        if has_depreciated:
-            raise ValidationException("Không thể sửa số tháng sử dụng hữu ích của tài sản đã phát sinh khấu hao.")
+            from apps.master_data.models import WorkOrderFixedAsset
+
+            has_production = WorkOrderFixedAsset.objects.filter(
+                fixed_asset=asset,
+                work_order__stock_entries__purpose="manufacture",
+                work_order__stock_entries__status="posted",
+            ).exists()
+            if has_production:
+                raise ValidationException(
+                    "Không thể sửa số tháng sử dụng hữu ích của tài sản khấu hao theo sản lượng "
+                    "vì tài sản đã được sử dụng để sản xuất sản phẩm."
+                )
+            else:
+                raise ValidationException("Không thể sửa số tháng sử dụng hữu ích của tài sản khấu hao theo sản lượng.")
+        else:
+            has_depreciated = asset.depreciation_logs.exists()
+            if has_depreciated:
+                raise ValidationException(
+                    "Không thể sửa số tháng sử dụng hữu ích của tài sản đã phát sinh khấu hao "
+                    "(đã trải qua ít nhất 1 tháng khấu hao)."
+                )
+
         if useful_life_months <= 0:
             raise ValidationException("Số tháng khấu hao hữu ích phải lớn hơn 0.")
         asset.useful_life_months = useful_life_months
@@ -893,7 +911,7 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             models.Q(depreciation_method="straight_line", remaining_life_months__gt=0)
             | models.Q(
                 depreciation_method="unit_of_production",
-                accumulated_depreciation__lt=F("original_value") - F("salvage_value"),
+                accumulated_depreciation__lt=F("original_value"),
             )
         )
         if last_id:
@@ -918,7 +936,8 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
         for asset in chunk:
             last_id = asset.id
 
-            depreciable_value = asset.original_value - asset.salvage_value
+            # NOTE: salvage_value is ignored in depreciation calculations as per 2026-06 requirements
+            depreciable_value = asset.original_value
             remaining_value = depreciable_value - asset.accumulated_depreciation
 
             if asset.depreciation_method == "straight_line" and asset.remaining_life_months == 0:
@@ -1004,6 +1023,7 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
 def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
     """
     Thanh toán hóa đơn mua hàng (Purchase Invoice).
+    Tạo dòng tiền và duyệt chi (posted) trực tiếp.
     """
     PermissionChecker.check_permission(user, "finance.pay_invoice")
 
@@ -1028,6 +1048,21 @@ def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, paymen
         remarks=f"Thanh toán cho hóa đơn mua hàng {invoice.id} (NCC: {invoice.vendor.supplier_name}).",
     )
 
+    # Phê duyệt trực tiếp dòng tiền và áp dụng ngay
+    _apply_cash_flow_effect(tx, tx.amount)
+    tx.status = "posted"
+    tx.approved_by = user
+    tx.approved_at = timezone.now()
+    tx.save()
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="cash_flow_transaction",
+        record_id=str(tx.id),
+        new_value={"status": tx.status, "approved_by": str(user.id)},
+    )
+
     return tx
 
 
@@ -1035,7 +1070,7 @@ def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, paymen
 def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payment_method: str) -> Any:
     """
     Thu tiền hóa đơn bán hàng (Sales Invoice - AR collection).
-    Tạo CashFlow transaction pending_approval, tương tự pay_purchase_invoice.
+    Tạo dòng tiền và duyệt thu (posted) trực tiếp.
     """
     PermissionChecker.check_permission(user, "finance.collect_sales_invoice")
 
@@ -1061,6 +1096,21 @@ def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payme
         payment_method=payment_method,
         sales_invoice_id=str(invoice.id),
         remarks=f"Thu tiền HĐ bán {str(invoice.id)[:8].upper()} (Khách hàng: {invoice.customer.customer_name}).",
+    )
+
+    # Phê duyệt trực tiếp dòng tiền và áp dụng ngay
+    _apply_cash_flow_effect(tx, tx.amount)
+    tx.status = "posted"
+    tx.approved_by = user
+    tx.approved_at = timezone.now()
+    tx.save()
+
+    create_system_log(
+        user=user,
+        action="approve",
+        table_name="cash_flow_transaction",
+        record_id=str(tx.id),
+        new_value={"status": tx.status, "approved_by": str(user.id)},
     )
 
     return tx

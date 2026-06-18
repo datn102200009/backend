@@ -133,16 +133,14 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         ]
 
     def get_remaining_value(self, obj) -> str:
-        value = obj.original_value - obj.salvage_value - obj.accumulated_depreciation
+        # NOTE: salvage_value is removed from remaining_value calculation as per 2026-06 requirements
+        value = obj.original_value - obj.accumulated_depreciation
         return str(value.quantize(Decimal("0.01")))
 
 
 class FixedAssetPurchaseInputSerializer(serializers.Serializer):
     asset_name = serializers.CharField(max_length=255)
     original_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0.01)
-    salvage_value = serializers.DecimalField(
-        max_digits=15, decimal_places=2, min_value=0, required=False, default=Decimal("0.00")
-    )
     depreciation_method = serializers.ChoiceField(
         choices=[("straight_line", "Đường thẳng"), ("unit_of_production", "Sản lượng")]
     )
@@ -150,7 +148,6 @@ class FixedAssetPurchaseInputSerializer(serializers.Serializer):
     designed_capacity = serializers.DecimalField(
         max_digits=15, decimal_places=2, min_value=0.01, required=False, allow_null=True
     )
-    purchase_date = serializers.DateField()
     vendor_name = serializers.CharField(max_length=255)
     payment_method = serializers.ChoiceField(
         choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")], default="bank_transfer"
@@ -189,7 +186,6 @@ class FixedAssetPurchaseInputSerializer(serializers.Serializer):
 
 
 class FixedAssetRequestDisposeInputSerializer(serializers.Serializer):
-    disposal_date = serializers.DateField()
     disposal_value = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=0, default=Decimal("0.00"))
     remarks = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
