@@ -129,7 +129,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("accounts", "0001_initial"),
-        ("master_data", "0001_initial"),
+        ("master_data", "0008_employee_address_employee_date_of_birth_and_more"),
     ]
 
     operations = [
