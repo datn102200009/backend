@@ -157,26 +157,26 @@ class TestFinancePayrollServices:
         user = UserFactory(username="finance_user_8")
         slip1 = SalarySlipFactory(
             employee=emp1,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="pending_finance_review",
             net_pay=Decimal("10000000.00"),
         )
         slip2 = SalarySlipFactory(
             employee=emp2,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="calculated",
             net_pay=Decimal("-100000.00"),
         )
         slip3 = SalarySlipFactory(
             employee=emp3,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="approved",
             net_pay=Decimal("5000000.00"),
         )
 
         # Act
         updated_slips = payroll_bulk_approve_and_pay(
-            salary_period="2026-06",
+            salary_period="2026-05",
             payment_method="bank_transfer",
             creator=user,
         )
@@ -191,9 +191,9 @@ class TestFinancePayrollServices:
         assert slip3.status == "paid"
 
         # Check transactions
-        tx1 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_1-2026-06").first()
-        tx2 = CashFlowTransaction.objects.filter(name="COLLECT-SALARY-EMP_BULK_2-2026-06").first()
-        tx3 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_3-2026-06").first()
+        tx1 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_1-2026-05").first()
+        tx2 = CashFlowTransaction.objects.filter(name="COLLECT-SALARY-EMP_BULK_2-2026-05").first()
+        tx3 = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_3-2026-05").first()
         assert tx1 is not None
         assert tx1.amount == Decimal("10000000.00")
         assert tx2 is None
@@ -237,18 +237,18 @@ class TestFinancePayrollServices:
         user = UserFactory(username="finance_user_app")
         slip1 = SalarySlipFactory(
             employee=emp1,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="pending_finance_review",
         )
         slip2 = SalarySlipFactory(
             employee=emp2,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="calculated",
         )
 
         # Act
         approved_slips = payroll_bulk_approve(
-            salary_period="2026-06",
+            salary_period="2026-05",
             creator=user,
         )
 
@@ -267,20 +267,20 @@ class TestFinancePayrollServices:
         user = UserFactory(username="finance_user_pay")
         slip1 = SalarySlipFactory(
             employee=emp1,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="approved",
             net_pay=Decimal("4000000.00"),
         )
         slip2 = SalarySlipFactory(
             employee=emp2,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="pending_finance_review",
             net_pay=Decimal("3000000.00"),
         )
 
         # Act
         paid_slips = payroll_bulk_pay(
-            salary_period="2026-06",
+            salary_period="2026-05",
             payment_method="bank_transfer",
             creator=user,
         )
@@ -294,6 +294,6 @@ class TestFinancePayrollServices:
         assert slip2.status == "pending_finance_review"
 
         # Check transaction
-        tx = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_PAY_1-2026-06").first()
+        tx = CashFlowTransaction.objects.filter(name="PAY-SALARY-EMP_BULK_PAY_1-2026-05").first()
         assert tx is not None
         assert tx.amount == Decimal("4000000.00")

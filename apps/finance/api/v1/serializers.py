@@ -337,3 +337,15 @@ class SalarySlipBulkApprovePayInputSerializer(serializers.Serializer):
         choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
         default="bank_transfer",
     )
+
+
+class SalarySlipBulkApproveInputSerializer(serializers.Serializer):
+    salary_period = serializers.CharField(max_length=10, required=True)
+
+
+class SalarySlipBulkPayInputSerializer(serializers.Serializer):
+    salary_period = serializers.CharField(max_length=10, required=True)
+    payment_method = serializers.ChoiceField(
+        choices=[("cash", "Cash"), ("bank_transfer", "Bank Transfer")],
+        default="bank_transfer",
+    )

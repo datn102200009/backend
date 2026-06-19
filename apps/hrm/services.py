@@ -718,6 +718,7 @@ def contract_terminate(
         payroll_submit_for_review(
             salary_slip_id=str(slip.id),
             user=terminator,
+            bypass_current_period_check=True,
         )
     except ValidationException as e:
         raise ValidationException(f"Không thể gửi phiếu lương quyết toán cho Finance: {str(e)}")
@@ -2423,6 +2424,7 @@ def payroll_submit_for_review(
     *,
     salary_slip_id: str,
     user: User,
+    bypass_current_period_check: bool = False,
 ) -> SalarySlip:
     """
     HRM xác nhận phiếu lương đã tính xong và gửi cho Finance duyệt.
@@ -2433,6 +2435,14 @@ def payroll_submit_for_review(
         slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
     except SalarySlip.DoesNotExist:
         raise ValidationException("Phiếu lương không tồn tại")
+
+    from apps.hrm.selectors import is_current_salary_period
+
+    if not bypass_current_period_check and is_current_salary_period(slip.salary_period):
+        raise ValidationException(
+            f"Không thể gửi duyệt phiếu lương của kỳ {slip.salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
 
     if slip.status != "calculated":
         raise ValidationException("Chỉ được gửi duyệt phiếu lương ở trạng thái 'calculated'")
@@ -2459,14 +2469,16 @@ def payroll_bulk_calculate(
     creator: Optional[User] = None,
 ) -> dict:
     """
-    Tính toán hàng loạt phiếu lương nháp (draft) trong một kỳ lương.
+    Tính toán hàng loạt phiếu lương nháp (draft) hoặc đã tính toán (calculated) trong một kỳ lương.
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.change_salaryslip")
 
     from apps.finance.models import SalarySlip
 
-    slips = list(SalarySlip.objects.select_for_update().filter(salary_period=salary_period, status="draft"))
+    slips = list(
+        SalarySlip.objects.select_for_update().filter(salary_period=salary_period, status__in=["draft", "calculated"])
+    )
 
     if not slips:
         return {"count": 0, "slip_ids": []}
@@ -2496,6 +2508,14 @@ def payroll_bulk_submit_for_review(
     HRM xác nhận hàng loạt phiếu lương đã tính xong và gửi cho Finance duyệt.
     """
     PermissionChecker.check_permission(user, "hrm.payroll_submit")
+
+    from apps.hrm.selectors import is_current_salary_period
+
+    if is_current_salary_period(salary_period):
+        raise ValidationException(
+            f"Không thể gửi duyệt hàng loạt phiếu lương kỳ {salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
 
     from apps.accounts.models import SystemLog
     from apps.finance.models import SalarySlip

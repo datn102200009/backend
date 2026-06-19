@@ -699,7 +699,7 @@ class TestHrmAPI:
         from apps.hrm.tests.factories import EmployeeFactory, SalarySlipFactory
 
         employee = EmployeeFactory()
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
 
         # Submit
         submit_url = f"/api/v1/hrm/salary-slips/{slip.id}/submit-for-review/"
@@ -749,11 +749,11 @@ class TestHrmAPI:
         employee1 = EmployeeFactory()
         employee2 = EmployeeFactory()
 
-        SalarySlipFactory(employee=employee1, salary_period="2026-06", status="calculated")
-        SalarySlipFactory(employee=employee2, salary_period="2026-06", status="calculated")
+        SalarySlipFactory(employee=employee1, salary_period="2026-05", status="calculated")
+        SalarySlipFactory(employee=employee2, salary_period="2026-05", status="calculated")
 
         url = "/api/v1/hrm/salary-slips/bulk-submit-for-review/"
-        data = {"salary_period": "2026-06"}
+        data = {"salary_period": "2026-05"}
         response = auth_client.post(url, data, format="json")
 
         assert response.status_code == 200

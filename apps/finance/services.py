@@ -1291,6 +1291,15 @@ def payroll_approve_slip(*, user: User, salary_slip_id: str) -> SalarySlip:
     if slip.status not in ["pending_finance_review", "calculated"]:
         raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái chờ duyệt hoặc calculated")
 
+    from apps.hrm.selectors import is_current_salary_period
+
+    is_final = slip.name.startswith("FINAL-SALARY-") or (slip.breakdown and slip.breakdown.get("is_partial"))
+    if not is_final and is_current_salary_period(slip.salary_period):
+        raise ValidationException(
+            f"Không thể phê duyệt phiếu lương của kỳ {slip.salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
+
     old_status = slip.status
     slip.status = "approved"
     slip.approved_by = user
@@ -1357,6 +1366,14 @@ def payroll_bulk_approve(
     """
     if creator:
         PermissionChecker.check_permission(creator, "finance.payroll_approve")
+
+    from apps.hrm.selectors import is_current_salary_period
+
+    if is_current_salary_period(salary_period):
+        raise ValidationException(
+            f"Không thể phê duyệt hàng loạt phiếu lương kỳ {salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
 
     slips_qs = SalarySlip.objects.filter(salary_period=salary_period, status="pending_finance_review").select_related(
         "employee"

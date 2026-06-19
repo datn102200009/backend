@@ -1828,7 +1828,7 @@ class TestPR4Services:
     def test_payroll_submit(self):
         employee = EmployeeFactory()
         admin = UserFactory(username="admin_pr4_test9")
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
 
         submitted_slip = payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
         assert submitted_slip.status == "pending_finance_review"
@@ -1929,16 +1929,33 @@ class TestPR4Services:
         assert slip1.status == "calculated"
         assert slip2.status == "calculated"
 
+    def test_payroll_bulk_calculate_calculated_slips(self):
+        # Arrange
+        employee = EmployeeFactory(salary_base=Decimal("12000000.00"))
+        admin = UserFactory(username="admin_pr_bulk_recalc")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+        EmploymentContractFactory(
+            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+        )
+
+        # Act
+        result = payroll_bulk_calculate(salary_period="2026-06", creator=admin)
+
+        # Assert
+        assert result["count"] == 1
+        slip.refresh_from_db()
+        assert slip.status == "calculated"
+
     def test_payroll_bulk_submit_for_review(self):
         # Arrange
         employee1 = EmployeeFactory()
         employee2 = EmployeeFactory()
         admin = UserFactory(username="admin_pr_bulk_2")
-        slip1 = SalarySlipFactory(employee=employee1, salary_period="2026-06", status="calculated")
-        slip2 = SalarySlipFactory(employee=employee2, salary_period="2026-06", status="calculated")
+        slip1 = SalarySlipFactory(employee=employee1, salary_period="2026-05", status="calculated")
+        slip2 = SalarySlipFactory(employee=employee2, salary_period="2026-05", status="calculated")
 
         # Act
-        result = payroll_bulk_submit_for_review(salary_period="2026-06", user=admin)
+        result = payroll_bulk_submit_for_review(salary_period="2026-05", user=admin)
 
         # Assert
         assert result["count"] == 2
@@ -1949,7 +1966,7 @@ class TestPR4Services:
 
         # Check validation exception when none is in calculated state
         with pytest.raises(ValidationException, match="Không có phiếu lương nào ở trạng thái 'calculated'"):
-            payroll_bulk_submit_for_review(salary_period="2026-06", user=admin)
+            payroll_bulk_submit_for_review(salary_period="2026-05", user=admin)
 
 
 @pytest.mark.django_db
