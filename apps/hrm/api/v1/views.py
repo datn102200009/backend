@@ -20,59 +20,64 @@ from apps.finance.models import SalarySlip
 from apps.hrm.api.v1.serializers import (
     AttendanceBatchInputSerializer,
     AttendanceOutputSerializer,
+    CancelRecordInputSerializer,
     ContractCreateOrRenewInputSerializer,
+    ContractRenewInputSerializer,
     ContractTerminateInputSerializer,
     DisciplineRecordCreateInputSerializer,
     DisciplineRecordOutputSerializer,
+    DisciplineRecordUpdateInputSerializer,
+    EmployeeAdjustSalaryInputSerializer,
     EmployeeCreateInputSerializer,
     EmployeeDetailOutputSerializer,
     EmployeeOutputSerializer,
     EmployeeUpdateInputSerializer,
-    EmployeeUpdateSalaryTitleInputSerializer,
+    EmployeeWithContractCreateInputSerializer,
     EmploymentContractOutputSerializer,
-    EmploymentHistoryOutputSerializer,
     LeaveRequestApproveInputSerializer,
     LeaveRequestCreateInputSerializer,
     LeaveRequestOutputSerializer,
+    PartialSalarySlipInputSerializer,
     PublicHolidaySerializer,
     RewardRecordCreateInputSerializer,
     RewardRecordOutputSerializer,
+    RewardRecordUpdateInputSerializer,
     SalarySlipBulkConfirmInputSerializer,
     SalarySlipConfirmInputSerializer,
     SalarySlipInitializeInputSerializer,
     SalarySlipOutputSerializer,
 )
-from apps.hrm.models import (
-    Attendance,
-    DisciplineRecord,
-    EmploymentContract,
-    EmploymentHistory,
-    LeaveRequest,
-    PublicHoliday,
-    RewardRecord,
-)
+from apps.hrm.models import Attendance, DisciplineRecord, EmploymentContract, LeaveRequest, PublicHoliday, RewardRecord
 from apps.hrm.selectors import employee_get_detail_with_relations
 from apps.hrm.services import (
     attendance_batch_record,
     contract_create_or_renew,
+    contract_renew,
     contract_terminate,
+    create_partial_salary_slip,
     discipline_record_approve,
+    discipline_record_cancel,
     discipline_record_create,
-    employee_create_with_user,
+    discipline_record_delete,
+    discipline_record_update,
+    employee_adjust_salary_apply,
+    employee_create_with_contract,
     employee_update,
-    employee_update_salary_or_title,
-    employment_history_approve,
     leave_request_approve,
     leave_request_create,
-    payroll_approve_salary,
-    payroll_bulk_confirm_and_pay,
+    payroll_bulk_calculate,
+    payroll_bulk_submit_for_review,
     payroll_calculate_salary,
     payroll_initialize_period,
+    payroll_submit_for_review,
     public_holiday_create,
     public_holiday_delete,
     public_holiday_update,
     reward_record_approve,
+    reward_record_cancel,
     reward_record_create,
+    reward_record_delete,
+    reward_record_update,
 )
 from apps.master_data.models import Employee
 
@@ -131,7 +136,7 @@ def employee_list_view(request):
 @throttle_classes([UserRateThrottle])
 def employee_create_view(request):
     """
-    Tạo mới một nhân viên (và tài khoản người dùng nếu được yêu cầu).
+    Tạo mới một nhân viên (và tài khoản người dùng, hợp đồng lao động nếu được yêu cầu).
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -139,19 +144,36 @@ def employee_create_view(request):
 
     PermissionChecker.check_permission(user, "hrm.add_employee")
 
-    serializer = EmployeeCreateInputSerializer(data=request.data)
+    serializer = EmployeeWithContractCreateInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    # Tách contract_data
+    contract_data = {
+        "contract_no": data.get("contract_no"),
+        "contract_type": data.get("contract_type"),
+        "start_date": data.get("contract_start_date"),
+        "end_date": data.get("contract_end_date"),
+        "note": data.get("contract_note"),
+        "file_url": data.get("contract_file_url"),
+    }
+    if "contract_salary_base" in data:
+        contract_data["salary_base"] = data["contract_salary_base"]
 
     try:
-        employee = employee_create_with_user(
-            data=serializer.validated_data,
+        employee, contract = employee_create_with_contract(
+            data=data,
+            contract_data=contract_data,
             creator=user,
         )
     except IntegrityError:
         raise ValidationException("Dữ liệu bị trùng lặp hoặc vi phạm ràng buộc CSDL. Vui lòng kiểm tra lại.")
 
-    out_serializer = EmployeeOutputSerializer(employee)
-    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+    emp_out = EmployeeOutputSerializer(employee).data
+    resp = {"employee": emp_out}
+    if contract:
+        resp["contract"] = EmploymentContractOutputSerializer(contract).data
+    return Response(resp, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])
@@ -209,28 +231,31 @@ def employee_update_view(request, pk):
 
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
-def employee_update_salary_title_view(request, pk):
+def employee_adjust_salary_view(request, pk):
     """
-    Điều chỉnh lương cơ bản, chức danh, hoặc phòng ban của nhân viên (tự động lưu lịch sử).
+    Điều chỉnh lương cơ bản của nhân viên (áp dụng trực tiếp).
     """
     user = request.user
     if not user or not user.is_authenticated:
         return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
 
-    PermissionChecker.check_permission(user, "hrm.change_employee")
+    PermissionChecker.check_permission(user, "hrm.adjust_salary")
 
-    serializer = EmployeeUpdateSalaryTitleInputSerializer(data=request.data)
+    serializer = EmployeeAdjustSalaryInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    history = employee_update_salary_or_title(
+    result = employee_adjust_salary_apply(
         employee_id=pk,
-        change_data=serializer.validated_data,
-        approved_by_user_id=str(user.id),
-        approved_by=user,
+        new_salary_base=serializer.validated_data.get("new_salary_base"),
+        reason=serializer.validated_data.get("reason"),
+        actor=user,
     )
 
-    out_serializer = EmploymentHistoryOutputSerializer(history)
-    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+    response_data = {
+        "contract": EmploymentContractOutputSerializer(result["contract"]).data,
+        "affected_payslips": SalarySlipOutputSerializer(result["affected_payslips"], many=True).data,
+    }
+    return Response(response_data, status=status.HTTP_200_OK)
 
 
 # =============================================================================
@@ -542,6 +567,22 @@ def salary_slip_list_view(request):
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+@api_view(["GET"])
+def salary_periods_list_view(request):
+    """
+    Xem danh sách các kỳ lương tồn tại.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "finance.view_salaryslip")
+
+    periods = SalarySlip.objects.values_list("salary_period", flat=True).distinct().order_by("-salary_period")
+    periods = [p for p in periods if p]
+    return Response(periods, status=status.HTTP_200_OK)
+
+
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
 def salary_slip_initialize_view(request):
@@ -592,32 +633,6 @@ def salary_slip_calculate_view(request, pk):
     return Response(out_serializer.data, status=status.HTTP_200_OK)
 
 
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def salary_slip_approve_view(request, pk):
-    """
-    Phê duyệt phiếu lương của nhân viên (sau khi tính toán).
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.payroll_approve")
-
-    try:
-        slip = SalarySlip.objects.get(id=pk)
-    except SalarySlip.DoesNotExist:
-        raise NotFoundException("Không tìm thấy phiếu lương")
-
-    approved_slip = payroll_approve_salary(
-        user=user,
-        salary_slip_id=pk,
-    )
-
-    out_serializer = SalarySlipOutputSerializer(approved_slip)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
-
-
 # =============================================================================
 # REWARD & DISCIPLINE VIEWS
 # =============================================================================
@@ -628,6 +643,7 @@ def salary_slip_approve_view(request, pk):
 def reward_list_create_view(request):
     """
     Xem danh sách hoặc ghi nhận khen thưởng của nhân viên.
+    Hỗ trợ lọc nâng cao và phân trang.
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -636,11 +652,63 @@ def reward_list_create_view(request):
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_rewardrecord")
         employee_id = request.query_params.get("employee_id")
+        status_param = request.query_params.get("status")
+        reward_type = request.query_params.get("reward_type")
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+
+        try:
+            limit = int(request.query_params.get("limit", 20))
+            offset = int(request.query_params.get("offset", 0))
+            limit = min(limit, 100)
+        except ValueError:
+            limit = 20
+            offset = 0
+
         qs = RewardRecord.objects.all().select_related("employee").order_by("-reward_date", "-created_at", "id")
+
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
-        serializer = RewardRecordOutputSerializer(qs, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        if status_param:
+            qs = qs.filter(status=status_param)
+        if reward_type:
+            qs = qs.filter(reward_type=reward_type)
+
+        if date_from or date_to:
+            try:
+                from datetime import datetime
+
+                if date_from:
+                    df = datetime.strptime(date_from, "%Y-%m-%d").date()
+                else:
+                    df = None
+                if date_to:
+                    dt = datetime.strptime(date_to, "%Y-%m-%d").date()
+                else:
+                    dt = None
+
+                if df and dt and df > dt:
+                    raise ValidationException("date_from không được lớn hơn date_to")
+
+                if df:
+                    qs = qs.filter(reward_date__gte=df)
+                if dt:
+                    qs = qs.filter(reward_date__lte=dt)
+            except ValueError:
+                raise ValidationException("Định dạng ngày không hợp lệ. Sử dụng YYYY-MM-DD.")
+
+        count = qs.count()
+        results = qs[offset : offset + limit]
+        serializer = RewardRecordOutputSerializer(results, many=True)
+        return Response(
+            {
+                "count": count,
+                "next": None,
+                "previous": None,
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     elif request.method == "POST":
         PermissionChecker.check_permission(user, "hrm.add_rewardrecord")
@@ -660,11 +728,77 @@ def reward_list_create_view(request):
         return Response(out_serializer.data, status=status.HTTP_201_CREATED)
 
 
+@api_view(["GET", "PATCH", "DELETE"])
+@throttle_classes([UserRateThrottle])
+def reward_detail_update_delete_view(request, pk):
+    """
+    Xem chi tiết, cập nhật hoặc xóa khen thưởng.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        reward = RewardRecord.objects.select_related("employee").get(id=pk)
+    except RewardRecord.DoesNotExist:
+        raise NotFoundException("Không tìm thấy khen thưởng")
+
+    if request.method == "GET":
+        PermissionChecker.check_permission(user, "hrm.view_rewardrecord")
+        serializer = RewardRecordOutputSerializer(reward)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method == "PATCH":
+        PermissionChecker.check_permission(user, "hrm.change_rewardrecord")
+        serializer = RewardRecordUpdateInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated_reward = reward_record_update(
+            reward_id=str(reward.id),
+            data=serializer.validated_data,
+            updater=user,
+        )
+
+        return Response(RewardRecordOutputSerializer(updated_reward).data, status=status.HTTP_200_OK)
+
+    elif request.method == "DELETE":
+        PermissionChecker.check_permission(user, "hrm.delete_rewardrecord")
+        reward_record_delete(
+            reward_id=str(reward.id),
+            deleter=user,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def reward_cancel_view(request, pk):
+    """
+    Hủy khen thưởng.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_rewardrecord")
+    serializer = CancelRecordInputSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    reward = reward_record_cancel(
+        reward_id=pk,
+        user=user,
+        reason=serializer.validated_data.get("reason"),
+    )
+
+    return Response(RewardRecordOutputSerializer(reward).data, status=status.HTTP_200_OK)
+
+
 @api_view(["GET", "POST"])
 @throttle_classes([UserRateThrottle])
 def discipline_list_create_view(request):
     """
     Xem danh sách hoặc ghi nhận kỷ luật của nhân viên.
+    Hỗ trợ lọc nâng cao và phân trang.
     """
     user = request.user
     if not user or not user.is_authenticated:
@@ -673,11 +807,63 @@ def discipline_list_create_view(request):
     if request.method == "GET":
         PermissionChecker.check_permission(user, "hrm.view_disciplinerecord")
         employee_id = request.query_params.get("employee_id")
+        status_param = request.query_params.get("status")
+        discipline_type = request.query_params.get("discipline_type")
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+
+        try:
+            limit = int(request.query_params.get("limit", 20))
+            offset = int(request.query_params.get("offset", 0))
+            limit = min(limit, 100)
+        except ValueError:
+            limit = 20
+            offset = 0
+
         qs = DisciplineRecord.objects.all().select_related("employee").order_by("-discipline_date", "-created_at", "id")
+
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
-        serializer = DisciplineRecordOutputSerializer(qs, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        if status_param:
+            qs = qs.filter(status=status_param)
+        if discipline_type:
+            qs = qs.filter(discipline_type=discipline_type)
+
+        if date_from or date_to:
+            try:
+                from datetime import datetime
+
+                if date_from:
+                    df = datetime.strptime(date_from, "%Y-%m-%d").date()
+                else:
+                    df = None
+                if date_to:
+                    dt = datetime.strptime(date_to, "%Y-%m-%d").date()
+                else:
+                    dt = None
+
+                if df and dt and df > dt:
+                    raise ValidationException("date_from không được lớn hơn date_to")
+
+                if df:
+                    qs = qs.filter(discipline_date__gte=df)
+                if dt:
+                    qs = qs.filter(discipline_date__lte=dt)
+            except ValueError:
+                raise ValidationException("Định dạng ngày không hợp lệ. Sử dụng YYYY-MM-DD.")
+
+        count = qs.count()
+        results = qs[offset : offset + limit]
+        serializer = DisciplineRecordOutputSerializer(results, many=True)
+        return Response(
+            {
+                "count": count,
+                "next": None,
+                "previous": None,
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     elif request.method == "POST":
         PermissionChecker.check_permission(user, "hrm.add_disciplinerecord")
@@ -697,32 +883,69 @@ def discipline_list_create_view(request):
         return Response(out_serializer.data, status=status.HTTP_201_CREATED)
 
 
-@api_view(["POST"])
+@api_view(["GET", "PATCH", "DELETE"])
 @throttle_classes([UserRateThrottle])
-def salary_slip_bulk_confirm_view(request):
+def discipline_detail_update_delete_view(request, pk):
     """
-    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương.
+    Xem chi tiết, cập nhật hoặc xóa kỷ luật.
     """
     user = request.user
     if not user or not user.is_authenticated:
         return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
 
-    PermissionChecker.check_permission(user, "finance.change_salaryslip")
+    try:
+        discipline = DisciplineRecord.objects.select_related("employee").get(id=pk)
+    except DisciplineRecord.DoesNotExist:
+        raise NotFoundException("Không tìm thấy kỷ luật")
 
-    serializer = SalarySlipBulkConfirmInputSerializer(data=request.data)
+    if request.method == "GET":
+        PermissionChecker.check_permission(user, "hrm.view_disciplinerecord")
+        serializer = DisciplineRecordOutputSerializer(discipline)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method == "PATCH":
+        PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
+        serializer = DisciplineRecordUpdateInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated_discipline = discipline_record_update(
+            discipline_id=str(discipline.id),
+            data=serializer.validated_data,
+            updater=user,
+        )
+
+        return Response(DisciplineRecordOutputSerializer(updated_discipline).data, status=status.HTTP_200_OK)
+
+    elif request.method == "DELETE":
+        PermissionChecker.check_permission(user, "hrm.delete_disciplinerecord")
+        discipline_record_delete(
+            discipline_id=str(discipline.id),
+            deleter=user,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def discipline_cancel_view(request, pk):
+    """
+    Hủy kỷ luật.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
+    serializer = CancelRecordInputSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    salary_period = serializer.validated_data["salary_period"]
-    payment_method = serializer.validated_data["payment_method"]
-
-    updated_slips = payroll_bulk_confirm_and_pay(
-        salary_period=salary_period,
-        payment_method=payment_method,
-        creator=user,
+    discipline = discipline_record_cancel(
+        discipline_id=pk,
+        user=user,
+        reason=serializer.validated_data.get("reason"),
     )
 
-    out_serializer = SalarySlipOutputSerializer(updated_slips, many=True)
-    return Response(out_serializer.data, status=status.HTTP_200_OK)
+    return Response(DisciplineRecordOutputSerializer(discipline).data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET", "POST"])
@@ -826,72 +1049,6 @@ def public_holiday_detail_update_delete_view(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(["GET"])
-def employment_history_list_view(request):
-    """
-    Xem danh sách đề xuất nhân sự (lịch sử công tác).
-    Hỗ trợ lọc theo status và employee_id, kèm phân trang limit/offset.
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.view_employee")
-
-    status_param = request.query_params.get("status")
-    employee_id = request.query_params.get("employee_id")
-
-    try:
-        limit = int(request.query_params.get("limit", 20))
-        offset = int(request.query_params.get("offset", 0))
-        limit = min(limit, 100)
-    except ValueError:
-        limit = 20
-        offset = 0
-
-    qs = (
-        EmploymentHistory.objects.all()
-        .select_related("employee", "approved_by")
-        .order_by("-effective_date", "-created_at")
-    )
-
-    if status_param:
-        qs = qs.filter(status=status_param)
-    if employee_id:
-        qs = qs.filter(employee_id=employee_id)
-
-    count = qs.count()
-    results = qs[offset : offset + limit]
-    total_pages = (count + limit - 1) // limit if limit > 0 else 1
-
-    serializer = EmploymentHistoryOutputSerializer(results, many=True)
-    return Response(
-        {
-            "count": count,
-            "total_pages": total_pages,
-            "next": None,
-            "previous": None,
-            "results": serializer.data,
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-@api_view(["POST"])
-@throttle_classes([UserRateThrottle])
-def employment_history_approve_view(request, pk):
-    """
-    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
-    """
-    user = request.user
-    if not user or not user.is_authenticated:
-        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-    history = employment_history_approve(user=user, history_id=pk)
-    return Response(EmploymentHistoryOutputSerializer(history).data, status=status.HTTP_200_OK)
-
-
 @api_view(["POST"])
 @throttle_classes([UserRateThrottle])
 def reward_approve_view(request, pk):
@@ -920,3 +1077,126 @@ def discipline_approve_view(request, pk):
     PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
     discipline = discipline_record_approve(user=user, discipline_id=pk)
     return Response(DisciplineRecordOutputSerializer(discipline).data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def contract_renew_view(request, pk):
+    """
+    Gia hạn hợp đồng lao động (tái ký), có thể kèm điều chỉnh lương cơ bản.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.change_employmentcontract")
+
+    try:
+        old_contract = EmploymentContract.objects.get(id=pk)
+    except EmploymentContract.DoesNotExist:
+        raise NotFoundException("Không tìm thấy hợp đồng lao động")
+
+    serializer = ContractRenewInputSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    result = contract_renew(
+        contract_id=pk,
+        new_contract_no=data.get("new_contract_no"),
+        new_contract_type=data.get("new_contract_type"),
+        start_date=data.get("start_date"),
+        new_salary_base=data.get("new_salary_base"),
+        file_url=data.get("file_url"),
+        note=data.get("note"),
+        renewer=user,
+    )
+
+    resp_data = {
+        "contract": EmploymentContractOutputSerializer(result["contract"]).data,
+    }
+    return Response(resp_data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def partial_salary_slip_create_view(request):
+    """
+    Tạo phiếu lương cho một phần giai đoạn của kỳ lương.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "finance.add_salaryslip")
+
+    serializer = PartialSalarySlipInputSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    slip = create_partial_salary_slip(
+        employee_id=str(data["employee_id"]),
+        period_start=data["period_start"],
+        period_end=data["period_end"],
+        name=data["name"],
+        creator=user,
+    )
+
+    out_serializer = SalarySlipOutputSerializer(slip)
+    return Response(out_serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def payroll_submit_view(request, pk):
+    """
+    HRM gửi phiếu lương cho Finance duyệt.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.payroll_submit")
+
+    slip = payroll_submit_for_review(salary_slip_id=pk, user=user)
+    out_serializer = SalarySlipOutputSerializer(slip)
+    return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def salary_slip_bulk_calculate_view(request):
+    """
+    Tính toán hàng loạt phiếu lương.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "finance.change_salaryslip")
+
+    salary_period = request.data.get("salary_period")
+    if not salary_period:
+        raise ValidationException("Kỳ lương (salary_period) là bắt buộc")
+
+    result = payroll_bulk_calculate(salary_period=salary_period, creator=user)
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@throttle_classes([UserRateThrottle])
+def salary_slip_bulk_submit_view(request):
+    """
+    HRM gửi hàng loạt phiếu lương cho Finance duyệt.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    PermissionChecker.check_permission(user, "hrm.payroll_submit")
+
+    salary_period = request.data.get("salary_period")
+    if not salary_period:
+        raise ValidationException("Kỳ lương (salary_period) là bắt buộc")
+
+    result = payroll_bulk_submit_for_review(salary_period=salary_period, user=user)
+    return Response(result, status=status.HTTP_200_OK)

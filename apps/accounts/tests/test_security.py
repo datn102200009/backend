@@ -11,10 +11,11 @@ class TestCustomJWTAuthentication:
 
     def test_access_protected_route_with_valid_token(self, api_client):
         # Arrange: Setup user with permissions
-        role = RoleFactory()
+        from apps.accounts.models import UserPermission
+
         perm = PermissionFactory(code="inventory.view")
-        RolePermission.objects.create(role=role, permission=perm)
-        user = UserFactory(username="secure_usr", role=role)
+        user = UserFactory(username="secure_usr")
+        UserPermission.objects.create(user=user, permission=perm)
 
         # Generate valid token
         refresh = RefreshToken.for_user(user)

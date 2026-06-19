@@ -165,110 +165,7 @@ components:
                 type: string
                 enum: [receipt, issue, transfer, manufacture, adjustment]
 
-    PurchaseInvoiceLine:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        item:
-          type: string
-          format: uuid
-        item_name:
-          type: string
-        item_code:
-          type: string
-        quantity:
-          type: number
-          format: double
-        unit_price:
-          type: number
-          format: double
-        import_tax:
-          type: number
-          format: double
-        vat_tax:
-          type: number
-          format: double
-        line_total:
-          type: number
-          format: double
-        qty_fulfillment_rate:
-          type: number
-          format: double
-          nullable: true
-        qc_status:
-          type: string
-          example: "PENDING"
-        latest_cert:
-          type: object
-          nullable: true
-          properties:
-            id:
-              type: string
-              format: uuid
-            cert_id:
-              type: string
-            result:
-              type: string
-            remarks:
-              type: string
-              nullable: true
-            issue_date:
-              type: string
-              format: date
 
-    PurchaseInvoice:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        order:
-          type: string
-          format: uuid
-        stock_entry:
-          type: string
-          format: uuid
-          nullable: true
-        stock_entry_name:
-          type: string
-          nullable: true
-        vendor:
-          type: string
-          format: uuid
-        vendor_name:
-          type: string
-        status:
-          type: string
-          enum: [unpaid, partial, paid, blocked_for_payment, cancelled]
-        total_amount:
-          type: number
-          format: double
-        paid_amount:
-          type: number
-          format: double
-        block_reason:
-          type: string
-          nullable: true
-        due_date:
-          type: string
-          format: date
-          nullable: true
-        qty_fulfillment_rate:
-          type: number
-          format: double
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-        lines:
-          type: array
-          items:
-            $ref: '#/components/schemas/PurchaseInvoiceLine'
 
 
 
@@ -296,12 +193,41 @@ components:
           type: string
         name:
           type: string
+        purchase_order:
+          type: string
+          format: uuid
+          nullable: true
+        purchase_order_lines:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              item_id:
+                type: string
+                format: uuid
+              item_code:
+                type: string
+              item_name:
+                type: string
+              quantity:
+                type: number
+              remaining_quantity:
+                type: number
+                description: "Số lượng còn lại có thể tiếp nhận (đã trừ các shipment đã posted trước đó)"
+              received_quantity:
+                type: number
+                description: "Tổng số lượng đã nhận từ tất cả các shipment trước"
+              unit:
+                type: string
         total_logistic_fees:
           type: number
           format: double
         status:
           type: string
-          enum: [draft, arrived, inspected, completed]
+          enum: [draft, inspecting, completed]
         remarks:
           type: string
           nullable: true
@@ -352,11 +278,6 @@ components:
               target_warehouse_name:
                 type: string
                 nullable: true
-              qc_status:
-                type: string
-              latest_cert:
-                type: object
-                nullable: true
               stock_entry_id:
                 type: string
                 format: uuid
@@ -384,11 +305,49 @@ components:
         remarks:
           type: string
           nullable: true
+        purchase_order_id:
+          type: string
+          format: uuid
+          nullable: true
         stock_entry_ids:
           type: array
           items:
             type: string
             format: uuid
+
+    ShipmentDetailComplete:
+      type: object
+      required:
+        - po_line_id
+        - item_id
+        - quantity
+      properties:
+        po_line_id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+        target_warehouse_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    ShipmentCompleteInput:
+      type: object
+      required:
+        - total_logistic_fees
+        - details
+      properties:
+        total_logistic_fees:
+          type: number
+          minimum: 0
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShipmentDetailComplete'
 
     APAging:
       type: object
@@ -413,76 +372,7 @@ components:
           type: number
           format: double
 
-    TechnicalCertification:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        cert_id:
-          type: string
-        item:
-          type: string
-          format: uuid
-        item_name:
-          type: string
-        item_code:
-          type: string
-        stock_entry:
-          type: string
-          format: uuid
-          nullable: true
-        stock_entry_name:
-          type: string
-          nullable: true
-        cert_type:
-          type: string
-        assessment_fee:
-          type: number
-          nullable: true
-        expiry_date:
-          type: string
-          format: date
-          nullable: true
-        issue_date:
-          type: string
-          format: date
-        result:
-          type: string
-          enum: [PASSED, FAILED]
-        remarks:
-          type: string
-          nullable: true
 
-    TechnicalCertificationCreateInput:
-      type: object
-      required:
-        - item_id
-        - stock_entry_id
-        - cert_type
-      properties:
-        item_id:
-          type: string
-          format: uuid
-        stock_entry_id:
-          type: string
-          format: uuid
-        cert_type:
-          type: string
-        assessment_fee:
-          type: number
-          nullable: true
-        expiry_date:
-          type: string
-          format: date
-          nullable: true
-        result:
-          type: string
-          enum: [PASSED, FAILED]
-          default: PASSED
-        remarks:
-          type: string
-          nullable: true
 
     PurchaseOrderCancelInput:
       type: object
@@ -524,63 +414,7 @@ security:
   - bearerAuth: []
 
 paths:
-  /purchasing/certifications/:
-    get:
-      summary: List QA/QC Certifications
-      description: Returns a list of technical certifications (QC results).
-      tags:
-        - Purchasing QC
-      parameters:
-        - name: item_id
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: stock_entry_id
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: A list of certifications.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/TechnicalCertification'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
 
-    post:
-      summary: Create QA/QC Certification
-      description: Log QA/QC inspection result for an item in a specific stock entry.
-      tags:
-        - Purchasing QC
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TechnicalCertificationCreateInput'
-      responses:
-        '201':
-          description: Certification successfully created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TechnicalCertification'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
 
   /purchasing/orders/:
     get:
@@ -800,108 +634,9 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
-  /purchasing/invoices/:
-    get:
-      summary: List Purchase Invoices
-      description: Returns a list of purchase invoices.
-      tags:
-        - Purchasing Invoices
-      parameters:
-        - name: status
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 10
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 1
-      responses:
-        '200':
-          description: A paginated list of purchase invoices.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  count:
-                    type: integer
-                  total_pages:
-                    type: integer
-                  current_page:
-                    type: integer
-                  results:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/PurchaseInvoice'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
 
-  /purchasing/invoices/{pk}/:
-    get:
-      summary: Get Purchase Invoice
-      description: Retrieves a specific purchase invoice by ID.
-      tags:
-        - Purchasing Invoices
-      parameters:
-        - name: pk
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Purchase invoice details.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseInvoice'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
 
-  /purchasing/invoices/{pk}/verify/:
-    post:
-      summary: Verify Invoice (4-Way Matching)
-      description: Thực hiện đối soát 4 bên (Giá mua, Chất lượng, Số lượng thực nhận).
-      tags:
-        - Purchasing Invoices
-      parameters:
-        - name: pk
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Kết quả đối soát cập nhật trên Hóa đơn.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PurchaseInvoice'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
+
 
 
 
@@ -979,7 +714,7 @@ paths:
 
     put:
       summary: Update Shipment Status and Remarks
-      description: Cập nhật trạng thái và ghi chú của lô hàng (hỗ trợ chuyển draft -> arrived -> inspected).
+      description: Cập nhật trạng thái và ghi chú của lô hàng (hỗ trợ chuyển draft -> inspecting).
       tags:
         - Shipments
       parameters:
@@ -998,13 +733,48 @@ paths:
               properties:
                 status:
                   type: string
-                  enum: [draft, arrived, inspected, completed]
+                  enum: [draft, inspecting, completed]
                 remarks:
                   type: string
                   nullable: true
       responses:
         '200':
           description: Cập nhật thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /purchasing/shipments/{pk}/complete/:
+    post:
+      summary: Complete Shipment (Tiếp nhận & Hoàn tất lô hàng)
+      description: Nhập số lượng đạt chuẩn cho từng dòng PO và chi phí logistic để tạo StockEntry posted trực tiếp và hoàn tất lô hàng.
+      tags:
+        - Shipments
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentCompleteInput'
+      responses:
+        '200':
+          description: Hoàn tất thành công.
           content:
             application/json:
               schema:

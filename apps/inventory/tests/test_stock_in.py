@@ -42,7 +42,6 @@ class TestStockInCreate:
         stock_entry = stock_in_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             details=[
                 {
                     "item_id": str(item.id),
@@ -72,7 +71,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -91,7 +89,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[],
             )
 
@@ -107,7 +104,6 @@ class TestStockInCreate:
         stock_in_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             details=[
                 {
                     "item_id": str(item.id),
@@ -122,7 +118,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -144,7 +139,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": "00000000-0000-0000-0000-000000000000",
@@ -166,7 +160,6 @@ class TestStockInCreate:
             stock_in_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -248,16 +241,26 @@ class TestStockInApprove:
 
     def test_stock_in_approve_backorder_creation(self, warehouse_keeper_user):
         """Test cơ chế Backorder tự động khi thực nhận nhỏ hơn số lượng đặt hàng."""
-        from apps.inventory.services import stock_entry_update
         from apps.inventory.tests.factories import SupplierFactory
-        from apps.purchasing.models import PurchaseInvoice, PurchaseOrder
-        from apps.purchasing.services import purchase_order_approve, purchase_order_create
+        from apps.purchasing.models import PurchaseInvoice, PurchaseOrder, Shipment
+        from apps.purchasing.services import (
+            purchase_order_approve,
+            purchase_order_create,
+            shipment_complete,
+            shipment_create_from_po,
+            shipment_update,
+        )
 
         user = warehouse_keeper_user
         from apps.accounts.models import RolePermission
         from apps.inventory.tests.factories import PermissionFactory
 
-        for p in ["purchasing.create_order", "purchasing.approve_order", "purchasing.update_order"]:
+        for p in [
+            "purchasing.create_order",
+            "purchasing.approve_order",
+            "purchasing.update_order",
+            "purchasing.allocate_landed_cost",
+        ]:
             perm = PermissionFactory(code=p)
             RolePermission.objects.get_or_create(role=user.role, permission=perm)
 
@@ -269,32 +272,63 @@ class TestStockInApprove:
         order = purchase_order_create(user=user, vendor_id=str(SupplierFactory().id), lines=lines)
         order = purchase_order_approve(user=user, order_id=str(order.id))
 
-        # Retrieve automatically created draft StockEntry and Invoice
-        stock_entry = order.stock_entries.filter(status="draft").first()
-        invoice = order.invoices.filter(status="unpaid").first()
+        # Verify no draft StockEntry is automatically created
+        assert order.stock_entries.count() == 0
 
-        # 2. Update stock entry detail quantity to 4.00 (partial delivery)
-        detail = stock_entry.details.first()
-        stock_entry_update(
+        # Retrieve automatically created Invoice
+        invoice = order.invoices.filter(status="unpaid").first()
+        assert invoice is not None
+        assert invoice.stock_entry is None
+
+        # 2. Create shipment from PO
+        shipment = shipment_create_from_po(
             user=user,
-            stock_entry_id=str(stock_entry.id),
-            details=[
-                {"detail_id": str(detail.id), "target_warehouse_id": str(warehouse.id), "quantity": Decimal("4.00")}
-            ],
+            shipment_num="SHIP-TEST-123",
+            name="Lô hàng test",
+            purchase_order_id=str(order.id),
+        )
+        assert shipment.status == Shipment.Status.DRAFT
+
+        # 3. Transition to inspecting
+        shipment_update(
+            user=user,
+            shipment_id=str(shipment.id),
+            status=Shipment.Status.INSPECTING,
         )
 
-        # 3. Approve stock entry (partial receipt of 4 units out of 10)
-        stock_in_approve(user=user, stock_entry_id=str(stock_entry.id))
+        # 4. Complete shipment with partial delivery (4.00 units out of 10)
+        po_line = order.lines.first()
+        shipment_complete(
+            user=user,
+            shipment_id=str(shipment.id),
+            details=[
+                {
+                    "po_line_id": str(po_line.id),
+                    "item_id": str(item.id),
+                    "quantity": Decimal("4.00"),
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
+            total_logistic_fees=Decimal("0.00"),
+        )
 
-        stock_entry.refresh_from_db()
+        shipment.refresh_from_db()
+        assert shipment.status == Shipment.Status.COMPLETED
+
+        # 5. Verify the posted StockEntry created
+        stock_entry = shipment.stock_entries.first()
+        assert stock_entry is not None
         assert stock_entry.status == "posted"
+        assert stock_entry.details.count() == 1
+        assert stock_entry.details.first().quantity == Decimal("4.00")
 
-        # 4. Verify no backorder entities are generated
-        new_draft_se = order.stock_entries.filter(status="draft").first()
-        assert new_draft_se is None
+        # 6. Verify no draft stock entries exist
+        assert order.stock_entries.filter(status="draft").count() == 0
 
-        # Verify that we only have the original invoice and no other new invoices
+        # Verify that we only have the original invoice and it is linked to the stock_entry
         assert order.invoices.count() == 1
+        invoice.refresh_from_db()
+        assert invoice.stock_entry == stock_entry
 
     def test_stock_in_approve_concurrent(self, warehouse_keeper_user, setup_stock_entry):
         """Test phê duyệt phiếu nhập kho đồng thời (hoặc gọi tuần tự liên tiếp) ném lỗi ValidationException."""

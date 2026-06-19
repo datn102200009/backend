@@ -68,10 +68,6 @@ class Employee(BaseModel):
 
     employee_id = models.CharField(max_length=50, unique=True)
     full_name = models.CharField(max_length=255)
-    department = models.CharField(max_length=255, null=True, blank=True)
-    position_title = models.CharField(max_length=255, null=True, blank=True)
-    salary_base = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    is_union_member = models.BooleanField(default=False)
     email = models.EmailField(null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
     gender = models.CharField(
@@ -121,6 +117,12 @@ class Item(BaseModel):
             ("discontinued", "Discontinued"),
         ],
         default="active",
+    )
+    minimum_threshold = models.DecimalField(
+        max_digits=18,
+        decimal_places=3,
+        default=0.0,
+        help_text="Ngưỡng tối thiểu tồn kho. Bắt buộc nhập.",
     )
     description = models.TextField(null=True, blank=True)
 
@@ -204,10 +206,11 @@ class WorkOrder(BaseModel):
         related_name="wo_production",
     )
     status = models.CharField(
-        max_length=20,
+        max_length=32,
         choices=[
             ("pending_approval", "Pending Approval"),
             ("in_progress", "In Progress"),
+            ("pending_production_complete", "Pending Production Complete"),
             ("completed", "Completed"),
             ("cancelled", "Cancelled"),
         ],
@@ -227,6 +230,43 @@ class WorkOrder(BaseModel):
         return self.name
 
 
+class WorkOrderFixedAsset(BaseModel):
+    """
+    Bảng trung gian (N-N) giữa WorkOrder và FixedAsset.
+    Một WorkOrder có thể dùng 0, 1 hoặc nhiều tài sản UOP.
+    Một FixedAsset có thể được dùng cho nhiều WorkOrder.
+    """
+
+    work_order = models.ForeignKey(
+        "WorkOrder",
+        on_delete=models.CASCADE,
+        related_name="fixed_asset_links",
+    )
+    fixed_asset = models.ForeignKey(
+        "finance.FixedAsset",
+        on_delete=models.PROTECT,
+        related_name="work_order_links",
+    )
+
+    class Meta:
+        db_table = "work_order_fixed_asset"
+        verbose_name = "Work Order - Fixed Asset Link"
+        verbose_name_plural = "Work Order - Fixed Asset Links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["work_order", "fixed_asset"],
+                name="unique_work_order_fixed_asset",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["work_order"]),
+            models.Index(fields=["fixed_asset"]),
+        ]
+
+    def __str__(self):
+        return f"WO:{self.work_order_id} ↔ FA:{self.fixed_asset_id}"
+
+
 class BOM(BaseModel):
     """
     Bill of Materials (Định mức vật tư).
@@ -243,14 +283,6 @@ class BOM(BaseModel):
         help_text="Số lượng thành phẩm tiêu chuẩn cho định mức này",
     )
     description = models.TextField(null=True, blank=True)
-    mold = models.ForeignKey(
-        "finance.FixedAsset",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        db_index=True,
-        related_name="boms",
-    )
 
     class Meta:
         db_table = "bom"

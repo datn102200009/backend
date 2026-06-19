@@ -15,13 +15,18 @@ urlpatterns = [
     path("employees/<uuid:pk>/", views.employee_detail_view, name="employee_detail"),
     path("employees/<uuid:pk>/update/", views.employee_update_view, name="employee_update"),
     path(
-        "employees/<uuid:pk>/update-salary-title/",
-        views.employee_update_salary_title_view,
-        name="employee_update_salary_title",
+        "employees/<uuid:pk>/adjust-salary/",
+        views.employee_adjust_salary_view,
+        name="employee_adjust_salary",
     ),
     # Contracts
     path("contracts/", views.contract_create_or_renew_view, name="contract_create_or_renew"),
     path("contracts/<uuid:pk>/terminate/", views.contract_terminate_view, name="contract_terminate"),
+    path(
+        "contracts/<uuid:pk>/renew/",
+        views.contract_renew_view,
+        name="contract_renew",
+    ),
     # Attendances
     path("attendances/", views.attendance_list_view, name="attendance_list"),
     path("attendances/batch/", views.attendance_batch_view, name="attendance_batch"),
@@ -31,21 +36,34 @@ urlpatterns = [
     path("leave-requests/<uuid:pk>/approve/", views.leave_request_approve_view, name="leave_request_approve"),
     # Salary Slips
     path("salary-slips/", views.salary_slip_list_view, name="salary_slip_list"),
+    path("salary-periods/", views.salary_periods_list_view, name="salary_periods_list"),
     path("salary-slips/initialize/", views.salary_slip_initialize_view, name="salary_slip_initialize"),
-    path("salary-slips/bulk-confirm-pay/", views.salary_slip_bulk_confirm_view, name="salary_slip_bulk_confirm"),
     path("salary-slips/<uuid:pk>/calculate/", views.salary_slip_calculate_view, name="salary_slip_calculate"),
-    path("salary-slips/<uuid:pk>/approve/", views.salary_slip_approve_view, name="salary_slip_approve"),
+    path("salary-slips/partial/", views.partial_salary_slip_create_view, name="partial_salary_slip_create"),
+    path(
+        "salary-slips/bulk-calculate/",
+        views.salary_slip_bulk_calculate_view,
+        name="salary_slip_bulk_calculate",
+    ),
+    path(
+        "salary-slips/bulk-submit-for-review/",
+        views.salary_slip_bulk_submit_view,
+        name="salary_slip_bulk_submit",
+    ),
+    path(
+        "salary-slips/<uuid:pk>/submit-for-review/",
+        views.payroll_submit_view,
+        name="payroll_submit_for_review",
+    ),
     # Rewards & Disciplines
     path("rewards/", views.reward_list_create_view, name="reward_list_create"),
+    path("rewards/<uuid:pk>/", views.reward_detail_update_delete_view, name="reward_detail_update_delete"),
     path("rewards/<uuid:pk>/approve/", views.reward_approve_view, name="reward_approve"),
+    path("rewards/<uuid:pk>/cancel/", views.reward_cancel_view, name="reward_cancel"),
     path("disciplines/", views.discipline_list_create_view, name="discipline_list_create"),
+    path("disciplines/<uuid:pk>/", views.discipline_detail_update_delete_view, name="discipline_detail_update_delete"),
     path("disciplines/<uuid:pk>/approve/", views.discipline_approve_view, name="discipline_approve"),
-    path("employment-histories/", views.employment_history_list_view, name="employment_history_list"),
-    path(
-        "employment-histories/<uuid:pk>/approve/",
-        views.employment_history_approve_view,
-        name="employment_history_approve",
-    ),
+    path("disciplines/<uuid:pk>/cancel/", views.discipline_cancel_view, name="discipline_cancel"),
     # Public Holidays
     path("public-holidays/", views.public_holiday_list_create_view, name="public_holiday_list_create"),
     path(

@@ -30,6 +30,29 @@ class TestPurchaseAPIViews:
         response = client.get(url)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+    def test_get_invoices_list_paginated_by_default(self, authenticated_client):
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory
+
+        PurchaseInvoiceFactory.create_batch(3)
+        url = reverse("purchase-invoice-list")
+        response = authenticated_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert "count" in response.data
+        assert "results" in response.data
+        assert "total_pages" in response.data
+        assert response.data["count"] == 3
+        assert len(response.data["results"]) == 3
+
+    def test_get_invoices_list_pagination_limit(self, authenticated_client):
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory
+
+        PurchaseInvoiceFactory.create_batch(3)
+        url = reverse("purchase-invoice-list")
+        response = authenticated_client.get(f"{url}?limit=2")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 3
+        assert len(response.data["results"]) == 2
+
     def test_purchase_order_cancel_api_permission_check(self, authenticated_client, mock_permission_checker):
         order = PurchaseOrderFactory(status="pending")
         url = reverse("purchase-order-cancel", kwargs={"pk": order.id})
@@ -50,74 +73,181 @@ class TestPurchaseAPIViews:
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.data == {"error": "Không có quyền"}
 
+    def test_purchase_order_receive_api_returns_invoice_payload(self, authenticated_client):
+        """Đảm bảo cross-module import PurchaseInvoiceSerializer vẫn hoạt động sau khi tài liệu hóa."""
+        import uuid
+        from unittest.mock import patch
 
-class TestTechnicalCertificationAPIViews:
+        from apps.purchasing.tests.factories import PurchaseInvoiceFactory, PurchaseOrderFactory
+
+        order = PurchaseOrderFactory(status="approved")
+        invoice = PurchaseInvoiceFactory(order=order)
+
+        with patch("apps.purchasing.api.v1.views.purchase_order_receive_goods") as mock_receive:
+            mock_receive.return_value = invoice
+
+            url = reverse("purchase-order-receive", kwargs={"pk": order.id})
+            data = {"target_warehouse_id": str(uuid.uuid4())}
+
+            response = authenticated_client.post(url, data, format="json")
+            assert response.status_code == status.HTTP_200_OK
+            mock_receive.assert_called_once_with(
+                user=authenticated_client.handler._force_user,
+                order_id=str(order.id),
+                target_warehouse_id=data["target_warehouse_id"],
+            )
+            assert "total_amount" in response.data
+            assert "id" in response.data
+
+
+class TestShipmentAPIViews:
     @pytest.fixture
     def setup_data(self):
-        from apps.inventory.tests.factories import ItemFactory, StockEntryFactory
-        from apps.purchasing.tests.factories import ShipmentFactory
+        from decimal import Decimal
+
+        from apps.inventory.tests.factories import ItemFactory, WarehouseFactory
+        from apps.purchasing.tests.factories import PurchaseOrderFactory
 
         user = UserFactory()
         client = APIClient()
         client.force_authenticate(user=user)
 
         item = ItemFactory()
-        shipment = ShipmentFactory(status="draft")
-        stock_entry = StockEntryFactory(purpose="receipt")
-        stock_entry.shipment = shipment
-        stock_entry.save()
+        warehouse = WarehouseFactory()
+        po = PurchaseOrderFactory(status="pending")
+        # Ensure the PO has lines
+        from apps.purchasing.models import PurchaseOrderLine
 
-        return user, client, item, shipment, stock_entry
+        po_line = PurchaseOrderLine.objects.create(
+            order=po,
+            item=item,
+            quantity=Decimal("10.00"),
+            unit_price=Decimal("100.00"),
+        )
 
-    def test_create_certification_permission_check(self, setup_data, mock_permission_checker):
-        user, client, item, shipment, stock_entry = setup_data
-        url = reverse("technical-certification-list-create")
+        return user, client, item, warehouse, po, po_line
 
-        # 1. Test List
-        client.get(url)
-        mock_permission_checker.assert_any_call(user, "purchasing.manage_qc")
+    def test_shipment_complete_success(self, setup_data, mock_permission_checker):
+        from decimal import Decimal
 
-        # 2. Test Create
+        from apps.purchasing.models import Shipment
+
+        user, client, item, warehouse, po, po_line = setup_data
+
+        # Create shipment
+        from apps.purchasing.services import shipment_create_from_po, shipment_update
+
+        shipment = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-API-TEST-01",
+            name="API Test Shipment",
+            purchase_order_id=str(po.id),
+        )
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        url = reverse("shipment-complete", kwargs={"pk": shipment.id})
         data = {
-            "item_id": str(item.id),
-            "stock_entry_id": str(stock_entry.id),
-            "cert_type": "QA Check",
-            "result": "PASSED",
-            "remarks": "Passed all specs",
+            "total_logistic_fees": "15000.00",
+            "details": [
+                {
+                    "po_line_id": str(po_line.id),
+                    "item_id": str(item.id),
+                    "quantity": "10.00",
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
         }
-        client.post(url, data)
-        mock_permission_checker.assert_any_call(user, "purchasing.manage_qc")
 
-    def test_create_certification_blocked_in_draft_shipment(self, setup_data):
-        user, client, item, shipment, stock_entry = setup_data
-        url = reverse("technical-certification-list-create")
+        response = client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        mock_permission_checker.assert_any_call(user, "purchasing.allocate_landed_cost")
 
-        # Shipment is in 'draft' state, should fail with 400 Bad Request
+        shipment.refresh_from_db()
+        assert shipment.status == Shipment.Status.COMPLETED
+        assert shipment.total_logistic_fees == Decimal("15000.00")
+
+    def test_shipment_complete_invalid_status(self, setup_data):
+        user, client, item, warehouse, po, po_line = setup_data
+
+        from apps.purchasing.services import shipment_create_from_po
+
+        shipment = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-API-TEST-02",
+            name="API Test Shipment Draft",
+            purchase_order_id=str(po.id),
+        )
+
+        url = reverse("shipment-complete", kwargs={"pk": shipment.id})
         data = {
-            "item_id": str(item.id),
-            "stock_entry_id": str(stock_entry.id),
-            "cert_type": "QA Check",
-            "result": "PASSED",
-            "remarks": "Passed all specs",
+            "total_logistic_fees": "0.00",
+            "details": [
+                {
+                    "po_line_id": str(po_line.id),
+                    "item_id": str(item.id),
+                    "quantity": "10.00",
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
         }
-        response = client.post(url, data)
+
+        response = client.post(url, data, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Không được phép thực hiện kiểm định QA/QC sớm" in response.data["error"]
 
-    def test_create_certification_success_when_arrived(self, setup_data):
-        user, client, item, shipment, stock_entry = setup_data
-        url = reverse("technical-certification-list-create")
+    def test_shipment_complete_quantity_exceeds_po(self, setup_data):
+        user, client, item, warehouse, po, po_line = setup_data
 
-        shipment.status = "arrived"
-        shipment.save()
+        from apps.purchasing.services import shipment_create_from_po, shipment_update
 
+        shipment = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-API-TEST-03",
+            name="API Test Shipment Exceed",
+            purchase_order_id=str(po.id),
+        )
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        url = reverse("shipment-complete", kwargs={"pk": shipment.id})
         data = {
-            "item_id": str(item.id),
-            "stock_entry_id": str(stock_entry.id),
-            "cert_type": "QA Check",
-            "result": "PASSED",
-            "remarks": "Passed all specs",
+            "total_logistic_fees": "0.00",
+            "details": [
+                {
+                    "po_line_id": str(po_line.id),
+                    "item_id": str(item.id),
+                    "quantity": "15.00",
+                    "target_warehouse_id": str(warehouse.id),
+                }
+            ],
         }
-        response = client.post(url, data)
-        assert response.status_code == status.HTTP_201_CREATED
-        assert response.data["result"] == "PASSED"
+
+        response = client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_shipment_complete_missing_warehouse(self, setup_data):
+        user, client, item, warehouse, po, po_line = setup_data
+
+        from apps.purchasing.services import shipment_create_from_po, shipment_update
+
+        shipment = shipment_create_from_po(
+            user=user,
+            shipment_num="SH-API-TEST-04",
+            name="API Test Shipment Missing WH",
+            purchase_order_id=str(po.id),
+        )
+        shipment_update(user=user, shipment_id=str(shipment.id), status="inspecting")
+
+        url = reverse("shipment-complete", kwargs={"pk": shipment.id})
+        data = {
+            "total_logistic_fees": "0.00",
+            "details": [
+                {
+                    "po_line_id": str(po_line.id),
+                    "item_id": str(item.id),
+                    "quantity": "10.00",
+                    "target_warehouse_id": None,
+                }
+            ],
+        }
+
+        response = client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST

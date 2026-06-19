@@ -59,13 +59,20 @@ class PurchaseOrderLine(BaseModel):
 
 class Shipment(BaseModel):
     class Status(models.TextChoices):
-        DRAFT = "draft", "Nháp (Đang đi đường)"
-        ARRIVED = "arrived", "Đã cập bến (Chờ QC)"
-        INSPECTED = "inspected", "Đã kiểm định (Chờ nhập kho)"
+        DRAFT = "draft", "Nháp (Chờ hàng về)"
+        INSPECTING = "inspecting", "Đang tiếp nhận"
         COMPLETED = "completed", "Hoàn tất"
 
     shipment_num = models.CharField(max_length=100, unique=True, verbose_name="Mã lô hàng")
     name = models.CharField(max_length=255, verbose_name="Tên lô hàng/Hồ sơ lô hàng")
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="shipments",
+        verbose_name="Đơn mua hàng",
+    )
     total_logistic_fees = models.DecimalField(
         max_digits=15, decimal_places=2, default=0.00, verbose_name="Tổng chi phí logistic"
     )
@@ -91,7 +98,6 @@ class PurchaseInvoice(BaseModel):
         UNPAID = "unpaid", "Chưa thanh toán"
         PARTIAL = "partial", "Thanh toán một phần"
         PAID = "paid", "Đã thanh toán"
-        BLOCKED_FOR_PAYMENT = "blocked_for_payment", "Bị chặn thanh toán"
         CANCELLED = "cancelled", "Đã hủy"
 
     order = models.ForeignKey(
@@ -116,11 +122,7 @@ class PurchaseInvoice(BaseModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNPAID, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã thanh toán")
-    block_reason = models.TextField(null=True, blank=True, verbose_name="Lý do chặn thanh toán")
     due_date = models.DateField(null=True, blank=True, verbose_name="Hạn thanh toán")
-    qty_fulfillment_rate = models.DecimalField(
-        max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="Tỷ lệ hoàn thành số lượng tổng (%)"
-    )
 
     class Meta:
         db_table = "purchase_invoice"
@@ -142,9 +144,6 @@ class PurchaseInvoiceLine(BaseModel):
     import_tax = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thuế nhập khẩu")
     vat_tax = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thuế VAT")
     line_total = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Thành tiền")
-    qty_fulfillment_rate = models.DecimalField(
-        max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="Tỷ lệ hoàn thành số lượng dòng (%)"
-    )
 
     class Meta:
         db_table = "purchase_invoice_line"

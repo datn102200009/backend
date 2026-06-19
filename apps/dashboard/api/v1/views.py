@@ -74,8 +74,11 @@ class WidgetBatchDataView(APIView):
                 if total_count is None:
                     if isinstance(data, list):
                         total_count = len(data)
-                    elif isinstance(data, dict) and "weeks" in data:
-                        total_count = len(data["weeks"])
+                    elif isinstance(data, dict):
+                        if "total_count" in data:
+                            total_count = data["total_count"]
+                        elif "weeks" in data:
+                            total_count = len(data["weeks"])
 
                 widget_res = {"success": True, "data": data}
                 if total_count is not None:
@@ -107,13 +110,22 @@ class WidgetDataDetailView(APIView):
         # For single widget retrieval, let the exception propagate to the custom exception handler,
         # or handle it gracefully to return a standardized success/failure JSON matching the batch shape.
         try:
-            data = selector_func()
+            sel_kwargs = {}
+            if widget_code == "inventory_pending_entries":
+                purpose = request.query_params.get("purpose")
+                if purpose:
+                    sel_kwargs["purpose"] = purpose
+
+            data = selector_func(**sel_kwargs)
             total_count = getattr(data, "total_count", None)
             if total_count is None:
                 if isinstance(data, list):
                     total_count = len(data)
-                elif isinstance(data, dict) and "weeks" in data:
-                    total_count = len(data["weeks"])
+                elif isinstance(data, dict):
+                    if "total_count" in data:
+                        total_count = data["total_count"]
+                    elif "weeks" in data:
+                        total_count = len(data["weeks"])
 
             res_payload = {"success": True, "data": data}
             if total_count is not None:

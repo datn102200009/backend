@@ -17,7 +17,6 @@ class SalarySlip(BaseModel):
     allowance_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     reward_amount_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     discipline_deduction_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    union_fee_2pct = models.DecimalField(max_digits=15, decimal_places=2, default=0, null=True, blank=True)
     gross_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     deductions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     net_pay = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -28,11 +27,11 @@ class SalarySlip(BaseModel):
         blank=True,
     )
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=[
             ("draft", "Draft"),
             ("calculated", "Calculated"),
-            ("submitted", "Submitted"),
+            ("pending_finance_review", "Pending Finance Review"),
             ("approved", "Approved"),
             ("paid", "Paid"),
         ],
@@ -93,43 +92,6 @@ class TaxReport(BaseModel):
         return f"{self.tax_type} - {self.period}"
 
 
-class TechnicalCertification(BaseModel):
-    """
-    Technical certification for items.
-    """
-
-    cert_id = models.CharField(max_length=100, unique=True)
-    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="certifications")
-    stock_entry = models.ForeignKey(
-        "inventory.StockEntry",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="certifications",
-        db_index=True,
-        verbose_name="Phiếu nhập kho liên kết",
-    )
-    cert_type = models.CharField(max_length=100)
-    assessment_fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    expiry_date = models.DateField(null=True, blank=True)
-    issue_date = models.DateField(auto_now_add=True)
-    result = models.CharField(
-        max_length=20,
-        choices=[("PASSED", "Đạt"), ("FAILED", "Không đạt")],
-        default="PASSED",
-        verbose_name="Kết quả kiểm định",
-    )
-    remarks = models.TextField(null=True, blank=True)
-
-    class Meta:
-        db_table = "technical_certification"
-        verbose_name = "Technical Certification"
-        verbose_name_plural = "Technical Certifications"
-
-    def __str__(self):
-        return f"{self.cert_id} - {self.item.item_code}"
-
-
 class EnvironmentFeeLog(BaseModel):
     """
     Environmental fee tracking.
@@ -184,6 +146,9 @@ class CashFlowTransaction(BaseModel):
     )
     sales_invoice = models.ForeignKey(
         "sales.SalesInvoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
+    )
+    fixed_asset = models.ForeignKey(
+        "FixedAsset", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
     )
 
     amount = models.DecimalField(max_digits=15, decimal_places=2)
@@ -240,16 +205,50 @@ class FixedAsset(BaseModel):
             ("unit_of_production", "Sản lượng"),
         ],
     )
-    useful_life_months = models.IntegerField()
-    remaining_life_months = models.IntegerField()
+    useful_life_months = models.IntegerField(null=True, blank=True)
+    remaining_life_months = models.IntegerField(null=True, blank=True)
     designed_capacity = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     accumulated_depreciation = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
-    department = models.CharField(max_length=100, null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending_receive", "Chờ duyệt mua"),
+            ("idle", "Đang nhàn rỗi"),
+            ("active", "Đang sử dụng"),
+            ("pending_dispose", "Chờ duyệt thanh lý"),
+            ("disposed", "Đã thanh lý"),
+        ],
+        default="pending_receive",
+        db_index=True,
+    )
+    purchase_date = models.DateField(null=True, blank=True)
+    disposal_date = models.DateField(null=True, blank=True)
+    disposal_value = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    vendor_name = models.CharField(max_length=255, null=True, blank=True)
+    payment_method = models.CharField(
+        max_length=50,
+        choices=[("cash", "Tiền mặt"), ("bank_transfer", "Chuyển khoản")],
+        default="bank_transfer",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         db_table = "fixed_asset"
         verbose_name = "Fixed Asset"
         verbose_name_plural = "Fixed Assets"
+        indexes = [
+            models.Index(fields=["status", "-updated_at"], name="fa_status_updated_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(depreciation_method="straight_line", useful_life_months__isnull=False)
+                    | models.Q(depreciation_method="unit_of_production", useful_life_months__isnull=True)
+                ),
+                name="check_fixed_asset_useful_life_by_method",
+            )
+        ]
 
     def __str__(self):
         return f"{self.asset_code} - {self.asset_name}"

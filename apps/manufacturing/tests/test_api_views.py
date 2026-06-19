@@ -160,10 +160,21 @@ class TestWorkOrderAPIViews:
     def test_work_order_declare_production(self, api_client, production_user):
         api_client.force_authenticate(user=production_user)
         bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
-        BOMItemFactory(parent=bom, quantity=Decimal("2.0"))
+        bom_item = BOMItemFactory(parent=bom, quantity=Decimal("2.0"))
         source = WarehouseFactory()
         target = WarehouseFactory()
         production = WarehouseFactory()
+
+        # Setup tồn kho nguyên liệu trong kho sản xuất
+        StockLedgerFactory(
+            item=bom_item.item,
+            warehouse=production,
+            actual_quantity=Decimal("50.00"),
+            posting_date=timezone.now(),
+            voucher_number="SETUP-STOCK",
+            voucher_type="Stock In",
+        )
+
         wo = WorkOrderFactory(
             bom=bom,
             production_item=bom.item,
@@ -246,3 +257,41 @@ class TestWorkOrderAPIViews:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["id"] == str(wo.id)
+
+    def test_work_order_declare_preview(self, api_client, production_user):
+        api_client.force_authenticate(user=production_user)
+        bom = BOMFactory(is_active=True, quantity=Decimal("1.0"))
+        bom_item = BOMItemFactory(parent=bom, quantity=Decimal("2.0"))
+        source = WarehouseFactory()
+        target = WarehouseFactory()
+        production = WarehouseFactory()
+        wo = WorkOrderFactory(
+            bom=bom,
+            production_item=bom.item,
+            status="in_progress",
+            source_warehouse=source,
+            target_warehouse=target,
+            production_warehouse=production,
+        )
+
+        url = f"/api/v1/manufacturing/work-order/{wo.id}/declare-preview/"
+        data = {"produced_qty": "5.0"}
+        response = api_client.post(url, data=data, format="json")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "results" in response.data
+        results = response.data["results"]
+        assert len(results) == 1
+        assert results[0]["item_id"] == str(bom_item.item.id)
+        assert results[0]["required_qty"] == 10.0
+        assert results[0]["available_qty"] == 0.0
+        assert results[0]["missing_qty"] == 10.0
+        assert results[0]["is_sufficient"] is False
+
+    def test_work_order_declare_preview_invalid_qty(self, api_client, production_user):
+        api_client.force_authenticate(user=production_user)
+        wo = WorkOrderFactory()
+        url = f"/api/v1/manufacturing/work-order/{wo.id}/declare-preview/"
+        data = {"produced_qty": "0.0"}
+        response = api_client.post(url, data=data, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST

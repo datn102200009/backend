@@ -56,6 +56,7 @@ class ItemOutputSerializer(serializers.ModelSerializer):
             "vat_group",
             "is_import",
             "status",
+            "minimum_threshold",
             "description",
             "created_at",
             "updated_at",
@@ -78,6 +79,9 @@ class ItemCreateInputSerializer(serializers.Serializer):
     vat_group = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     is_import = serializers.BooleanField(default=False)
     status = serializers.ChoiceField(choices=["active", "inactive", "discontinued"], default="active")
+    minimum_threshold = serializers.DecimalField(
+        max_digits=18, decimal_places=3, required=True, allow_null=False, min_value=0
+    )
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
@@ -96,4 +100,7 @@ class ItemUpdateInputSerializer(serializers.Serializer):
     vat_group = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
     is_import = serializers.BooleanField(required=False)
     status = serializers.ChoiceField(choices=["active", "inactive", "discontinued"], required=False)
+    minimum_threshold = serializers.DecimalField(
+        max_digits=18, decimal_places=3, required=True, allow_null=False, min_value=0
+    )
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)

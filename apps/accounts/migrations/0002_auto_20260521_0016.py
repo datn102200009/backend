@@ -79,13 +79,35 @@ def seed_roles_permissions_and_users(apps, schema_editor):
 
     # 3. Setup Test Users (only in DEBUG mode)
     if getattr(settings, "DEBUG", False):
+        Employee = apps.get_model("master_data", "Employee")
+        Employee.objects.get_or_create(
+            employee_id="NV0001",
+            defaults={
+                "full_name": "Nguyễn Văn An",
+                "email": "nv0001@erp.com",
+                "phone": "0987654301",
+                "gender": "male",
+                "employment_status": "active",
+            },
+        )
+        Employee.objects.get_or_create(
+            employee_id="NV0002",
+            defaults={
+                "full_name": "Trần Thị Bình",
+                "email": "nv0002@erp.com",
+                "phone": "0987654302",
+                "gender": "female",
+                "employment_status": "active",
+            },
+        )
+
         User.objects.get_or_create(
             username="admin",
             defaults={
                 "email": "admin@example.com",
                 "password_hash": make_password("admin123"),
                 "role": admin_role,
-                "employee_id": "ADM001",
+                "employee_id": "NV0001",
             },
         )
         User.objects.get_or_create(
@@ -94,7 +116,7 @@ def seed_roles_permissions_and_users(apps, schema_editor):
                 "email": "employee@example.com",
                 "password_hash": make_password("employee123"),
                 "role": employee_role,
-                "employee_id": "EMP001",
+                "employee_id": "NV0002",
             },
         )
 
@@ -107,6 +129,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("accounts", "0001_initial"),
+        ("master_data", "0008_employee_address_employee_date_of_birth_and_more"),
     ]
 
     operations = [

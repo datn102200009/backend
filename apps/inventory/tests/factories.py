@@ -46,10 +46,28 @@ class UserFactory(factory.django.DjangoModelFactory):
         django_get_or_create = ("username",)
 
     username = factory.Sequence(lambda n: f"user{n}")
-    email = factory.Sequence(lambda n: f"user{n}@example.com")
     password_hash = "hashed_password_123"
-    role = factory.SubFactory(RoleFactory)
     employee_id = factory.Sequence(lambda n: f"EMP{n:04d}")
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        role_passed = "role" in kwargs
+        role = kwargs.pop("role", None)
+        if not role_passed:
+            import uuid
+
+            from apps.accounts.models import Role
+
+            role = Role.objects.create(name=f"Role-{uuid.uuid4().hex[:8]}")
+        user = super()._create(model_class, *args, **kwargs)
+        user.role = role
+        if role:
+            from apps.accounts.models import RolePermission, UserPermission
+
+            role_perms = RolePermission.objects.filter(role=role)
+            user_perms = [UserPermission(user=user, permission=rp.permission) for rp in role_perms]
+            UserPermission.objects.bulk_create(user_perms)
+        return user
 
 
 class ItemGroupFactory(factory.django.DjangoModelFactory):
@@ -98,6 +116,7 @@ class ItemFactory(factory.django.DjangoModelFactory):
     status = "active"
     is_import = False
     recycling_coef_a = Decimal("0.05")
+    minimum_threshold = Decimal("10.00")
 
 
 class SupplierFactory(factory.django.DjangoModelFactory):

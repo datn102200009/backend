@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -17,45 +18,194 @@ from apps.hrm.models import (
     DisciplineRecord,
     EmployeeDocument,
     EmploymentContract,
-    EmploymentHistory,
     LeaveRequest,
     PublicHoliday,
     RewardRecord,
 )
+from apps.hrm.selectors import get_salary_at_date, get_salary_for_day, get_salary_timeline, split_into_segments
 from apps.master_data.models import Employee
 
 logger = logging.getLogger(__name__)
 
+# Quyết toán lương - các hằng số nghiệp vụ
+RESIGNATION_FINE_HALF_MONTH = Decimal("0.5")  # Nửa tháng lương (Điều 40 BLLĐ 2019)
+SOCIAL_INSURANCE_RATE = Decimal("0.105")  # 10.5% BHXH (người lao động đóng)
+SOCIAL_INSURANCE_MIN_DAYS = 14  # Số ngày làm việc tối thiểu để đóng BHXH tháng đó
+DEFAULT_STANDARD_WORKING_DAYS = Decimal("26.00")  # Ngày công chuẩn fallback
+
+
+def _delete_linked_user(*, employee: Employee, terminator: Optional[User] = None) -> None:
+    """
+    Xóa tài khoản User liên kết với employee_id.
+    """
+    linked_user = User.objects.filter(employee_id=employee.employee_id).first()
+    if not linked_user:
+        return
+
+    user_id = linked_user.id
+    username = linked_user.username
+    linked_user.delete()
+
+    if terminator:
+        create_system_log(
+            user=terminator,
+            action="delete",
+            table_name="user",
+            record_id=str(user_id),
+            old_value={"username": username},
+            new_value=None,
+        )
+
+
+def _terminate_active_contract(
+    *,
+    employee: Employee,
+    termination_date: date,
+    reason: str,
+    file_url: Optional[str],
+    terminator: User,
+    is_lawful: bool = True,
+) -> None:
+    """
+    Terminate HĐLĐ đang active (bao gồm quyết toán lương cuối kỳ).
+    Raises ValidationException nếu không terminate được.
+    """
+    active_contract = EmploymentContract.objects.select_for_update().filter(employee=employee, status="active").first()
+    if not active_contract:
+        return
+
+    try:
+        contract_terminate(
+            contract_id=str(active_contract.id),
+            termination_date=termination_date,
+            reason=reason,
+            file_url=file_url,
+            terminator=terminator,
+            is_lawful=is_lawful,
+        )
+    except ValidationException as e:
+        raise ValidationException(f"Không thể sa thải nhân viên: {str(e)}")
+
+
+def _deactivate_employee(
+    *,
+    employee: Employee,
+    termination_date: date,
+    terminator: User,
+) -> None:
+    """
+    Set Employee.employment_status = 'inactive' + leave_date.
+    Dùng khi nhân viên không có HĐLĐ active (vd: nhân viên thử việc).
+    """
+    if employee.employment_status == "inactive":
+        raise ValidationException("Nhân viên này đã bị sa thải hoặc ngưng hoạt động trước đó.")
+
+    old_emp_status = employee.employment_status
+    old_leave_date = employee.leave_date
+    employee.employment_status = "inactive"
+    employee.leave_date = termination_date
+    employee.save(update_fields=["employment_status", "leave_date"])
+
+    create_system_log(
+        user=terminator,
+        action="update",
+        table_name="employee",
+        record_id=str(employee.id),
+        old_value={
+            "employment_status": old_emp_status,
+            "leave_date": str(old_leave_date) if old_leave_date else None,
+        },
+        new_value={
+            "employment_status": "inactive",
+            "leave_date": str(termination_date),
+            "note": "Sa thải theo kỷ luật - không có HĐLĐ active",
+        },
+    )
+
+    _delete_linked_user(employee=employee, terminator=terminator)
+
+
+def _create_termination_document(
+    *,
+    employee: Employee,
+    file_url: str,
+    terminator: User,
+) -> None:
+    """
+    Lưu EmployeeDocument cho file quyết định sa thải.
+    """
+    doc = EmployeeDocument.objects.create(
+        employee=employee,
+        doc_type="disciplinary_minutes",
+        title=f"Quyết định sa thải kỷ luật - {employee.full_name}",
+        file_url=file_url,
+        uploaded_by=terminator,
+    )
+    create_system_log(
+        user=terminator,
+        action="create",
+        table_name="employee_document",
+        record_id=str(doc.id),
+        new_value={
+            "doc_type": doc.doc_type,
+            "title": doc.title,
+            "file_url": doc.file_url,
+        },
+    )
+
+
+def generate_employee_id() -> str:
+    """
+    Tự động sinh mã nhân viên dạng NV#### (ví dụ: NV0001, NV0002...).
+    Tìm mã NV có số thứ tự lớn nhất hiện tại trong Database và cộng thêm 1.
+    Padding tối thiểu là 4 chữ số, tự động nở rộng thành 5 chữ số từ NV10000.
+    """
+    max_num = 0
+    # Lấy các mã NV bắt đầu bằng "NV" hiện tại trong DB
+    employee_ids = Employee.objects.filter(employee_id__startswith="NV").values_list("employee_id", flat=True)
+
+    for emp_id in employee_ids:
+        match = re.match(r"^NV(\d+)$", emp_id)
+        if match:
+            num = int(match.group(1))
+            if num > max_num:
+                max_num = num
+
+    next_num = max_num + 1
+    num_str = str(next_num).zfill(4)
+    return f"NV{num_str}"
+
 
 @transaction.atomic
-def employee_create_with_user(
+def employee_create_with_contract(
     *,
     data: Dict[str, Any],
+    contract_data: Dict[str, Any],
     creator: Optional[User] = None,
-) -> Employee:
+) -> tuple[Employee, EmploymentContract]:
     """
-    Tạo mới một Employee và tùy chọn tạo tài khoản User liên kết qua employee_id.
+    Tạo mới một Employee, tài khoản User và hợp đồng lao động EmploymentContract bắt buộc đi kèm.
     """
+    if not contract_data:
+        raise ValidationException("Thông tin hợp đồng lao động là bắt buộc")
+
     if creator:
         PermissionChecker.check_permission(creator, "hrm.add_employee")
+        PermissionChecker.check_permission(creator, "hrm.add_employmentcontract")
 
     employee_id = data.get("employee_id")
     if not employee_id:
-        raise ValidationException("Mã nhân viên (employee_id) là bắt buộc")
+        employee_id = generate_employee_id()
+    elif not re.match(r"^NV\d{4,}$", employee_id):
+        raise ValidationException("Mã nhân viên phải có format NV#### (ví dụ: NV0001)")
 
     if Employee.objects.filter(employee_id=employee_id).exists():
         raise ValidationException(f"Mã nhân viên {employee_id} đã tồn tại")
-
-    create_user = data.get("create_user", False)
 
     # Tạo Employee
     employee = Employee.objects.create(
         employee_id=employee_id,
         full_name=data.get("full_name"),
-        department=data.get("department"),
-        position_title=data.get("position_title"),
-        salary_base=data.get("salary_base"),
-        is_union_member=data.get("is_union_member", False),
         email=data.get("email"),
         phone=data.get("phone"),
         gender=data.get("gender"),
@@ -71,9 +221,6 @@ def employee_create_with_user(
     employee_data_for_log = {
         "employee_id": employee.employee_id,
         "full_name": employee.full_name,
-        "department": employee.department,
-        "position_title": employee.position_title,
-        "salary_base": str(employee.salary_base) if employee.salary_base is not None else None,
         "email": employee.email,
         "employment_status": employee.employment_status,
     }
@@ -85,47 +232,54 @@ def employee_create_with_user(
         new_value=employee_data_for_log,
     )
 
-    # Tạo User nếu được yêu cầu
-    if create_user:
-        username = data.get("username")
-        password = data.get("password")
-        email = data.get("email") or f"{employee_id}@example.com"
-        role_id = data.get("role_id")
+    # Tạo EmploymentContract bắt buộc
+    from apps.hrm.selectors import count_active_contracts
 
-        if not username or not password:
-            raise ValidationException("Username và password là bắt buộc khi tạo tài khoản User")
-
-        if User.objects.filter(username=username).exists():
-            raise ValidationException(f"Username {username} đã tồn tại")
-
-        if User.objects.filter(email=email).exists():
-            raise ValidationException(f"Email {email} đã tồn tại")
-
-        user = User.objects.create(
-            username=username,
-            email=email,
-            password_hash=make_password(password),
-            role_id=role_id,
-            employee_id=employee_id,
-            is_active=True,
+    active_count = count_active_contracts(employee)
+    if active_count > 0:
+        raise ValidationException(
+            f"Nhân viên {employee.employee_id} đã có {active_count} hợp đồng đang active. "
+            "Không thể tạo hợp đồng mới."
         )
 
-        # Log user creation
-        user_data_for_log = {
-            "username": user.username,
-            "email": user.email,
-            "role_id": str(role_id) if role_id else None,
-            "employee_id": employee_id,
-        }
-        create_system_log(
-            user=creator,
-            action="create",
-            table_name="user",
-            record_id=str(user.id),
-            new_value=user_data_for_log,
-        )
+    contract_no = contract_data.get("contract_no")
+    if not contract_no:
+        raise ValidationException("Số hợp đồng (contract_no) là bắt buộc")
+    if EmploymentContract.objects.filter(contract_no=contract_no).exists():
+        raise ValidationException(f"Số hợp đồng {contract_no} đã tồn tại")
 
-    return employee
+    contract = EmploymentContract.objects.create(
+        employee=employee,
+        contract_no=contract_no,
+        contract_type=contract_data.get("contract_type"),
+        start_date=contract_data.get("start_date"),
+        end_date=contract_data.get("end_date"),
+        status="active",
+        note=contract_data.get("note"),
+        file_url=contract_data.get("file_url"),
+        salary_base=(
+            Decimal(str(contract_data["salary_base"])) if contract_data.get("salary_base") is not None else None
+        ),
+    )
+
+    # Log contract creation
+    contract_data_for_log = {
+        "contract_no": contract.contract_no,
+        "contract_type": contract.contract_type,
+        "start_date": str(contract.start_date),
+        "end_date": str(contract.end_date) if contract.end_date else None,
+        "employee_id": str(employee.id),
+        "salary_base": str(contract.salary_base) if contract.salary_base is not None else None,
+    }
+    create_system_log(
+        user=creator,
+        action="create",
+        table_name="employment_contract",
+        record_id=str(contract.id),
+        new_value=contract_data_for_log,
+    )
+
+    return employee, contract
 
 
 @transaction.atomic
@@ -143,10 +297,6 @@ def employee_update(
 
     fields_to_update = [
         "full_name",
-        "department",
-        "position_title",
-        "salary_base",
-        "is_union_member",
         "email",
         "phone",
         "gender",
@@ -224,21 +374,61 @@ def contract_create_or_renew(
     if EmploymentContract.objects.filter(contract_no=contract_no).exists():
         raise ValidationException(f"Số hợp đồng {contract_no} đã tồn tại")
 
-    # 1. Tìm các hợp đồng active cũ của nhân viên để chuyển sang expired
-    active_contracts = EmploymentContract.objects.filter(employee=employee, status="active")
-    for old_contract in active_contracts:
-        old_contract.status = "expired"
-        old_contract.save(update_fields=["status"])
+    # 1. Tìm các hợp đồng active cũ của nhân viên để chuyển sang expired hoặc điều chỉnh ngày (overlap)
+    from apps.hrm.selectors import count_active_contracts
 
-        # Log old contract update
-        create_system_log(
-            user=creator,
-            action="update",
-            table_name="employment_contract",
-            record_id=str(old_contract.id),
-            old_value={"status": "active"},
-            new_value={"status": "expired"},
+    active_count = count_active_contracts(employee)
+    if active_count > 1:
+        raise ValidationException(
+            f"Nhân viên {employee.employee_id} đã có {active_count} hợp đồng đang active. "
+            "Vui lòng dọn dẹp dữ liệu trước khi tạo mới."
         )
+
+    # Lấy start_date mới
+    new_start = contract_data.get("start_date")
+    if not new_start:
+        new_start = date.today()
+        contract_data["start_date"] = new_start
+
+    active_contracts = EmploymentContract.objects.select_for_update().filter(employee=employee, status="active")
+    for old_contract in active_contracts:
+        if new_start < old_contract.start_date:
+            raise ValidationException(
+                f"start_date mới ({new_start}) phải >= start_date HĐLĐ cũ ({old_contract.start_date})"
+            )
+
+        old_status = old_contract.status
+        old_end_date = old_contract.end_date
+
+        # CHUYỂN status sang expired TRƯỚC khi tạo HĐ mới để không vi phạm partial unique index
+        old_contract.status = "expired"
+
+        if old_contract.end_date and new_start <= old_contract.end_date:
+            new_end_for_old = new_start - timedelta(days=1)
+            old_contract.end_date = new_end_for_old
+            old_contract.save(update_fields=["status", "end_date"])
+
+            # Log old contract update
+            create_system_log(
+                user=creator,
+                action="update",
+                table_name="employment_contract",
+                record_id=str(old_contract.id),
+                old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
+                new_value={"status": "expired", "end_date": str(new_end_for_old)},
+            )
+        else:
+            old_contract.save(update_fields=["status"])
+
+            # Log old contract update
+            create_system_log(
+                user=creator,
+                action="update",
+                table_name="employment_contract",
+                record_id=str(old_contract.id),
+                old_value={"status": old_status},
+                new_value={"status": "expired"},
+            )
 
     # 2. Tạo hợp đồng mới ở trạng thái active
     contract = EmploymentContract.objects.create(
@@ -250,6 +440,9 @@ def contract_create_or_renew(
         status="active",
         note=contract_data.get("note"),
         file_url=contract_data.get("file_url"),
+        salary_base=(
+            Decimal(str(contract_data["salary_base"])) if contract_data.get("salary_base") is not None else None
+        ),
     )
 
     # Log new contract creation
@@ -259,6 +452,7 @@ def contract_create_or_renew(
         "start_date": str(contract.start_date),
         "end_date": str(contract.end_date) if contract.end_date else None,
         "status": contract.status,
+        "salary_base": str(contract.salary_base) if contract.salary_base is not None else None,
     }
     create_system_log(
         user=creator,
@@ -291,8 +485,120 @@ def contract_create_or_renew(
                 "file_url": doc.file_url,
             },
         )
-
     return contract
+
+
+@transaction.atomic
+def contract_renew(
+    *,
+    contract_id: str,
+    new_contract_no: Optional[str] = None,
+    new_contract_type: Optional[str] = None,
+    start_date: Optional[date] = None,
+    new_salary_base: Optional[Decimal] = None,
+    file_url: Optional[str] = None,
+    note: Optional[str] = None,
+    renewer: Optional[User] = None,
+) -> Dict[str, Any]:
+    """
+    Gia hạn hợp đồng lao động (tái ký) cho nhân viên, có thể kèm điều chỉnh lương.
+    """
+    if renewer:
+        PermissionChecker.check_permission(renewer, "hrm.change_employmentcontract")
+        if new_salary_base is not None:
+            PermissionChecker.check_permission(renewer, "hrm.change_employee")
+
+    try:
+        old_contract = EmploymentContract.objects.select_for_update().get(id=contract_id)
+    except EmploymentContract.DoesNotExist:
+        raise ValidationException("Hợp đồng không tồn tại")
+
+    employee = old_contract.employee
+    actual_start = start_date or (old_contract.end_date + timedelta(days=1) if old_contract.end_date else date.today())
+    if actual_start < old_contract.start_date:
+        raise ValidationException(
+            f"start_date mới ({actual_start}) phải >= start_date HĐLĐ cũ ({old_contract.start_date})"
+        )
+
+    # 1. Xử lý HĐLĐ cũ: nếu overlap thì rút end_date, nếu không thì set expired
+    old_status = old_contract.status
+    old_end_date = old_contract.end_date
+    old_contract.status = "expired"
+
+    if old_contract.end_date and actual_start <= old_contract.end_date:
+        new_end_for_old = actual_start - timedelta(days=1)
+        old_contract.end_date = new_end_for_old
+        old_contract.save(update_fields=["status", "end_date"])
+
+        create_system_log(
+            user=renewer,
+            action="update",
+            table_name="employment_contract",
+            record_id=str(old_contract.id),
+            old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
+            new_value={"status": "expired", "end_date": str(new_end_for_old)},
+        )
+    else:
+        old_contract.save(update_fields=["status"])
+
+        create_system_log(
+            user=renewer,
+            action="update",
+            table_name="employment_contract",
+            record_id=str(old_contract.id),
+            old_value={"status": old_status},
+            new_value={"status": "expired"},
+        )
+
+    # 2. Tạo HĐLĐ mới
+    new_contract = EmploymentContract.objects.create(
+        employee=employee,
+        contract_no=new_contract_no or f"{old_contract.contract_no}-RENEW",
+        contract_type=new_contract_type or old_contract.contract_type,
+        start_date=actual_start,
+        status="active",
+        file_url=file_url,
+        note=note,
+        salary_base=new_salary_base if new_salary_base is not None else old_contract.salary_base,
+    )
+
+    create_system_log(
+        user=renewer,
+        action="create",
+        table_name="employment_contract",
+        record_id=str(new_contract.id),
+        new_value={
+            "contract_no": new_contract.contract_no,
+            "contract_type": new_contract.contract_type,
+            "start_date": str(new_contract.start_date),
+            "status": new_contract.status,
+            "renewed_from": str(old_contract.id),
+            "salary_base": str(new_contract.salary_base) if new_contract.salary_base is not None else None,
+        },
+    )
+
+    # 4. Lưu file scan hợp đồng (nếu có)
+    if file_url:
+        doc = EmployeeDocument.objects.create(
+            employee=employee,
+            doc_type="contract_scan",
+            title=f"Scan HĐLĐ gia hạn {new_contract.contract_no}",
+            file_url=file_url,
+            uploaded_by=renewer,
+        )
+
+        create_system_log(
+            user=renewer,
+            action="create",
+            table_name="employee_document",
+            record_id=str(doc.id),
+            new_value={
+                "doc_type": doc.doc_type,
+                "title": doc.title,
+                "file_url": doc.file_url,
+            },
+        )
+    return {"contract": new_contract}
 
 
 @transaction.atomic
@@ -343,7 +649,6 @@ def contract_terminate(
         raise ValidationException("Hợp đồng này đã được chấm dứt trước đó")
 
     employee = contract.employee
-    salary_base = employee.salary_base or Decimal("0.00")
 
     # 1. Kiểm tra nợ kỳ lương trước đó
     current_period = termination_date.strftime("%Y-%m")
@@ -355,7 +660,7 @@ def contract_terminate(
             f"Không thể chấm dứt hợp đồng do nhân viên vẫn còn nợ lương kỳ trước chưa thanh toán ({', '.join(periods)}). Vui lòng thanh toán trước."
         )
 
-    # 2. Quyết toán kỳ lương hiện tại
+    # 2. Tạo hoặc lấy SalarySlip
     slip_name = f"FINAL-SALARY-{employee.employee_id}-{current_period}"
     slip, created = SalarySlip.objects.get_or_create(
         employee=employee,
@@ -367,7 +672,6 @@ def contract_terminate(
             "allowance_amount": Decimal("0.00"),
             "reward_amount_total": Decimal("0.00"),
             "discipline_deduction_total": Decimal("0.00"),
-            "union_fee_2pct": Decimal("0.00"),
             "gross_pay": Decimal("0.00"),
             "deductions": Decimal("0.00"),
             "net_pay": Decimal("0.00"),
@@ -375,286 +679,49 @@ def contract_terminate(
         },
     )
 
-    # 2.1. Tính ngày công thực tế làm việc/hưởng lương trong tháng nghỉ từ ngày 1 đến termination_date
+    # 3. Set breakdown.is_partial (để payroll_calculate_terminated_salary tính prorated)
     year = termination_date.year
     month = termination_date.month
-    attendances = Attendance.objects.filter(
-        employee=employee, date__year=year, date__month=month, date__lte=termination_date
-    )
-
-    from django.conf import settings
-
-    weekly_rest_days = getattr(settings, "HRM_WEEKLY_REST_DAYS", [6])
-    compensatory_ot_rate = Decimal(str(getattr(settings, "HRM_COMPENSATORY_OVERTIME_RATE", 2.0)))
-
-    # Fetch public holidays and compensatory holidays for the period up to termination_date
-    official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(
-        year, month, end_limit_date=termination_date
-    )
-    all_holiday_dates = official_holiday_dates | compensatory_holiday_dates
-
-    working_days = Decimal("0.00")
-    paid_leave_days = Decimal("0.00")
-    ot_normal_hours = Decimal("0.00")
-    ot_weekend_hours = Decimal("0.00")
-    ot_holiday_hours = Decimal("0.00")
-    ot_compensatory_hours = Decimal("0.00")
-
-    recorded_dates = set()
-    for att in attendances:
-        recorded_dates.add(att.date)
-        if att.status == "working" and (att.work_hours or 0) > 0:
-            working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "holiday"]:
-            paid_leave_days += Decimal("1.00")
-
-        ot_h = att.overtime_hours or Decimal("0.00")
-        if ot_h > 0:
-            if att.date in official_holiday_dates:
-                ot_holiday_hours += ot_h
-            elif att.date in compensatory_holiday_dates:
-                ot_compensatory_hours += ot_h
-            elif att.date.weekday() in weekly_rest_days:
-                ot_weekend_hours += ot_h
-            else:
-                ot_normal_hours += ot_h
-
-    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
-    credited_holiday_dates = set()
-    for h_date in all_holiday_dates:
-        if h_date not in recorded_dates and h_date not in credited_holiday_dates:
-            credited_holiday_dates.add(h_date)
-            paid_leave_days += Decimal("1.00")
-
-    # 2.2. Xác định ngày công chia lương (divisor) - Cố định Cách 1
-    divisor = Decimal(str(standard_working_days))
-    if divisor <= 0:
-        divisor = Decimal("26.00")
-
-    # 2.3. Lương thực tế làm việc
-    base_salary_earned = (salary_base * ((working_days + paid_leave_days) / divisor)).quantize(Decimal("0.01"))
-
-    # 2.4. Tiền phép năm chưa nghỉ
-    unused_leave_compensation = (salary_base / divisor * Decimal(str(unused_leave_days))).quantize(Decimal("0.01"))
-
-    # 2.5. Bảo hiểm xã hội tháng nghỉ việc (đóng nếu số ngày làm việc và hưởng lương >= 14 ngày)
-    social_insurance_deduction = Decimal("0.00")
-    if (working_days + paid_leave_days) >= 14:
-        social_insurance_deduction = (salary_base * Decimal("0.105")).quantize(Decimal("0.01"))
-
-    # 2.6. Phạt bồi thường nếu nghỉ việc trái pháp luật (nghỉ ngang)
-    resignation_fine = Decimal("0.00")
-    fine_half_month = Decimal("0.00")
-    fine_unnotified = Decimal("0.00")
-    if not is_lawful:
-        fine_half_month = (salary_base * Decimal("0.5")).quantize(Decimal("0.01"))
-        fine_unnotified = (salary_base / divisor * Decimal(str(unnotified_days))).quantize(Decimal("0.01"))
-        resignation_fine = fine_half_month + fine_unnotified
-
-    # 2.7. Tính toán OT, Kinh phí công đoàn, Thưởng & Kỷ luật phạt thông thường
-    hourly_rate = salary_base / divisor / Decimal("8.00")
-    ot_normal_rate = hourly_rate * Decimal("1.5")
-    ot_weekend_rate = hourly_rate * Decimal("2.0")
-    ot_holiday_rate = hourly_rate * Decimal("3.0")
-    ot_compensatory_rate = hourly_rate * compensatory_ot_rate
-
-    ot_normal_amount = ot_normal_hours * ot_normal_rate
-    ot_weekend_amount = ot_weekend_hours * ot_weekend_rate
-    ot_holiday_amount = ot_holiday_hours * ot_holiday_rate
-    ot_compensatory_amount = ot_compensatory_hours * ot_compensatory_rate
-
-    overtime_amount_earned = ot_normal_amount + ot_weekend_amount + ot_holiday_amount + ot_compensatory_amount
-    overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
-
-    union_fee = Decimal("0.00")
-    if employee.is_union_member:
-        union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
-
     import calendar
-
-    from django.db.models import Q
 
     last_day = calendar.monthrange(year, month)[1]
     period_end_date = date(year, month, last_day)
 
-    rewards = RewardRecord.objects.filter(
-        employee=employee, reward_date__lte=period_end_date, status="approved"
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
-    reward_total = Decimal("0.00")
-    for r in rewards:
-        reward_total += r.amount or Decimal("0.00")
-        if r.salary_slip != slip:
-            r.salary_slip = slip
-            r.save(update_fields=["salary_slip"])
-
-    disciplines = DisciplineRecord.objects.filter(
-        employee=employee, discipline_date__lte=period_end_date, status="approved"
-    ).filter(Q(salary_slip__isnull=True) | Q(salary_slip=slip))
-    discipline_total = Decimal("0.00")
-    for d in disciplines:
-        discipline_total += d.penalty_amount or Decimal("0.00")
-        if d.salary_slip != slip:
-            d.salary_slip = slip
-            d.save(update_fields=["salary_slip"])
-
-    allowance_amount = Decimal("0.00")
-
-    # 2.8. Tổng quyết toán
-    gross_pay = base_salary_earned + overtime_amount_earned + allowance_amount + unused_leave_compensation
-    deductions = union_fee + discipline_total + social_insurance_deduction + resignation_fine
-    net_pay = gross_pay + reward_total - deductions
-
-    remarks = (
-        f"Quyết toán thôi việc ngày {termination_date} ({'Đúng luật' if is_lawful else 'Nghỉ ngang/Trái luật'}).\n"
-        f"- Ngày công thực tế/hưởng lương: {working_days + paid_leave_days} ngày.\n"
-        f"- Lương ngày công: {base_salary_earned:,.2f}đ (Tính theo ngày công chuẩn cố định với công chuẩn {divisor}).\n"
-        f"- Phép năm chưa nghỉ ({unused_leave_days} ngày): {unused_leave_compensation:,.2f}đ.\n"
-        f"- Khấu trừ BHXH (10.5%): {social_insurance_deduction:,.2f}đ ({'Có trích đóng' if social_insurance_deduction > 0 else 'Không đóng do làm < 14 ngày'}).\n"
-    )
-    if not is_lawful:
-        remarks += (
-            f"- Bồi thường nghỉ ngang: {resignation_fine:,.2f}đ (Gồm 0.5 tháng lương: {fine_half_month:,.2f}đ "
-            f"và {unnotified_days} ngày không báo trước: {fine_unnotified:,.2f}đ).\n"
-        )
-
-    slip.base_salary = base_salary_earned
-    slip.overtime_amount = overtime_amount_earned
-    slip.allowance_amount = allowance_amount
-    slip.reward_amount_total = reward_total
-    slip.discipline_deduction_total = discipline_total
-    slip.union_fee_2pct = union_fee
-    slip.gross_pay = gross_pay
-    slip.deductions = deductions
-    slip.net_pay = net_pay
-    slip.remarks = remarks.strip()
-    slip.status = "paid"
-
-    total_days_str = f"{float(working_days + paid_leave_days):g}"
-    unused_leave_str = f"{float(unused_leave_days):g}"
-
-    incomes = [
-        {
-            "name": f"Lương theo ngày công thực tế ({total_days_str}/{standard_working_days} ngày)",
-            "amount": float(base_salary_earned),
-        }
-    ]
-
-    if overtime_amount_earned > 0:
-        if ot_normal_hours > 0:
-            incomes.append(
-                {
-                    "name": f"Lương tăng ca ngày thường (1.5x) ({float(ot_normal_hours):g} giờ)",
-                    "amount": float(ot_normal_amount.quantize(Decimal("0.01"))),
-                }
-            )
-        if ot_weekend_hours > 0:
-            incomes.append(
-                {
-                    "name": f"Lương tăng ca Chủ nhật (2.0x) ({float(ot_weekend_hours):g} giờ)",
-                    "amount": float(ot_weekend_amount.quantize(Decimal("0.01"))),
-                }
-            )
-        if ot_holiday_hours > 0:
-            incomes.append(
-                {
-                    "name": f"Lương tăng ca ngày Lễ/Tết (3.0x) ({float(ot_holiday_hours):g} giờ)",
-                    "amount": float(ot_holiday_amount.quantize(Decimal("0.01"))),
-                }
-            )
-        if ot_compensatory_hours > 0:
-            rate_str = f"{float(compensatory_ot_rate):g}x"
-            incomes.append(
-                {
-                    "name": f"Lương tăng ca ngày nghỉ bù ({rate_str}) ({float(ot_compensatory_hours):g} giờ)",
-                    "amount": float(ot_compensatory_amount.quantize(Decimal("0.01"))),
-                }
-            )
-    else:
-        incomes.append(
-            {
-                "name": "Lương tăng ca (OT) (0 giờ)",
-                "amount": 0.0,
-            }
-        )
-
-    incomes.extend(
-        [
-            {"name": "Phụ cấp cố định", "amount": float(allowance_amount)},
-            {
-                "name": f"Bồi thường phép năm chưa nghỉ ({unused_leave_str} ngày)",
-                "amount": float(unused_leave_compensation),
-            },
-            {"name": "Khen thưởng/Thưởng thêm", "amount": float(reward_total)},
-        ]
-    )
-
+    # Đánh dấu is_partial=True với period_end là termination_date để tính prorated trong kỳ lương
     slip.breakdown = {
-        "standard_working_days": int(standard_working_days),
-        "incomes": incomes,
-        "deductions": [
-            {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
-            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
-            {"name": "Khấu trừ BHXH (10.5% lương)", "amount": float(social_insurance_deduction)},
-        ],
+        "is_partial": True,
+        "period_start": str(date(year, month, 1)),
+        "period_end": str(termination_date),
+        "is_lawful": is_lawful,
+        "unused_leave_days": float(unused_leave_days),
+        "unnotified_days": unnotified_days,
+        "standard_working_days": standard_working_days,
     }
-    if not is_lawful and resignation_fine > 0:
-        slip.breakdown["deductions"].append(
-            {
-                "name": f"Bồi thường nghỉ ngang (0.5 tháng + {unnotified_days} ngày không báo trước)",
-                "amount": float(resignation_fine),
-            }
+    slip.save(update_fields=["breakdown"])
+
+    # 4. Gọi hàm payroll_calculate_terminated_salary
+    try:
+        payroll_calculate_terminated_salary(
+            salary_slip_id=str(slip.id),
+            termination_date=termination_date,
+            is_lawful=is_lawful,
+            unused_leave_days=unused_leave_days,
+            unnotified_days=unnotified_days,
+            standard_working_days=standard_working_days,
+            creator=terminator,
         )
+    except ValidationException as e:
+        raise ValidationException(f"Không thể tính lương quyết toán cho {employee.full_name}: {str(e)}")
 
-    slip.save()
-
-    # 2.9. Tự động sinh ra bút toán chi/thu tiền tại finance dựa trên net_pay
-    from apps.finance.models import CashFlowTransaction
-
-    net_pay = slip.net_pay
-    tx = None
-    tx_created = False
-
-    if net_pay > Decimal("0.00"):
-        tx_name = f"PAY-FINAL-SALARY-{employee.employee_id}-{current_period}"
-        tx, tx_created = CashFlowTransaction.objects.get_or_create(
-            name=tx_name,
-            defaults={
-                "payment_type": "pay",
-                "category": "Chi trả lương nhân viên thôi việc",
-                "payment_method": "bank_transfer",
-                "amount": net_pay,
-                "payment_date": date.today(),
-                "remarks": f"Quyết toán thôi việc và chi trả lương cuối cùng cho nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {net_pay:,.2f}đ.",
-            },
-        )
-    elif net_pay < Decimal("0.00"):
-        tx_name = f"COLLECT-FINAL-SALARY-{employee.employee_id}-{current_period}"
-        tx, tx_created = CashFlowTransaction.objects.get_or_create(
-            name=tx_name,
-            defaults={
-                "payment_type": "receive",
-                "category": "Thu hồi bồi thường nhân viên thôi việc",
-                "payment_method": "bank_transfer",
-                "amount": abs(net_pay),
-                "payment_date": date.today(),
-                "remarks": f"Quyết toán thôi việc và thu hồi bồi thường từ nhân viên {employee.full_name} ({employee.employee_id}) ngày nghỉ việc {termination_date}. Số tiền: {abs(net_pay):,.2f}đ.",
-            },
-        )
-
-    if tx and tx_created and terminator:
-        create_system_log(
+    # 5. Gửi duyệt phiếu lương quyết toán cho Finance (set status = pending_finance_review)
+    try:
+        payroll_submit_for_review(
+            salary_slip_id=str(slip.id),
             user=terminator,
-            action="create",
-            table_name="cash_flow_transaction",
-            record_id=str(tx.id),
-            new_value={
-                "name": tx.name,
-                "payment_type": tx.payment_type,
-                "category": tx.category,
-                "amount": str(tx.amount),
-                "payment_date": str(tx.payment_date),
-            },
+            bypass_current_period_check=True,
         )
+    except ValidationException as e:
+        raise ValidationException(f"Không thể gửi phiếu lương quyết toán cho Finance: {str(e)}")
 
     # 3. Cập nhật EmploymentContract
     old_contract_status = contract.status
@@ -701,21 +768,8 @@ def contract_terminate(
         },
     )
 
-    # 5. Vô hiệu hóa tài khoản User liên kết qua employee_id
-    linked_user = User.objects.filter(employee_id=employee.employee_id).first()
-    if linked_user:
-        old_active = linked_user.is_active
-        linked_user.is_active = False
-        linked_user.save(update_fields=["is_active"])
-
-        create_system_log(
-            user=terminator,
-            action="update",
-            table_name="user",
-            record_id=str(linked_user.id),
-            old_value={"is_active": old_active},
-            new_value={"is_active": False},
-        )
+    # 5. Xóa tài khoản User liên kết qua employee_id
+    _delete_linked_user(employee=employee, terminator=terminator)
 
     # 6. Lưu tài liệu quyết định thôi việc nếu có file_url
     if file_url:
@@ -743,179 +797,112 @@ def contract_terminate(
 
 
 @transaction.atomic
-def employee_update_salary_or_title(
+def employee_adjust_salary_apply(
     *,
     employee_id: str,
-    change_data: Dict[str, Any],
-    approved_by_user_id: str,  # This acts as the proposing user now
-    approved_by: Optional[User] = None,
-) -> EmploymentHistory:
+    new_salary_base: Decimal,
+    reason: Optional[str] = None,
+    actor: Optional[User] = None,
+) -> Dict[str, Any]:
     """
-    Tạo đề xuất thay đổi lương cơ bản, chức danh hoặc phòng ban của nhân viên ở trạng thái Chờ duyệt.
+    Áp dụng điều chỉnh lương cơ bản (Cách B - apply trực tiếp).
     """
+    if actor:
+        PermissionChecker.check_permission(actor, "hrm.adjust_salary")
+
+    today = date.today()
+
     try:
-        employee = Employee.objects.get(id=employee_id)
+        employee = Employee.objects.select_for_update().get(id=employee_id)
     except Employee.DoesNotExist:
-        raise ValidationException("Nhân viên không tồn tại")
+        raise NotFoundException("Nhân viên không tồn tại")
 
-    if not approved_by:
-        try:
-            approved_by = User.objects.get(id=approved_by_user_id)
-        except User.DoesNotExist:
-            raise ValidationException("Người đề xuất không tồn tại")
+    if new_salary_base is None:
+        raise ValidationException("Lương cơ bản mới là bắt buộc")
+    new_salary_base = Decimal(str(new_salary_base))
 
-    PermissionChecker.check_permission(approved_by, "hrm.change_employee")
-
-    change_type = change_data.get("change_type")
-    if not change_type:
-        raise ValidationException("Loại thay đổi (change_type) là bắt buộc")
-
-    effective_date = change_data.get("effective_date")
-    if not effective_date:
-        raise ValidationException("Ngày có hiệu lực (effective_date) là bắt buộc")
-
-    # Lưu giá trị cũ
-    old_salary_base = employee.salary_base
-    old_title = employee.position_title
-    old_department = employee.department
-
-    # Khởi tạo giá trị mới
-    new_salary_base = change_data.get("new_salary_base")
-    new_title = change_data.get("new_title")
-    new_department = change_data.get("new_department")
-
-    # Kiểm tra tính hợp lệ ban đầu của các trường mới theo change_type
-    if change_type == "salary_change":
-        if new_salary_base is None:
-            raise ValidationException("Lương cơ bản mới là bắt buộc cho thay đổi lương")
-    elif change_type == "title_change":
-        if not new_title:
-            raise ValidationException("Chức danh mới là bắt buộc cho thay đổi chức danh")
-    elif change_type == "department_transfer":
-        if not new_department:
-            raise ValidationException("Phòng ban mới là bắt buộc cho điều chuyển phòng ban")
-    elif change_type != "other":
-        raise ValidationException(f"Loại thay đổi không hợp lệ: {change_type}")
-
-    # Tạo bản ghi EmploymentHistory ở trạng thái pending_approval (chưa áp dụng lên Employee)
-    history = EmploymentHistory.objects.create(
-        employee=employee,
-        change_type=change_type,
-        old_salary_base=old_salary_base,
-        new_salary_base=Decimal(str(new_salary_base)) if new_salary_base is not None else None,
-        old_title=old_title,
-        new_title=new_title,
-        old_department=old_department,
-        new_department=new_department,
-        effective_date=effective_date,
-        approved_by=None,
-        approved_at=None,
-        status="pending_approval",
-        reason=change_data.get("reason"),
+    # Tìm HĐLĐ active
+    active_contract = (
+        EmploymentContract.objects.select_for_update()
+        .filter(employee=employee, status="active")
+        .order_by("-start_date")
+        .first()
     )
 
-    # Ghi log tạo đề xuất cho EmploymentHistory
-    history_log_data = {
-        "change_type": history.change_type,
-        "old_salary_base": str(history.old_salary_base) if history.old_salary_base is not None else None,
-        "new_salary_base": str(history.new_salary_base) if history.new_salary_base is not None else None,
-        "old_title": history.old_title,
-        "new_title": history.new_title,
-        "old_department": history.old_department,
-        "new_department": history.new_department,
-        "effective_date": str(history.effective_date),
-        "status": history.status,
-        "reason": history.reason,
-    }
-    create_system_log(
-        user=approved_by,
-        action="create",
-        table_name="employment_history",
-        record_id=str(history.id),
-        new_value=history_log_data,
-    )
+    # Quyết định: update hoặc tạo mới
+    if active_contract and (active_contract.end_date is None or today <= active_contract.end_date):
+        # Case 1: HĐLĐ active còn hạn -> UPDATE
+        old_salary = active_contract.salary_base
+        active_contract.salary_base = new_salary_base
+        active_contract.save(update_fields=["salary_base", "updated_at"])
 
-    return history
-
-
-@transaction.atomic
-def employment_history_approve(*, user: User, history_id: str) -> EmploymentHistory:
-    """
-    Phê duyệt đề xuất thay đổi nhân sự (Ban Giám Đốc/Admin).
-    Áp dụng các thay đổi từ EmploymentHistory lên hồ sơ Employee.
-    """
-    PermissionChecker.check_permission(user, "hrm.change_employee")
-
-    history = EmploymentHistory.objects.select_for_update().filter(id=history_id).first()
-    if not history:
-        raise NotFoundException("Đề xuất thay đổi nhân sự không tồn tại.")
-
-    if history.status != "pending_approval":
-        raise ValidationException("Đề xuất thay đổi nhân sự này đã được xử lý.")
-
-    employee = Employee.objects.select_for_update().get(id=history.employee_id)
-
-    # Lưu giá trị cũ thực tế của Employee tại thời điểm duyệt
-    old_salary_base = employee.salary_base
-    old_title = employee.position_title
-    old_department = employee.department
-
-    # Cập nhật thông tin mới sang hồ sơ nhân viên
-    if history.change_type == "salary_change":
-        employee.salary_base = history.new_salary_base
-    elif history.change_type == "title_change":
-        employee.position_title = history.new_title
-    elif history.change_type == "department_transfer":
-        employee.department = history.new_department
-    elif history.change_type == "other":
-        if history.new_salary_base is not None:
-            employee.salary_base = history.new_salary_base
-        if history.new_title is not None:
-            employee.position_title = history.new_title
-        if history.new_department is not None:
-            employee.department = history.new_department
-
-    employee.save()
-
-    # Ghi log cập nhật cho Employee
-    employee_old = {}
-    employee_new = {}
-    if old_salary_base != employee.salary_base:
-        employee_old["salary_base"] = str(old_salary_base) if old_salary_base is not None else None
-        employee_new["salary_base"] = str(employee.salary_base)
-    if old_title != employee.position_title:
-        employee_old["position_title"] = old_title
-        employee_new["position_title"] = employee.position_title
-    if old_department != employee.department:
-        employee_old["department"] = old_department
-        employee_new["department"] = employee.department
-
-    if employee_new:
         create_system_log(
-            user=user,
+            user=actor,
             action="update",
-            table_name="employee",
-            record_id=str(employee.id),
-            old_value=employee_old,
-            new_value=employee_new,
+            table_name="employment_contract",
+            record_id=str(active_contract.id),
+            old_value={"salary_base": str(old_salary) if old_salary else None},
+            new_value={"salary_base": str(new_salary_base), "effective_date": str(today)},
+        )
+        result_contract = active_contract
+    else:
+        # Case 2: HĐLĐ active hết hạn (hoặc chưa có) -> TẠO MỚI
+        if active_contract:
+            old_status = active_contract.status
+            active_contract.status = "expired"
+            if active_contract.end_date is None or today <= active_contract.end_date:
+                active_contract.end_date = today - timedelta(days=1)
+            active_contract.save(update_fields=["status", "end_date", "updated_at"])
+
+            create_system_log(
+                user=actor,
+                action="update",
+                table_name="employment_contract",
+                record_id=str(active_contract.id),
+                old_value={"status": old_status},
+                new_value={"status": "expired", "end_date": str(active_contract.end_date)},
+            )
+
+        new_contract = EmploymentContract.objects.create(
+            employee=employee,
+            contract_no=f"ADJ-{today.strftime('%Y%m%d')}-{employee.employee_id}",
+            contract_type=active_contract.contract_type if active_contract else "indefinite_term",
+            start_date=today,
+            end_date=None,
+            status="active",
+            salary_base=new_salary_base,
         )
 
-    # Cập nhật trạng thái EmploymentHistory
-    history.status = "approved"
-    history.approved_by = user
-    history.approved_at = timezone.now()
-    history.save()
+        create_system_log(
+            user=actor,
+            action="create",
+            table_name="employment_contract",
+            record_id=str(new_contract.id),
+            new_value={
+                "contract_no": new_contract.contract_no,
+                "salary_base": str(new_salary_base),
+                "start_date": str(today),
+                "status": "active",
+            },
+        )
+        result_contract = new_contract
 
-    # Ghi log duyệt cho EmploymentHistory
-    create_system_log(
-        user=user,
-        action="approve",
-        table_name="employment_history",
-        record_id=str(history.id),
-        new_value={"status": history.status, "approved_by": str(user.id)},
-    )
+    # Tính lại payslip kỳ hiện tại (status < paid, bao gồm partial)
+    affected_slips = []
+    salary_period = today.strftime("%Y-%m")
+    slips_to_recalc = SalarySlip.objects.filter(employee=employee, salary_period=salary_period).exclude(status="paid")
 
-    return history
+    for slip in slips_to_recalc:
+        try:
+            updated_slip = payroll_calculate_salary(
+                salary_slip_id=str(slip.id),
+                creator=actor,
+            )
+            affected_slips.append(updated_slip)
+        except ValidationException:
+            continue
+
+    return {"contract": result_contract, "affected_payslips": affected_slips}
 
 
 @transaction.atomic
@@ -1278,6 +1265,18 @@ def reward_record_create(
     except Employee.DoesNotExist:
         raise ValidationException("Nhân viên không tồn tại")
 
+    reward_date = data.get("reward_date")
+    if reward_date:
+        if isinstance(reward_date, str):
+            reward_date = datetime.strptime(reward_date, "%Y-%m-%d").date()
+        reward_period = reward_date.strftime("%Y-%m")
+        from apps.hrm.selectors import is_salary_period_fully_paid
+
+        if is_salary_period_fully_paid(reward_period):
+            raise ValidationException(
+                f"Kỳ lương {reward_period} đã được thanh toán 100%. Không cho phép ghi nhận khen thưởng trong kỳ này."
+            )
+
     amount = data.get("amount")
     if amount is not None:
         amount = Decimal(str(amount))
@@ -1339,6 +1338,23 @@ def discipline_record_create(
         employee = Employee.objects.get(id=employee_id)
     except Employee.DoesNotExist:
         raise ValidationException("Nhân viên không tồn tại")
+
+    incident_date = data.get("incident_date")
+    discipline_date = data.get("discipline_date")
+    checked_periods = set()
+    for dt in [incident_date, discipline_date]:
+        if dt:
+            if isinstance(dt, str):
+                dt = datetime.strptime(dt, "%Y-%m-%d").date()
+            checked_periods.add(dt.strftime("%Y-%m"))
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    for period in checked_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(
+                f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép ghi nhận kỷ luật trong kỳ này."
+            )
 
     penalty_amount = data.get("penalty_amount")
     if penalty_amount is not None:
@@ -1488,12 +1504,11 @@ def payroll_initialize_period(
                     employee=employee,
                     salary_period=salary_period,
                     name=name,
-                    base_salary=employee.salary_base or Decimal("0.00"),
+                    base_salary=Decimal("0.00"),
                     overtime_amount=Decimal("0.00"),
                     allowance_amount=Decimal("0.00"),
                     reward_amount_total=Decimal("0.00"),
                     discipline_deduction_total=Decimal("0.00"),
-                    union_fee_2pct=Decimal("0.00"),
                     gross_pay=Decimal("0.00"),
                     deductions=Decimal("0.00"),
                     net_pay=Decimal("0.00"),
@@ -1505,7 +1520,7 @@ def payroll_initialize_period(
         # bulk create slips
         created_slips = SalarySlip.objects.bulk_create(new_slips, ignore_conflicts=True)
 
-        # bulk create logs
+        # bulk create logs (Ghi nhận log CREATE ở trạng thái draft trước)
         logs = [
             SystemLog(
                 user=creator,
@@ -1523,6 +1538,13 @@ def payroll_initialize_period(
         ]
         SystemLog.objects.bulk_create(logs)
 
+        # Tự động tính toán lương sau khi khởi tạo (sử dụng holidays_cache để tránh N+1 queries)
+        # Quá trình này sẽ tiếp tục cập nhật phiếu lương và tự động ghi log UPDATE vào DB sau log CREATE
+        year, month = map(int, salary_period.split("-"))
+        holidays_cache = get_holiday_dates_for_period(year, month)
+        for slip in created_slips:
+            payroll_calculate_salary(salary_slip_id=str(slip.id), creator=creator, holidays_cache=holidays_cache)
+
     return list(SalarySlip.objects.filter(salary_period=salary_period).select_related("employee"))
 
 
@@ -1531,6 +1553,7 @@ def payroll_calculate_salary(
     *,
     salary_slip_id: str,
     creator: Optional[User] = None,
+    holidays_cache: Optional[tuple[set[date], set[date]]] = None,
 ) -> SalarySlip:
     """
     Tính toán chi tiết phiếu lương dựa trên chấm công, phụ cấp, thưởng, phạt trong kỳ.
@@ -1549,20 +1572,43 @@ def payroll_calculate_salary(
     except SalarySlip.DoesNotExist:
         raise ValidationException("Phiếu lương không tồn tại")
 
+    if slip.status == "paid":
+        raise ValidationException("Không thể tính lại phiếu lương đã thanh toán.")
+
     employee = slip.employee
-    salary_base = employee.salary_base or Decimal("0.00")
 
-    # 1. Tính toán ngày công từ Attendance trong kỳ
-    year, month = map(int, slip.salary_period.split("-"))
-    import calendar
+    # Lưu thông tin partial nếu có để bảo lưu
+    is_partial = False
+    p_start = None
+    p_end = None
+    if slip.breakdown and slip.breakdown.get("is_partial"):
+        is_partial = True
+        p_start = slip.breakdown.get("period_start")
+        p_end = slip.breakdown.get("period_end")
 
-    last_day = calendar.monthrange(year, month)[1]
-    period_end_date = date(year, month, last_day)
+    # 1. Tính toán ngày công từ Attendance trong kỳ (hỗ trợ partial slip)
+    if is_partial and p_start and p_end:
+        period_start_date = date.fromisoformat(p_start)
+        period_end_date = date.fromisoformat(p_end)
+        year = period_start_date.year
+        month = period_start_date.month
+    else:
+        year, month = map(int, slip.salary_period.split("-"))
+        import calendar
+
+        last_day = calendar.monthrange(year, month)[1]
+        period_start_date = date(year, month, 1)
+        period_end_date = date(year, month, last_day)
+
+    salary_base = get_salary_at_date(employee, period_end_date) or Decimal("0.00")
 
     attendances = Attendance.objects.filter(employee=employee, date__year=year, date__month=month)
 
-    # Fetch public holidays and compensatory holidays for this period
-    official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(year, month)
+    # Fetch public holidays and compensatory holidays for this period (use cache if provided)
+    if holidays_cache:
+        official_holiday_dates, compensatory_holiday_dates = holidays_cache
+    else:
+        official_holiday_dates, compensatory_holiday_dates = get_holiday_dates_for_period(year, month)
     all_holiday_dates = official_holiday_dates | compensatory_holiday_dates
 
     working_days = Decimal("0.00")
@@ -1572,37 +1618,77 @@ def payroll_calculate_salary(
     ot_holiday_hours = Decimal("0.00")
     ot_compensatory_hours = Decimal("0.00")
 
-    recorded_dates = set()
-    for att in attendances:
-        recorded_dates.add(att.date)
-        if att.status == "working" and (att.work_hours or 0) > 0:
-            working_days += Decimal("1.00")
-        elif att.status in ["paid_leave", "holiday"]:
-            paid_leave_days += Decimal("1.00")
+    # Chuẩn bị Attendance dict
+    attendance_dict = {att.date: att for att in attendances}
 
-        ot_h = att.overtime_hours or Decimal("0.00")
-        if ot_h > 0:
-            if att.date in official_holiday_dates:
-                ot_holiday_hours += ot_h
-            elif att.date in compensatory_holiday_dates:
-                ot_compensatory_hours += ot_h
-            elif att.date.weekday() in weekly_rest_days:
-                ot_weekend_hours += ot_h
-            else:
-                ot_normal_hours += ot_h
+    # 2. Tính lương Prorated theo các segment
+    timeline = get_salary_timeline(employee, period_start_date, period_end_date)
+    segments = split_into_segments(timeline, period_start_date, period_end_date)
 
-    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
-    credited_holiday_dates = set()
-    for h_date in all_holiday_dates:
-        if h_date not in recorded_dates and h_date not in credited_holiday_dates:
-            credited_holiday_dates.add(h_date)
-            paid_leave_days += Decimal("1.00")
+    salary_segments_breakdown = []
+    base_salary_earned = Decimal("0.00")
 
-    if standard_days > 0:
-        base_salary_earned = salary_base * ((working_days + paid_leave_days) / Decimal(str(standard_days)))
-    else:
-        base_salary_earned = Decimal("0.00")
-    base_salary_earned = base_salary_earned.quantize(Decimal("0.01"))
+    total_working_days = Decimal("0.00")
+    total_paid_leave_days = Decimal("0.00")
+
+    for seg_start, seg_end, seg_salary in segments:
+        seg_working_days = Decimal("0.00")
+        seg_paid_leave_days = Decimal("0.00")
+
+        current_date = seg_start
+        while current_date <= seg_end:
+            # Kiểm tra quan hệ lao động
+            day_salary, day_contract = get_salary_for_day(employee, current_date)
+            if day_contract is not None:
+                att = attendance_dict.get(current_date)
+                if att:
+                    if att.status == "working" and (att.work_hours or 0) > 0:
+                        seg_working_days += Decimal("1.00")
+                    elif att.status in ["paid_leave", "holiday"]:
+                        seg_paid_leave_days += Decimal("1.00")
+
+                    # Tính OT cho ngày này
+                    ot_h = att.overtime_hours or Decimal("0.00")
+                    if ot_h > 0:
+                        if current_date in official_holiday_dates:
+                            ot_holiday_hours += ot_h
+                        elif current_date in compensatory_holiday_dates:
+                            ot_compensatory_hours += ot_h
+                        elif current_date.weekday() in weekly_rest_days:
+                            ot_weekend_hours += ot_h
+                        else:
+                            ot_normal_hours += ot_h
+                else:
+                    # Tự động tính 100% lương cho ngày nghỉ lễ/nghỉ bù nếu chưa có chấm công
+                    if current_date in all_holiday_dates:
+                        seg_paid_leave_days += Decimal("1.00")
+
+            current_date += timedelta(days=1)
+
+        seg_total_days = seg_working_days + seg_paid_leave_days
+        total_working_days += seg_working_days
+        total_paid_leave_days += seg_paid_leave_days
+
+        if standard_days > 0:
+            seg_earned = seg_salary * (seg_total_days / Decimal(str(standard_days)))
+        else:
+            seg_earned = Decimal("0.00")
+        seg_earned = seg_earned.quantize(Decimal("0.01"))
+
+        base_salary_earned += seg_earned
+
+        salary_segments_breakdown.append(
+            {
+                "start_date": seg_start.strftime("%Y-%m-%d"),
+                "end_date": seg_end.strftime("%Y-%m-%d"),
+                "salary_base": float(seg_salary),
+                "work_days": float(seg_total_days),
+                "earned": float(seg_earned),
+            }
+        )
+
+    working_days = total_working_days
+    paid_leave_days = total_paid_leave_days
 
     if standard_days > 0:
         hourly_rate = salary_base / Decimal(str(standard_days)) / Decimal("8.00")
@@ -1624,10 +1710,6 @@ def payroll_calculate_salary(
         ot_compensatory_amount = Decimal("0.00")
         overtime_amount_earned = Decimal("0.00")
     overtime_amount_earned = overtime_amount_earned.quantize(Decimal("0.01"))
-
-    union_fee = Decimal("0.00")
-    if employee.is_union_member:
-        union_fee = (salary_base * Decimal("0.02")).quantize(Decimal("0.01"))
 
     from django.db.models import Q
 
@@ -1672,7 +1754,7 @@ def payroll_calculate_salary(
     allowance_amount = Decimal("0.00")
 
     gross_pay = base_salary_earned + overtime_amount_earned + allowance_amount
-    deductions = union_fee + discipline_total
+    deductions = discipline_total
     net_pay = gross_pay + reward_total - deductions
 
     remarks = slip.remarks or ""
@@ -1687,7 +1769,6 @@ def payroll_calculate_salary(
         "allowance_amount": str(slip.allowance_amount),
         "reward_amount_total": str(slip.reward_amount_total),
         "discipline_deduction_total": str(slip.discipline_deduction_total),
-        "union_fee_2pct": str(slip.union_fee_2pct),
         "gross_pay": str(slip.gross_pay),
         "deductions": str(slip.deductions),
         "net_pay": str(slip.net_pay),
@@ -1699,7 +1780,6 @@ def payroll_calculate_salary(
     slip.allowance_amount = allowance_amount
     slip.reward_amount_total = reward_total
     slip.discipline_deduction_total = discipline_total
-    slip.union_fee_2pct = union_fee
     slip.gross_pay = gross_pay
     slip.deductions = deductions
     slip.net_pay = net_pay
@@ -1766,9 +1846,13 @@ def payroll_calculate_salary(
         "incomes": incomes,
         "deductions": [
             {"name": "Phạt kỷ luật/Khấu trừ", "amount": float(discipline_total)},
-            {"name": "Phí công đoàn (2%)", "amount": float(union_fee)},
         ],
+        "salary_segments": salary_segments_breakdown,
     }
+    if is_partial:
+        slip.breakdown["is_partial"] = True
+        slip.breakdown["period_start"] = p_start
+        slip.breakdown["period_end"] = p_end
     slip.save()
 
     create_system_log(
@@ -1783,7 +1867,6 @@ def payroll_calculate_salary(
             "allowance_amount": str(slip.allowance_amount),
             "reward_amount_total": str(slip.reward_amount_total),
             "discipline_deduction_total": str(slip.discipline_deduction_total),
-            "union_fee_2pct": str(slip.union_fee_2pct),
             "gross_pay": str(slip.gross_pay),
             "deductions": str(slip.deductions),
             "net_pay": str(slip.net_pay),
@@ -1792,201 +1875,6 @@ def payroll_calculate_salary(
     )
 
     return slip
-
-
-@transaction.atomic
-def payroll_approve_salary(
-    *,
-    user: User,
-    salary_slip_id: str,
-) -> SalarySlip:
-    """
-    Phê duyệt phiếu lương sau khi đã tính toán (calculated).
-    Yêu cầu quyền hrm.payroll_approve.
-    """
-    PermissionChecker.check_permission(user, "hrm.payroll_approve")
-
-    slip = SalarySlip.objects.select_for_update().filter(id=salary_slip_id).first()
-    if not slip:
-        raise NotFoundException(f"Phiếu lương với ID {salary_slip_id} không tồn tại")
-
-    if slip.status != "calculated":
-        raise ValidationException("Chỉ có thể phê duyệt phiếu lương ở trạng thái 'Calculated'")
-
-    slip.status = "approved"
-    slip.approved_by = user
-    slip.approved_at = timezone.now()
-    slip.save()
-
-    create_system_log(
-        user=user,
-        action="update",
-        table_name="salary_slip",
-        record_id=str(slip.id),
-        old_value={"status": "calculated"},
-        new_value={
-            "status": "approved",
-            "approved_by_id": str(user.id),
-            "approved_at": str(slip.approved_at),
-        },
-    )
-
-    return slip
-
-
-def _process_payroll_chunk(
-    chunk: list[SalarySlip],
-    payment_method: str,
-    creator: Optional[User],
-    slips_to_update: list[SalarySlip],
-    txs_to_create: list[Any],
-    logs_to_create: list[Any],
-    salary_period: str,
-):
-    from apps.accounts.models import SystemLog
-    from apps.finance.models import CashFlowTransaction
-
-    tx_names = [f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}" for slip in chunk]
-    existing_tx_names = set(CashFlowTransaction.objects.filter(name__in=tx_names).values_list("name", flat=True))
-
-    for slip in chunk:
-        old_status = slip.status
-        old_method = slip.payment_method
-
-        slip.status = "paid"
-        slip.payment_method = payment_method
-        slips_to_update.append(slip)
-
-        logs_to_create.append(
-            SystemLog(
-                user=creator,
-                action="update",
-                table_name="salary_slip",
-                record_id=str(slip.id),
-                old_value={"status": old_status, "payment_method": old_method},
-                new_value={"status": "paid", "payment_method": payment_method},
-            )
-        )
-
-        tx_name = f"PAY-SALARY-{slip.employee.employee_id}-{salary_period}"
-        if tx_name not in existing_tx_names:
-            try:
-                parts = salary_period.split("-")
-                period_year = parts[0]
-                period_month = parts[1]
-            except Exception:
-                period_year = ""
-                period_month = salary_period
-
-            if slip.net_pay > 0:
-                txs_to_create.append(
-                    CashFlowTransaction(
-                        name=tx_name,
-                        payment_type="pay",
-                        category="Chi trả lương nhân viên",
-                        payment_method=payment_method,
-                        amount=slip.net_pay,
-                        payment_date=date.today(),
-                        remarks=f"Chi trả lương tháng {period_month}/{period_year} cho nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Thực lĩnh: {slip.net_pay:,.2f}đ. Phương thức: Chuyển khoản.",
-                        status="posted",
-                    )
-                )
-            elif slip.net_pay < 0:
-                txs_to_create.append(
-                    CashFlowTransaction(
-                        name=tx_name,
-                        payment_type="receive",
-                        category="Chi trả lương nhân viên",
-                        payment_method=payment_method,
-                        amount=abs(slip.net_pay),
-                        payment_date=date.today(),
-                        remarks=f"Thu hồi lương âm tháng {period_month}/{period_year} của nhân viên {slip.employee.full_name} ({slip.employee.employee_id}). Số tiền: {abs(slip.net_pay):,.2f}đ.",
-                        status="posted",
-                    )
-                )
-
-
-@transaction.atomic
-def payroll_bulk_confirm_and_pay(
-    *,
-    salary_period: str,
-    payment_method: str,
-    creator: Optional[User] = None,
-) -> list[SalarySlip]:
-    """
-    Xác nhận chi trả lương nhanh cho toàn bộ phiếu lương chưa thanh toán của kỳ lương được chọn.
-    Tối ưu hóa bulk operations để giảm số truy cập DB từ O(N) xuống O(1).
-    Sử dụng .iterator(chunk_size=1000) để tối ưu hóa dữ liệu lớn.
-    """
-    if creator:
-        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
-
-    slips_qs = SalarySlip.objects.filter(salary_period=salary_period, status="approved").select_related("employee")
-
-    slips_to_update = []
-    txs_to_create = []
-    logs_to_create = []
-
-    # Process slips in chunks of 1000 using iterator
-    chunk_size = 1000
-    chunk = []
-    for slip in slips_qs.iterator(chunk_size=chunk_size):
-        chunk.append(slip)
-        if len(chunk) >= chunk_size:
-            _process_payroll_chunk(
-                chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
-            )
-            chunk = []
-    if chunk:
-        _process_payroll_chunk(
-            chunk, payment_method, creator, slips_to_update, txs_to_create, logs_to_create, salary_period
-        )
-
-    if not slips_to_update:
-        return []
-
-    # 3. Thực thi bulk update các phiếu lương theo chunks 1000
-    for i in range(0, len(slips_to_update), 1000):
-        SalarySlip.objects.bulk_update(slips_to_update[i : i + 1000], fields=["status", "payment_method"])
-
-    # 4. Thực thi bulk create các giao dịch dòng tiền theo chunks 1000
-    from apps.finance.models import CashFlowTransaction
-
-    if txs_to_create:
-        created_txs = []
-        for i in range(0, len(txs_to_create), 1000):
-            created_chunk = CashFlowTransaction.objects.bulk_create(txs_to_create[i : i + 1000])
-            created_txs.extend(created_chunk)
-
-        from apps.accounts.models import SystemLog
-
-        # Tạo log cho các giao dịch dòng tiền mới được tạo
-        tx_logs = [
-            SystemLog(
-                user=creator,
-                action="create",
-                table_name="cash_flow_transaction",
-                record_id=str(tx.id),
-                new_value={
-                    "name": tx.name,
-                    "payment_type": tx.payment_type,
-                    "category": tx.category,
-                    "amount": str(tx.amount),
-                    "payment_date": str(tx.payment_date),
-                },
-            )
-            for tx in created_txs
-        ]
-        logs_to_create.extend(tx_logs)
-
-    # 5. Thực thi bulk create tất cả log hệ thống theo chunks 1000
-    from apps.accounts.models import SystemLog
-
-    if logs_to_create:
-        for i in range(0, len(logs_to_create), 1000):
-            SystemLog.objects.bulk_create(logs_to_create[i : i + 1000])
-
-    return slips_to_update
 
 
 @transaction.atomic
@@ -2151,6 +2039,18 @@ def reward_record_approve(*, user: User, reward_id: str) -> RewardRecord:
     if reward.status != "pending_approval":
         raise ValidationException("Quyết định khen thưởng này đã được xử lý.")
 
+    reward_date = reward.reward_date
+    if reward_date:
+        if isinstance(reward_date, str):
+            reward_date = datetime.strptime(reward_date, "%Y-%m-%d").date()
+        reward_period = reward_date.strftime("%Y-%m")
+        from apps.hrm.selectors import is_salary_period_fully_paid
+
+        if is_salary_period_fully_paid(reward_period):
+            raise ValidationException(
+                f"Kỳ lương {reward_period} đã được thanh toán 100%. Không cho phép duyệt khen thưởng trong kỳ này."
+            )
+
     reward.status = "approved"
     reward.approved_by = user
     reward.approved_at = timezone.now()
@@ -2171,6 +2071,13 @@ def reward_record_approve(*, user: User, reward_id: str) -> RewardRecord:
 def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRecord:
     """
     Phê duyệt quyết định kỷ luật của nhân viên.
+
+    Nếu discipline_type == 'termination' (Sa thải), hệ thống tự động:
+      - Terminate EmploymentContract đang active (bao gồm quyết toán lương).
+      - Set Employee.employment_status = 'inactive' và leave_date.
+      - Disable User.is_active liên kết.
+      - Lưu EmployeeDocument nếu có file_url.
+    Tất cả thực hiện trong cùng transaction để đảm bảo toàn vẹn.
     """
     PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
 
@@ -2180,6 +2087,23 @@ def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRe
 
     if discipline.status != "pending_approval":
         raise ValidationException("Quyết định kỷ luật này đã được xử lý.")
+
+    incident_date = discipline.incident_date
+    discipline_date = discipline.discipline_date
+    checked_periods = set()
+    for dt in [incident_date, discipline_date]:
+        if dt:
+            if isinstance(dt, str):
+                dt = datetime.strptime(dt, "%Y-%m-%d").date()
+            checked_periods.add(dt.strftime("%Y-%m"))
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    for period in checked_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(
+                f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép duyệt kỷ luật trong kỳ này."
+            )
 
     discipline.status = "approved"
     discipline.approved_by = user
@@ -2194,4 +2118,825 @@ def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRe
         new_value={"status": discipline.status, "approved_by_id": str(user.id)},
     )
 
+    if discipline.discipline_type == "termination":
+        _handle_termination_side_effects(
+            discipline=discipline,
+            approver=user,
+        )
+
     return discipline
+
+
+def _handle_termination_side_effects(*, discipline: DisciplineRecord, approver: User) -> None:
+    """
+    Hàm nội bộ: xử lý hậu quả khi kỷ luật Sa thải được phê duyệt.
+    Orchestrator: gọi các helper con theo đúng case.
+    """
+    employee = discipline.employee
+    discipline_date = discipline.discipline_date
+    had_active_contract = EmploymentContract.objects.filter(employee=employee, status="active").exists()
+
+    # 1. Terminate HĐLĐ (nếu có)
+    if had_active_contract:
+        _terminate_active_contract(
+            employee=employee,
+            termination_date=discipline_date,
+            reason=f"[Sa thải theo kỷ luật] {discipline.description}",
+            file_url=discipline.file_url or None,
+            terminator=approver,
+        )
+    else:
+        # 2. Hoặc deactivate Employee (nếu không có HĐLĐ)
+        _deactivate_employee(
+            employee=employee,
+            termination_date=discipline_date,
+            terminator=approver,
+        )
+
+    # 3. Lưu EmployeeDocument (nếu không có HĐLĐ và có file_url)
+    if not had_active_contract and discipline.file_url:
+        _create_termination_document(
+            employee=employee,
+            file_url=discipline.file_url,
+            terminator=approver,
+        )
+
+    # 4. Log tổng kết
+    create_system_log(
+        user=approver,
+        action="terminated_by_discipline",
+        table_name="discipline_record",
+        record_id=str(discipline.id),
+        new_value={
+            "employee_id": str(employee.id),
+            "termination_date": str(discipline_date),
+            "had_active_contract": had_active_contract,
+        },
+    )
+
+
+@transaction.atomic
+def payroll_calculate_terminated_salary(
+    *,
+    salary_slip_id: str,
+    termination_date: date,
+    is_lawful: bool = True,
+    unused_leave_days: Decimal = Decimal("0.00"),
+    unnotified_days: int = 0,
+    standard_working_days: int = 26,
+    creator: Optional[User] = None,
+) -> SalarySlip:
+    """
+    Tính lương quyết toán thôi việc.
+    Bước 1: Gọi payroll_calculate_salary (4 thành phần định kỳ theo prorated).
+    Bước 2: Cộng dồn 4 thành phần quyết toán (phép năm, BHXH, phạt nghỉ ngang).
+
+    Yêu cầu: caller (contract_terminate) phải set slip.breakdown.is_partial=True
+    với period_end=termination_date TRƯỚC khi gọi hàm này.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    try:
+        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
+    except SalarySlip.DoesNotExist:
+        raise ValidationException("Phiếu lương không tồn tại")
+
+    if slip.status == "paid":
+        raise ValidationException("Không thể tính lại phiếu lương đã thanh toán.")
+
+    if not slip.breakdown or not slip.breakdown.get("is_partial"):
+        raise ValidationException(
+            "Phiếu lương quyết toán phải có breakdown.is_partial=True. "
+            "Hãy set trước khi gọi payroll_calculate_terminated_salary."
+        )
+
+    # ===== BƯỚC 1: Lưu lại salary_segments từ lần calculate trước (nếu có) =====
+    existing_salary_segments = None
+    if slip.breakdown and slip.breakdown.get("salary_segments"):
+        existing_salary_segments = slip.breakdown["salary_segments"]
+
+    # ===== BƯỚC 2: Tính 4 thành phần định kỳ =====
+    payroll_calculate_salary(salary_slip_id=str(slip.id), creator=creator)
+    slip.refresh_from_db()
+
+    # ===== BƯỚC 3: Đảm bảo salary_segments vẫn còn sau khi calculate =====
+    # Nếu payroll_calculate_salary không ghi hoặc ghi rỗng salary_segments, dùng lại của lần trước
+    has_segments = slip.breakdown and slip.breakdown.get("salary_segments")
+    if existing_salary_segments and not has_segments:
+        slip.breakdown = {
+            **(slip.breakdown or {}),
+            "salary_segments": existing_salary_segments,
+        }
+
+    # ===== BƯỚC 4: Tính 4 thành phần quyết toán =====
+    employee = slip.employee
+    salary_base = get_salary_at_date(employee, termination_date) or Decimal("0.00")
+
+    # Tính tổng số ngày làm việc và ngày nghỉ được hưởng lương từ các phân đoạn lương
+    total_work_days = Decimal("0.00")
+    if slip.breakdown and "salary_segments" in slip.breakdown:
+        for seg in slip.breakdown["salary_segments"]:
+            total_work_days += Decimal(str(seg.get("work_days", 0)))
+
+    working_days = total_work_days
+    paid_leave_days = Decimal("0.00")
+
+    comp = _calc_termination_compensation(
+        salary_base=salary_base,
+        working_days=working_days,
+        paid_leave_days=paid_leave_days,
+        is_lawful=is_lawful,
+        unused_leave_days=unused_leave_days,
+        unnotified_days=unnotified_days,
+        standard_working_days=standard_working_days,
+    )
+
+    # Cộng dồn vào slip
+    slip.gross_pay = (slip.gross_pay or Decimal("0.00")) + comp["unused_leave_compensation"]
+    slip.deductions = (
+        (slip.deductions or Decimal("0.00")) + comp["social_insurance_deduction"] + comp["resignation_fine"]
+    )
+    slip.net_pay = (slip.gross_pay or Decimal("0.00")) - (slip.deductions or Decimal("0.00"))
+
+    # Cập nhật breakdown
+    slip.breakdown = {
+        **(slip.breakdown or {}),
+        "termination_compensation": {
+            "is_lawful": is_lawful,
+            "unused_leave_days": float(unused_leave_days),
+            "unused_leave_compensation": float(comp["unused_leave_compensation"]),
+            "social_insurance_deduction": float(comp["social_insurance_deduction"]),
+            "resignation_fine": float(comp["resignation_fine"]),
+            "fine_half_month": float(comp["fine_half_month"]),
+            "fine_unnotified": float(comp["fine_unnotified"]),
+            "unnotified_days": unnotified_days,
+            "termination_date": str(termination_date),
+        },
+    }
+
+    # Ghi remarks (nếu chưa có) để Finance biết đây là quyết toán
+    if not slip.remarks:
+        remarks = (
+            f"Quyết toán thôi việc ngày {termination_date} "
+            f"({'Đúng luật' if is_lawful else 'Nghỉ ngang/Trái luật'}).\n"
+            f"- Phép năm chưa nghỉ: {float(unused_leave_days):g} ngày "
+            f"→ {comp['unused_leave_compensation']:,.2f}đ.\n"
+            f"- BHXH (10.5%): {comp['social_insurance_deduction']:,.2f}đ "
+            f"({'>=' if comp['social_insurance_deduction'] > 0 else '<'} 14 ngày làm việc)."
+        )
+        if not is_lawful and comp["resignation_fine"] > 0:
+            remarks += (
+                f"\n- Bồi thường nghỉ ngang: {comp['resignation_fine']:,.2f}đ "
+                f"(0.5 tháng: {comp['fine_half_month']:,.2f}đ "
+                f"+ {unnotified_days} ngày không báo trước: {comp['fine_unnotified']:,.2f}đ)."
+            )
+        slip.remarks = remarks
+
+    slip.save()
+    create_system_log(
+        user=creator,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        new_value={
+            "log": "HRM calculated terminated salary",
+            "is_lawful": is_lawful,
+            "unused_leave_days": float(unused_leave_days),
+        },
+    )
+    return slip
+
+
+def _calc_termination_compensation(
+    *,
+    salary_base: Decimal,
+    working_days: Decimal,
+    paid_leave_days: Decimal,
+    is_lawful: bool,
+    unused_leave_days: Decimal,
+    unnotified_days: int,
+    standard_working_days: int = 26,
+) -> Dict[str, Decimal]:
+    """Tính 4 thành phần quyết toán thôi việc. Pure function (không query DB)."""
+    # 1. Thanh toán phép năm chưa nghỉ (Điều 113-114 BLLĐ 2019)
+    divisor = Decimal(str(standard_working_days))
+    if divisor <= 0:
+        divisor = DEFAULT_STANDARD_WORKING_DAYS
+
+    unused_leave_compensation = ((salary_base / divisor) * Decimal(str(unused_leave_days))).quantize(Decimal("0.01"))
+
+    # 2. BHXH 10.5% nếu làm >= 14 ngày trong tháng
+    social_insurance_deduction = Decimal("0.00")
+    if (working_days + paid_leave_days) >= SOCIAL_INSURANCE_MIN_DAYS:
+        social_insurance_deduction = (salary_base * SOCIAL_INSURANCE_RATE).quantize(Decimal("0.01"))
+
+    # 3. Bồi thường nghỉ ngang (chỉ áp dụng khi !is_lawful)
+    resignation_fine = Decimal("0.00")
+    fine_half_month = Decimal("0.00")
+    fine_unnotified = Decimal("0.00")
+    if not is_lawful:
+        fine_half_month = (salary_base * RESIGNATION_FINE_HALF_MONTH).quantize(Decimal("0.01"))
+        fine_unnotified = ((salary_base / divisor) * Decimal(str(unnotified_days))).quantize(Decimal("0.01"))
+        resignation_fine = fine_half_month + fine_unnotified
+
+    return {
+        "unused_leave_compensation": unused_leave_compensation,
+        "social_insurance_deduction": social_insurance_deduction,
+        "resignation_fine": resignation_fine,
+        "fine_half_month": fine_half_month,
+        "fine_unnotified": fine_unnotified,
+    }
+
+
+@transaction.atomic
+def create_partial_salary_slip(
+    *,
+    employee_id: str,
+    period_start: date,
+    period_end: date,
+    name: str,
+    creator: Optional[User] = None,
+) -> SalarySlip:
+    """
+    Tạo phiếu lương nháp cho một giai đoạn (không phải cả tháng).
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.add_salaryslip")
+
+    try:
+        employee = Employee.objects.get(id=employee_id)
+    except Employee.DoesNotExist:
+        raise ValidationException("Nhân viên không tồn tại")
+
+    if period_start >= period_end:
+        raise ValidationException("period_end phải lớn hơn period_start")
+
+    if period_start.year != period_end.year or period_start.month != period_end.month:
+        raise ValidationException("period_start và period_end phải trong cùng một tháng")
+
+    salary_period = period_start.strftime("%Y-%m")
+
+    if SalarySlip.objects.filter(employee=employee, salary_period=salary_period).exists():
+        raise ValidationException("Đã tồn tại phiếu lương cho nhân viên trong kỳ này")
+
+    slip = SalarySlip.objects.create(
+        employee=employee,
+        salary_period=salary_period,
+        name=name,
+        base_salary=Decimal("0.00"),
+        overtime_amount=Decimal("0.00"),
+        allowance_amount=Decimal("0.00"),
+        reward_amount_total=Decimal("0.00"),
+        discipline_deduction_total=Decimal("0.00"),
+        gross_pay=Decimal("0.00"),
+        deductions=Decimal("0.00"),
+        net_pay=Decimal("0.00"),
+        status="draft",
+        breakdown={
+            "is_partial": True,
+            "period_start": str(period_start),
+            "period_end": str(period_end),
+        },
+    )
+
+    create_system_log(
+        user=creator,
+        action="create",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        new_value={
+            "name": slip.name,
+            "employee_id": str(slip.employee_id),
+            "salary_period": salary_period,
+            "status": "draft",
+            "is_partial": True,
+            "period_start": str(period_start),
+            "period_end": str(period_end),
+        },
+    )
+
+    return slip
+
+
+@transaction.atomic
+def payroll_submit_for_review(
+    *,
+    salary_slip_id: str,
+    user: User,
+    bypass_current_period_check: bool = False,
+) -> SalarySlip:
+    """
+    HRM xác nhận phiếu lương đã tính xong và gửi cho Finance duyệt.
+    """
+    PermissionChecker.check_permission(user, "hrm.payroll_submit")
+
+    try:
+        slip = SalarySlip.objects.select_for_update().get(id=salary_slip_id)
+    except SalarySlip.DoesNotExist:
+        raise ValidationException("Phiếu lương không tồn tại")
+
+    from apps.hrm.selectors import is_current_salary_period
+
+    if not bypass_current_period_check and is_current_salary_period(slip.salary_period):
+        raise ValidationException(
+            f"Không thể gửi duyệt phiếu lương của kỳ {slip.salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
+
+    if slip.status != "calculated":
+        raise ValidationException("Chỉ được gửi duyệt phiếu lương ở trạng thái 'calculated'")
+
+    slip.status = "pending_finance_review"
+    slip.save(update_fields=["status"])
+
+    create_system_log(
+        user=user,
+        action="update",
+        table_name="salary_slip",
+        record_id=str(slip.id),
+        old_value={"status": "calculated"},
+        new_value={"status": "pending_finance_review", "log": "HRM submitted for Finance review"},
+    )
+
+    return slip
+
+
+@transaction.atomic
+def payroll_bulk_calculate(
+    *,
+    salary_period: str,
+    creator: Optional[User] = None,
+) -> dict:
+    """
+    Tính toán hàng loạt phiếu lương nháp (draft) hoặc đã tính toán (calculated) trong một kỳ lương.
+    """
+    if creator:
+        PermissionChecker.check_permission(creator, "finance.change_salaryslip")
+
+    from apps.finance.models import SalarySlip
+
+    slips = list(
+        SalarySlip.objects.select_for_update().filter(salary_period=salary_period, status__in=["draft", "calculated"])
+    )
+
+    if not slips:
+        return {"count": 0, "slip_ids": []}
+
+    year, month = map(int, salary_period.split("-"))
+    holidays_cache = get_holiday_dates_for_period(year, month)
+
+    calculated_ids = []
+    for slip in slips:
+        payroll_calculate_salary(
+            salary_slip_id=str(slip.id),
+            creator=creator,
+            holidays_cache=holidays_cache,
+        )
+        calculated_ids.append(str(slip.id))
+
+    return {"count": len(calculated_ids), "slip_ids": calculated_ids}
+
+
+@transaction.atomic
+def payroll_bulk_submit_for_review(
+    *,
+    salary_period: str,
+    user: User,
+) -> dict:
+    """
+    HRM xác nhận hàng loạt phiếu lương đã tính xong và gửi cho Finance duyệt.
+    """
+    PermissionChecker.check_permission(user, "hrm.payroll_submit")
+
+    from apps.hrm.selectors import is_current_salary_period
+
+    if is_current_salary_period(salary_period):
+        raise ValidationException(
+            f"Không thể gửi duyệt hàng loạt phiếu lương kỳ {salary_period} (tháng hiện tại). "
+            f"Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
+        )
+
+    from apps.accounts.models import SystemLog
+    from apps.finance.models import SalarySlip
+
+    slips = list(SalarySlip.objects.select_for_update().filter(salary_period=salary_period, status="calculated"))
+
+    if not slips:
+        raise ValidationException("Không có phiếu lương nào ở trạng thái 'calculated' để gửi duyệt.")
+
+    for slip in slips:
+        slip.status = "pending_finance_review"
+
+    SalarySlip.objects.bulk_update(slips, ["status"])
+
+    logs = [
+        SystemLog(
+            user=user,
+            action="update",
+            table_name="salary_slip",
+            record_id=str(slip.id),
+            old_value={"status": "calculated"},
+            new_value={"status": "pending_finance_review", "log": "HRM bulk submitted for Finance review"},
+        )
+        for slip in slips
+    ]
+    SystemLog.objects.bulk_create(logs)
+
+    slip_ids = [str(slip.id) for slip in slips]
+    return {"count": len(slip_ids), "slip_ids": slip_ids}
+
+
+@transaction.atomic
+def reward_record_update(
+    *,
+    reward_id: str,
+    data: Dict[str, Any],
+    updater: User,
+) -> RewardRecord:
+    """
+    Cập nhật quyết định khen thưởng của nhân viên.
+    """
+    PermissionChecker.check_permission(updater, "hrm.change_rewardrecord")
+
+    reward = RewardRecord.objects.select_for_update().filter(id=reward_id).first()
+    if not reward:
+        raise NotFoundException("Quyết định khen thưởng không tồn tại.")
+
+    if reward.status != "pending_approval":
+        raise ValidationException("Chỉ có thể sửa khen thưởng ở trạng thái chờ duyệt.")
+
+    # Check existing period paid
+    reward_period = reward.reward_date.strftime("%Y-%m")
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    if is_salary_period_fully_paid(reward_period):
+        raise ValidationException(
+            f"Kỳ lương {reward_period} đã được thanh toán 100%. Không cho phép sửa khen thưởng này."
+        )
+
+    # Check new period paid if reward_date changes
+    reward_date = data.get("reward_date")
+    if reward_date:
+        if isinstance(reward_date, str):
+            reward_date = datetime.strptime(reward_date, "%Y-%m-%d").date()
+        new_period = reward_date.strftime("%Y-%m")
+        if new_period != reward_period and is_salary_period_fully_paid(new_period):
+            raise ValidationException(
+                f"Kỳ lương mới {new_period} đã được thanh toán 100%. Không cho phép chuyển khen thưởng vào kỳ này."
+            )
+
+    amount = data.get("amount")
+    if amount is not None:
+        amount = Decimal(str(amount))
+
+    salary_slip_id = data.get("salary_slip_id")
+    if salary_slip_id:
+        from apps.finance.models import SalarySlip
+
+        try:
+            slip = SalarySlip.objects.get(id=salary_slip_id)
+        except SalarySlip.DoesNotExist:
+            raise ValidationException("Phiếu lương không tồn tại")
+        if str(slip.employee.id) != str(reward.employee.id):
+            raise ValidationException("Phiếu lương không thuộc về nhân viên này")
+        if slip.status == "paid":
+            raise ValidationException("Không thể gán khen thưởng cho phiếu lương đã chi trả")
+
+    old_value = {
+        "reward_date": str(reward.reward_date),
+        "reward_type": reward.reward_type,
+        "amount": str(reward.amount) if reward.amount is not None else None,
+        "description": reward.description,
+        "salary_slip_id": str(reward.salary_slip_id) if reward.salary_slip_id else None,
+    }
+
+    if "reward_date" in data:
+        reward.reward_date = reward_date or reward.reward_date
+    if "reward_type" in data:
+        reward.reward_type = data["reward_type"]
+    if "amount" in data:
+        reward.amount = amount
+    if "description" in data:
+        reward.description = data["description"]
+    if "salary_slip_id" in data:
+        reward.salary_slip_id = salary_slip_id
+
+    reward.save()
+
+    create_system_log(
+        user=updater,
+        action="update",
+        table_name="reward_record",
+        record_id=str(reward.id),
+        old_value=old_value,
+        new_value={
+            "reward_date": str(reward.reward_date),
+            "reward_type": reward.reward_type,
+            "amount": str(reward.amount) if reward.amount is not None else None,
+            "description": reward.description,
+            "salary_slip_id": str(reward.salary_slip_id) if reward.salary_slip_id else None,
+        },
+    )
+
+    return reward
+
+
+@transaction.atomic
+def reward_record_cancel(
+    *,
+    reward_id: str,
+    user: User,
+    reason: Optional[str] = None,
+) -> RewardRecord:
+    """
+    Hủy quyết định khen thưởng của nhân viên.
+    """
+    PermissionChecker.check_permission(user, "hrm.change_rewardrecord")
+
+    reward = RewardRecord.objects.select_for_update().filter(id=reward_id).first()
+    if not reward:
+        raise NotFoundException("Quyết định khen thưởng không tồn tại.")
+
+    if reward.status != "pending_approval":
+        raise ValidationException("Chỉ có thể hủy khen thưởng ở trạng thái chờ duyệt.")
+
+    reward_period = reward.reward_date.strftime("%Y-%m")
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    if is_salary_period_fully_paid(reward_period):
+        raise ValidationException(f"Kỳ lương {reward_period} đã được thanh toán 100%. Không cho phép hủy khen thưởng.")
+
+    old_status = reward.status
+    reward.status = "cancelled"
+    reward.cancelled_by = user
+    reward.cancelled_at = timezone.now()
+    reward.save()
+
+    create_system_log(
+        user=user,
+        action="cancel",
+        table_name="reward_record",
+        record_id=str(reward.id),
+        old_value={"status": old_status},
+        new_value={
+            "status": "cancelled",
+            "cancelled_by_id": str(user.id),
+            "reason": reason,
+        },
+    )
+
+    return reward
+
+
+@transaction.atomic
+def reward_record_delete(
+    *,
+    reward_id: str,
+    deleter: User,
+) -> None:
+    """
+    Xóa quyết định khen thưởng của nhân viên.
+    """
+    PermissionChecker.check_permission(deleter, "hrm.delete_rewardrecord")
+
+    reward = RewardRecord.objects.select_for_update().filter(id=reward_id).first()
+    if not reward:
+        raise NotFoundException("Quyết định khen thưởng không tồn tại.")
+
+    if reward.status != "pending_approval":
+        raise ValidationException("Chỉ có thể xóa khen thưởng ở trạng thái chờ duyệt.")
+
+    reward_period = reward.reward_date.strftime("%Y-%m")
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    if is_salary_period_fully_paid(reward_period):
+        raise ValidationException(f"Kỳ lương {reward_period} đã được thanh toán 100%. Không cho phép xóa khen thưởng.")
+
+    old_value = {
+        "reward_date": str(reward.reward_date),
+        "reward_type": reward.reward_type,
+        "amount": str(reward.amount) if reward.amount is not None else None,
+        "description": reward.description,
+        "salary_slip_id": str(reward.salary_slip_id) if reward.salary_slip_id else None,
+        "status": reward.status,
+    }
+    record_id = str(reward.id)
+    reward.delete()
+
+    create_system_log(
+        user=deleter,
+        action="delete",
+        table_name="reward_record",
+        record_id=record_id,
+        old_value=old_value,
+        new_value={},
+    )
+
+
+@transaction.atomic
+def discipline_record_update(
+    *,
+    discipline_id: str,
+    data: Dict[str, Any],
+    updater: User,
+) -> DisciplineRecord:
+    """
+    Cập nhật quyết định kỷ luật của nhân viên.
+    """
+    PermissionChecker.check_permission(updater, "hrm.change_disciplinerecord")
+
+    discipline = DisciplineRecord.objects.select_for_update().filter(id=discipline_id).first()
+    if not discipline:
+        raise NotFoundException("Quyết định kỷ luật không tồn tại.")
+
+    if discipline.status != "pending_approval":
+        raise ValidationException("Chỉ có thể sửa kỷ luật ở trạng thái chờ duyệt.")
+
+    incident_date = data.get("incident_date")
+    if incident_date and isinstance(incident_date, str):
+        incident_date = datetime.strptime(incident_date, "%Y-%m-%d").date()
+    discipline_date = data.get("discipline_date")
+    if discipline_date and isinstance(discipline_date, str):
+        discipline_date = datetime.strptime(discipline_date, "%Y-%m-%d").date()
+
+    # Check periods paid
+    checked_periods = set()
+    for dt in [discipline.incident_date, discipline.discipline_date, incident_date, discipline_date]:
+        if dt:
+            checked_periods.add(dt.strftime("%Y-%m"))
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    for period in checked_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(
+                f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép sửa kỷ luật trong kỳ này."
+            )
+
+    penalty_amount = data.get("penalty_amount")
+    if penalty_amount is not None:
+        penalty_amount = Decimal(str(penalty_amount))
+
+    salary_slip_id = data.get("salary_slip_id")
+    if salary_slip_id:
+        from apps.finance.models import SalarySlip
+
+        try:
+            slip = SalarySlip.objects.get(id=salary_slip_id)
+        except SalarySlip.DoesNotExist:
+            raise ValidationException("Phiếu lương không tồn tại")
+        if str(slip.employee.id) != str(discipline.employee.id):
+            raise ValidationException("Phiếu lương không thuộc về nhân viên này")
+        if slip.status == "paid":
+            raise ValidationException("Không thể gán kỷ luật cho phiếu lương đã chi trả")
+
+    old_value = {
+        "incident_date": str(discipline.incident_date),
+        "discipline_date": str(discipline.discipline_date),
+        "discipline_type": discipline.discipline_type,
+        "penalty_amount": str(discipline.penalty_amount) if discipline.penalty_amount is not None else None,
+        "description": discipline.description,
+        "file_url": discipline.file_url,
+        "salary_slip_id": str(discipline.salary_slip_id) if discipline.salary_slip_id else None,
+    }
+
+    if "incident_date" in data:
+        discipline.incident_date = incident_date or discipline.incident_date
+    if "discipline_date" in data:
+        discipline.discipline_date = discipline_date or discipline.discipline_date
+    if "discipline_type" in data:
+        discipline.discipline_type = data["discipline_type"]
+    if "penalty_amount" in data:
+        discipline.penalty_amount = penalty_amount
+    if "description" in data:
+        discipline.description = data["description"]
+    if "file_url" in data:
+        discipline.file_url = data["file_url"]
+    if "salary_slip_id" in data:
+        discipline.salary_slip_id = salary_slip_id
+
+    discipline.save()
+
+    create_system_log(
+        user=updater,
+        action="update",
+        table_name="discipline_record",
+        record_id=str(discipline.id),
+        old_value=old_value,
+        new_value={
+            "incident_date": str(discipline.incident_date),
+            "discipline_date": str(discipline.discipline_date),
+            "discipline_type": discipline.discipline_type,
+            "penalty_amount": str(discipline.penalty_amount) if discipline.penalty_amount is not None else None,
+            "description": discipline.description,
+            "file_url": discipline.file_url,
+            "salary_slip_id": str(discipline.salary_slip_id) if discipline.salary_slip_id else None,
+        },
+    )
+
+    return discipline
+
+
+@transaction.atomic
+def discipline_record_cancel(
+    *,
+    discipline_id: str,
+    user: User,
+    reason: Optional[str] = None,
+) -> DisciplineRecord:
+    """
+    Hủy quyết định kỷ luật của nhân viên.
+    """
+    PermissionChecker.check_permission(user, "hrm.change_disciplinerecord")
+
+    discipline = DisciplineRecord.objects.select_for_update().filter(id=discipline_id).first()
+    if not discipline:
+        raise NotFoundException("Quyết định kỷ luật không tồn tại.")
+
+    if discipline.status != "pending_approval":
+        raise ValidationException("Chỉ có thể hủy kỷ luật ở trạng thái chờ duyệt.")
+
+    checked_periods = set()
+    for dt in [discipline.incident_date, discipline.discipline_date]:
+        if dt:
+            checked_periods.add(dt.strftime("%Y-%m"))
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    for period in checked_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép hủy kỷ luật.")
+
+    old_status = discipline.status
+    discipline.status = "cancelled"
+    discipline.cancelled_by = user
+    discipline.cancelled_at = timezone.now()
+    discipline.save()
+
+    create_system_log(
+        user=user,
+        action="cancel",
+        table_name="discipline_record",
+        record_id=str(discipline.id),
+        old_value={"status": old_status},
+        new_value={
+            "status": "cancelled",
+            "cancelled_by_id": str(user.id),
+            "reason": reason,
+        },
+    )
+
+    return discipline
+
+
+@transaction.atomic
+def discipline_record_delete(
+    *,
+    discipline_id: str,
+    deleter: User,
+) -> None:
+    """
+    Xóa quyết định kỷ luật của nhân viên.
+    """
+    PermissionChecker.check_permission(deleter, "hrm.delete_disciplinerecord")
+
+    discipline = DisciplineRecord.objects.select_for_update().filter(id=discipline_id).first()
+    if not discipline:
+        raise NotFoundException("Quyết định kỷ luật không tồn tại.")
+
+    if discipline.status != "pending_approval":
+        raise ValidationException("Chỉ có thể xóa kỷ luật ở trạng thái chờ duyệt.")
+
+    checked_periods = set()
+    for dt in [discipline.incident_date, discipline.discipline_date]:
+        if dt:
+            checked_periods.add(dt.strftime("%Y-%m"))
+
+    from apps.hrm.selectors import is_salary_period_fully_paid
+
+    for period in checked_periods:
+        if is_salary_period_fully_paid(period):
+            raise ValidationException(f"Kỳ lương {period} đã được thanh toán 100%. Không cho phép xóa kỷ luật.")
+
+    old_value = {
+        "incident_date": str(discipline.incident_date),
+        "discipline_date": str(discipline.discipline_date),
+        "discipline_type": discipline.discipline_type,
+        "penalty_amount": str(discipline.penalty_amount) if discipline.penalty_amount is not None else None,
+        "description": discipline.description,
+        "file_url": discipline.file_url,
+        "salary_slip_id": str(discipline.salary_slip_id) if discipline.salary_slip_id else None,
+        "status": discipline.status,
+    }
+    record_id = str(discipline.id)
+    discipline.delete()
+
+    create_system_log(
+        user=deleter,
+        action="delete",
+        table_name="discipline_record",
+        record_id=record_id,
+        old_value=old_value,
+        new_value={},
+    )

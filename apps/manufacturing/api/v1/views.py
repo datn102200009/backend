@@ -19,10 +19,21 @@ from apps.manufacturing.api.v1.serializers import (
     WorkOrderCancelSerializer,
     WorkOrderCompleteSerializer,
     WorkOrderCreateSerializer,
+    WorkOrderDeclarePreviewRequestSerializer,
     WorkOrderDeclareProductionSerializer,
+    WorkOrderDetailWithMaterialsSerializer,
+    WorkOrderFixedAssetsUpdateSerializer,
     WorkOrderSerializer,
 )
-from apps.manufacturing.selectors import bom_detail, bom_list, get_material_preview, work_order_detail, work_order_list
+from apps.manufacturing.selectors import (
+    bom_detail,
+    bom_list,
+    get_declare_material_preview,
+    get_material_preview,
+    work_order_detail,
+    work_order_detail_with_materials,
+    work_order_list,
+)
 from apps.manufacturing.services import (
     bom_create,
     bom_delete,
@@ -32,6 +43,8 @@ from apps.manufacturing.services import (
     work_order_complete,
     work_order_create,
     work_order_declare_production,
+    work_order_delete_pending_approval,
+    work_order_set_fixed_assets,
 )
 
 # ======================== BOM APIs ========================
@@ -60,7 +73,6 @@ def bom_create_view(request):
         item_id=str(serializer.validated_data["item_id"]),
         quantity=serializer.validated_data.get("quantity"),
         description=serializer.validated_data.get("description"),
-        mold_id=serializer.validated_data.get("mold_id") and str(serializer.validated_data["mold_id"]),
         items=serializer.validated_data["items"],
     )
 
@@ -94,10 +106,6 @@ def bom_update_view(request, bom_id):
         "description": serializer.validated_data.get("description"),
         "items": serializer.validated_data.get("items"),
     }
-    if "mold_id" in serializer.validated_data:
-        update_kwargs["mold_id"] = (
-            str(serializer.validated_data["mold_id"]) if serializer.validated_data["mold_id"] else None
-        )
 
     bom = bom_update(**update_kwargs)
 
@@ -224,6 +232,7 @@ def work_order_create_view(request):
         planned_start_date=serializer.validated_data["planned_start_date"],
         planned_end_date=serializer.validated_data.get("planned_end_date"),
         remarks=serializer.validated_data.get("remarks"),
+        fixed_asset_ids=serializer.validated_data.get("fixed_asset_ids", []),
     )
 
     result = work_order_detail(work_order_id=str(work_order.id))
@@ -343,11 +352,11 @@ def work_order_detail_view(request, work_order_id):
         )
     PermissionChecker.check_permission(user, "manufacturing.work_order_view")
 
-    work_order = work_order_detail(work_order_id=work_order_id)
+    work_order = work_order_detail_with_materials(work_order_id=work_order_id)
     if not work_order:
         raise NotFoundException(f"Lệnh sản xuất với ID {work_order_id} không tồn tại")
 
-    serializer = WorkOrderSerializer(work_order)
+    serializer = WorkOrderDetailWithMaterialsSerializer(work_order)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -375,3 +384,68 @@ def work_order_cancel_view(request, work_order_id):
 
     result = work_order_detail(work_order_id=str(work_order.id))
     return Response(WorkOrderSerializer(result).data, status=status.HTTP_200_OK)
+
+
+@api_view(["PUT"])
+def work_order_fixed_assets_update_view(request, work_order_id):
+    """
+    Cập nhật danh sách tài sản cố định (UOP) cho Work Order.
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    PermissionChecker.check_permission(user, "manufacturing.work_order_update")
+
+    serializer = WorkOrderFixedAssetsUpdateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    work_order = work_order_set_fixed_assets(
+        user=user,
+        work_order_id=str(work_order_id),
+        fixed_asset_ids=serializer.validated_data["fixed_asset_ids"],
+    )
+
+    result = work_order_detail(work_order_id=str(work_order.id))
+    return Response(WorkOrderSerializer(result).data, status=status.HTTP_200_OK)
+
+
+@api_view(["DELETE"])
+def work_order_delete_pending_view(request, work_order_id):
+    """
+    Xóa lệnh sản xuất đang ở trạng thái Chờ phê duyệt (nháp).
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+    PermissionChecker.check_permission(user, "manufacturing.work_order_cancel")
+    work_order_delete_pending_approval(user=user, work_order_id=str(work_order_id))
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+def work_order_declare_preview_view(request, work_order_id):
+    """
+    Preview nguyên liệu cần cho 1 đợt nhập liệu sản xuất.
+    POST /api/v1/manufacturing/work-orders/{work_order_id}/declare-preview/
+    Body: { "produced_qty": 10 }
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response({"error": "User không được xác thực"}, status=status.HTTP_401_UNAUTHORIZED)
+    PermissionChecker.check_permission(user, "manufacturing.work_order_declare")
+
+    serializer = WorkOrderDeclarePreviewRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    preview = get_declare_material_preview(
+        work_order_id=str(work_order_id),
+        produced_qty=serializer.validated_data["produced_qty"],
+    )
+    return Response({"results": preview}, status=status.HTTP_200_OK)

@@ -40,6 +40,7 @@ from apps.inventory.selectors import (
     stock_ledger_list_by_warehouse,
 )
 from apps.inventory.services import (
+    stock_entry_delete,
     stock_entry_update,
     stock_in_approve,
     stock_in_create,
@@ -79,7 +80,6 @@ def stock_in_create_view(request):
     stock_entry = stock_in_create(
         user=user,
         name=serializer.validated_data["name"],
-        posting_date=serializer.validated_data["posting_date"],
         details=serializer.validated_data["details"],
         remarks=serializer.validated_data.get("remarks", ""),
     )
@@ -143,7 +143,6 @@ def stock_issue_create_view(request):
     stock_entry = stock_issue_create(
         user=user,
         name=serializer.validated_data["name"],
-        posting_date=serializer.validated_data["posting_date"],
         source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
         details=serializer.validated_data["details"],
         remarks=serializer.validated_data.get("remarks", ""),
@@ -207,7 +206,6 @@ def stock_transfer_create_view(request):
     stock_entry = stock_transfer_create(
         user=user,
         name=serializer.validated_data["name"],
-        posting_date=serializer.validated_data["posting_date"],
         source_warehouse_id=str(serializer.validated_data["source_warehouse_id"]),
         target_warehouse_id=str(serializer.validated_data["target_warehouse_id"]),
         details=serializer.validated_data["details"],
@@ -300,7 +298,7 @@ def stock_entry_list_view(request):
 
     PermissionChecker.check_permission(user, "inventory.view")
 
-    status_param = request.query_params.get("status", "draft")
+    status_param = request.query_params.get("status", "all")
     purpose = request.query_params.get("purpose")
 
     entries = stock_entry_list_by_status(status_param, purpose)
@@ -360,3 +358,22 @@ def stock_entry_update_view(request, stock_entry_id):
     )
 
     return Response(StockEntrySerializer(updated_entry).data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+def stock_entry_delete_view(request, stock_entry_id):
+    """
+    Hủy (xóa cứng) một phiếu kho ở trạng thái Draft.
+
+    POST /api/v1/inventory/stock-entry/{stock_entry_id}/delete/
+    """
+    user = request.user
+    if not user or not user.is_authenticated:
+        return Response(
+            {"error": "User không được xác thực"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    # resolved user check is done in stock_entry_delete service
+    stock_entry_delete(user=user, stock_entry_id=stock_entry_id)
+    return Response(status=status.HTTP_204_NO_CONTENT)

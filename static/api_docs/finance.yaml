@@ -94,6 +94,13 @@ components:
           type: string
           format: uuid
           nullable: true
+        fixed_asset:
+          type: string
+          format: uuid
+          nullable: true
+        fixed_asset_code:
+          type: string
+          nullable: true
         status:
           type: string
           enum: [draft, pending_approval, posted, rejected]
@@ -129,13 +136,16 @@ components:
           type: string
         salvage_value:
           type: string
+          description: "DEPRECATED - giá trị này không còn ý nghĩa nghiệp vụ"
         depreciation_method:
           type: string
           enum: [straight_line, unit_of_production]
         useful_life_months:
           type: integer
+          nullable: true
         remaining_life_months:
           type: integer
+          nullable: true
         designed_capacity:
           type: number
           format: double
@@ -147,6 +157,26 @@ components:
         department:
           type: string
           nullable: true
+        status:
+          type: string
+          enum: [pending_receive, idle, active, pending_dispose, disposed]
+        purchase_date:
+          type: string
+          format: date
+          nullable: true
+        disposal_date:
+          type: string
+          format: date
+          nullable: true
+        disposal_value:
+          type: string
+          nullable: true
+        vendor_name:
+          type: string
+          nullable: true
+        payment_method:
+          type: string
+          nullable: true
         is_active:
           type: boolean
         created_at:
@@ -156,40 +186,47 @@ components:
           type: string
           format: date-time
 
-    FixedAssetInput:
+    FixedAssetPurchaseInput:
       type: object
       required:
-        - asset_code
         - asset_name
         - original_value
         - depreciation_method
-        - useful_life_months
+        - vendor_name
       properties:
-        asset_code:
-          type: string
-          maxLength: 100
         asset_name:
           type: string
           maxLength: 255
         original_value:
           type: string
-        salvage_value:
-          type: string
-          default: '0.00'
         depreciation_method:
           type: string
           enum: [straight_line, unit_of_production]
         useful_life_months:
           type: integer
           minimum: 1
+          nullable: true
         designed_capacity:
           type: number
           format: double
           minimum: 0.01
           nullable: true
-        department:
+        vendor_name:
           type: string
-          maxLength: 100
+          maxLength: 255
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    FixedAssetRequestDisposeInput:
+      type: object
+      properties:
+        disposal_value:
+          type: string
+          default: '0.00'
+        remarks:
+          type: string
           nullable: true
 
     FixedAssetUpdateInput:
@@ -198,25 +235,9 @@ components:
         asset_name:
           type: string
           maxLength: 255
-        original_value:
-          type: string
-        salvage_value:
-          type: string
-        depreciation_method:
-          type: string
-          enum: [straight_line, unit_of_production]
         useful_life_months:
           type: integer
           minimum: 1
-        designed_capacity:
-          type: number
-          format: double
-          minimum: 0.01
-          nullable: true
-        department:
-          type: string
-          maxLength: 100
-          nullable: true
 
     FixedAssetDepreciationLog:
       type: object
@@ -267,6 +288,49 @@ components:
           enum: [cash, bank_transfer]
           default: bank_transfer
 
+    CollectInvoiceInput:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    PurchaseInvoiceLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        import_tax:
+          type: number
+          format: double
+        vat_tax:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
     PurchaseInvoice:
       type: object
       properties:
@@ -276,6 +340,13 @@ components:
         order:
           type: string
           format: uuid
+        stock_entry:
+          type: string
+          format: uuid
+          nullable: true
+        stock_entry_name:
+          type: string
+          nullable: true
         vendor:
           type: string
           format: uuid
@@ -294,6 +365,212 @@ components:
           type: string
           format: date
           nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/PurchaseInvoiceLine'
+
+    SalesInvoiceLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item:
+          type: string
+          format: uuid
+        item_name:
+          type: string
+        item_code:
+          type: string
+        quantity:
+          type: number
+          format: double
+        unit_price:
+          type: number
+          format: double
+        vat_tax:
+          type: number
+          format: double
+        line_total:
+          type: number
+          format: double
+
+    SalesInvoice:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order:
+          type: string
+          format: uuid
+        stock_entry:
+          type: string
+          format: uuid
+          nullable: true
+        stock_entry_name:
+          type: string
+          nullable: true
+        customer:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        status:
+          type: string
+          enum: [unpaid, partial, paid, cancelled]
+        total_amount:
+          type: number
+          format: double
+        paid_amount:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/SalesInvoiceLine'
+
+    SalarySlip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        employee_id:
+          type: string
+          format: uuid
+        employee_code:
+          type: string
+        employee_name:
+          type: string
+        salary_period:
+          type: string
+          description: Định dạng YYYY-MM
+        base_salary:
+          type: string
+        overtime_amount:
+          type: string
+        allowance_amount:
+          type: string
+        reward_amount_total:
+          type: string
+        discipline_deduction_total:
+          type: string
+        gross_pay:
+          type: string
+        deductions:
+          type: string
+        net_pay:
+          type: string
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          nullable: true
+        status:
+          type: string
+          enum: [draft, calculated, pending_finance_review, approved, paid]
+        remarks:
+          type: string
+          nullable: true
+        breakdown:
+          type: object
+          nullable: true
+          properties:
+            standard_working_days:
+              type: integer
+            incomes:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
+            deductions:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  amount:
+                    type: number
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SalarySlipPaymentInput:
+      type: object
+      properties:
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    SalarySlipRejectInput:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 10
+
+    SalarySlipBulkApprovePayInput:
+      type: object
+      required:
+        - salary_period
+      properties:
+        salary_period:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+    SalarySlipBulkApproveInput:
+      type: object
+      required:
+        - salary_period
+      properties:
+        salary_period:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+
+    SalarySlipBulkPayInput:
+      type: object
+      required:
+        - salary_period
+      properties:
+        salary_period:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+        payment_method:
+          type: string
+          enum: [cash, bank_transfer]
+          default: bank_transfer
+
+
 
   responses:
     UnauthorizedError:
@@ -453,6 +730,44 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+  /finance/cash-flows/{pk}/reject/:
+    post:
+      summary: Reject Cash Flow Transaction
+      description: Rejects a cash flow transaction, which reverts linked fixed assets back to idle (or deletes them if it was a pending purchase).
+      tags:
+        - Cash Flows
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                remarks:
+                  type: string
+                  description: Optional reason for rejecting the transaction.
+      responses:
+        '200':
+          description: Cash flow transaction successfully rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowTransaction'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /finance/fixed-assets/:
     get:
       summary: List Fixed Assets
@@ -472,6 +787,25 @@ paths:
           schema:
             type: integer
             default: 1
+        - name: status__in
+          in: query
+          required: false
+          description: Comma-separated list of statuses to filter by.
+          schema:
+            type: string
+        - name: assignable
+          in: query
+          required: false
+          description: If true, only returns idle assets.
+          schema:
+            type: boolean
+        - name: depreciation_method
+          in: query
+          required: false
+          description: Depreciation method to filter by.
+          schema:
+            type: string
+            enum: [straight_line, unit_of_production]
       responses:
         '200':
           description: A paginated list of fixed assets.
@@ -505,7 +839,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/FixedAssetInput'
+              $ref: '#/components/schemas/FixedAssetPurchaseInput'
       responses:
         '201':
           description: Fixed asset successfully created.
@@ -612,6 +946,44 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
 
+
+
+  /finance/fixed-assets/{pk}/request-dispose/:
+    post:
+      summary: Request Dispose Fixed Asset
+      description: Requests disposal of fixed asset, changing status to pending_dispose and setting disposal date/value.
+      tags:
+        - Fixed Assets
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FixedAssetRequestDisposeInput'
+      responses:
+        '200':
+          description: Fixed asset disposal request successfully registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FixedAsset'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+
   /finance/fixed-assets/depreciation/:
     post:
       summary: Run Fixed Asset Depreciation
@@ -694,6 +1066,80 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /finance/invoices/purchase/:
+    get:
+      summary: List Purchase Invoices (Paginated)
+      description: Trả về danh sách hóa đơn mua hàng dạng phân trang từ phân hệ tài chính.
+      tags:
+        - Purchase Invoices
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: A paginated list of purchase invoices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  total_pages:
+                    type: integer
+                  current_page:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PurchaseInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /finance/invoices/purchase/{pk}/:
+    get:
+      summary: Get Purchase Invoice
+      description: Lấy chi tiết hóa đơn mua hàng từ phân hệ tài chính.
+      tags:
+        - Purchase Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Purchase invoice details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
   /finance/invoices/purchase/{pk}/pay/:
     post:
       summary: Pay Purchase Invoice (Finance)
@@ -720,6 +1166,299 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PurchaseInvoice'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/invoices/sales/:
+    get:
+      summary: List Sales Invoices (Paginated)
+      description: Trả về danh sách hóa đơn bán hàng dạng phân trang từ phân hệ tài chính.
+      tags:
+        - Sales Invoices
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: A paginated list of sales invoices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  total_pages:
+                    type: integer
+                  current_page:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SalesInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /finance/invoices/sales/{pk}/:
+    get:
+      summary: Get Sales Invoice
+      description: Lấy chi tiết hóa đơn bán hàng từ phân hệ tài chính.
+      tags:
+        - Sales Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sales invoice details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesInvoice'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/invoices/sales/{pk}/collect/:
+    post:
+      summary: Collect Sales Invoice
+      description: Thu tiền dòng tiền thanh toán cho hóa đơn bán hàng từ phân hệ tài chính.
+      tags:
+        - Sales Invoices
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectInvoiceInput'
+      responses:
+        '200':
+          description: Thu tiền thành công, trả về hóa đơn bán hàng đã cập nhật.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesInvoice'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/salary-slips/bulk-approve-pay/:
+    post:
+      summary: Bulk Approve and Pay Salary Slips
+      description: Phê duyệt và thanh toán hàng loạt phiếu lương cho một kỳ lương cụ thể.
+      tags:
+        - Payroll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalarySlipBulkApprovePayInput'
+      responses:
+        '200':
+          description: Phê duyệt và thanh toán thành công.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /finance/salary-slips/bulk-approve/:
+    post:
+      summary: Bulk Approve Salary Slips
+      description: Phê duyệt hàng loạt phiếu lương cho một kỳ lương cụ thể.
+      tags:
+        - Payroll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalarySlipBulkApproveInput'
+      responses:
+        '200':
+          description: Phê duyệt thành công.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /finance/salary-slips/bulk-pay/:
+    post:
+      summary: Bulk Pay Salary Slips
+      description: Chi trả hàng loạt phiếu lương đã được duyệt cho một kỳ lương cụ thể.
+      tags:
+        - Payroll
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalarySlipBulkPayInput'
+      responses:
+        '200':
+          description: Chi trả thành công.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+
+  /finance/salary-slips/{id}/approve/:
+    post:
+      summary: Approve Salary Slip
+      description: Phê duyệt phiếu lương cụ thể (chuyển sang trạng thái approved).
+      tags:
+        - Payroll
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phê duyệt thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/salary-slips/{id}/reject/:
+    post:
+      summary: Reject Salary Slip
+      description: Từ chối phiếu lương cụ thể với lý do tối thiểu 10 ký tự.
+      tags:
+        - Payroll
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalarySlipRejectInput'
+      responses:
+        '200':
+          description: Từ chối thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /finance/salary-slips/{id}/pay/:
+    post:
+      summary: Pay Salary Slip
+      description: Chi trả phiếu lương cụ thể (chuyển sang trạng thái paid và tạo CashFlowTransaction).
+      tags:
+        - Payroll
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalarySlipPaymentInput'
+      responses:
+        '200':
+          description: Chi trả thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalarySlip'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':

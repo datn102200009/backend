@@ -8,7 +8,6 @@ from apps.hrm.models import (
     DisciplineRecord,
     EmployeeDocument,
     EmploymentContract,
-    EmploymentHistory,
     LeaveRequest,
     RewardRecord,
 )
@@ -22,16 +21,36 @@ class EmployeeFactory(factory.django.DjangoModelFactory):
         model = Employee
         django_get_or_create = ("employee_id",)
 
-    employee_id = factory.Sequence(lambda n: f"EMP{n:04d}")
+    employee_id = factory.Sequence(lambda n: f"NV{n:04d}")
     full_name = factory.Faker("name")
-    department = "HR"
-    position_title = "Staff"
-    salary_base = Decimal("10000000.00")
-    is_union_member = False
     email = factory.Sequence(lambda n: f"emp{n}@example.com")
     phone = "0987654321"
     gender = "male"
     employment_status = "active"
+
+    @factory.post_generation
+    def salary_base(obj, create, extracted, **kwargs):
+        if not create:
+            return
+
+        create_contract = kwargs.get("create_contract", True)
+        if not create_contract:
+            return
+
+        salary = extracted if extracted is not None else Decimal("10000000.00")
+
+        from apps.hrm.models import EmploymentContract
+
+        # Tạo hợp đồng mặc định cho nhân viên để test
+        EmploymentContract.objects.create(
+            employee=obj,
+            contract_no=f"HDLD-{obj.employee_id}",
+            contract_type="definite_term",
+            start_date="2026-01-01",
+            end_date="2026-12-31",
+            status="active",
+            salary_base=salary,
+        )
 
 
 class EmploymentContractFactory(factory.django.DjangoModelFactory):
@@ -40,26 +59,21 @@ class EmploymentContractFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = EmploymentContract
 
-    employee = factory.SubFactory(EmployeeFactory)
+    employee = factory.SubFactory(EmployeeFactory, salary_base__create_contract=False)
     contract_no = factory.Sequence(lambda n: f"HDLD-{n:04d}")
     contract_type = "definite_term"
     start_date = "2026-01-01"
     end_date = "2026-12-31"
     status = "active"
+    salary_base = Decimal("10000000.00")
 
-
-class EmploymentHistoryFactory(factory.django.DjangoModelFactory):
-    """Factory để tạo EmploymentHistory phục vụ kiểm thử."""
-
-    class Meta:
-        model = EmploymentHistory
-
-    employee = factory.SubFactory(EmployeeFactory)
-    change_type = "salary_change"
-    old_salary_base = Decimal("10000000.00")
-    new_salary_base = Decimal("12000000.00")
-    effective_date = "2026-06-01"
-    reason = "Tăng lương định kỳ"
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        employee = kwargs.get("employee")
+        status_val = kwargs.get("status", "active")
+        if employee and status_val == "active":
+            model_class.objects.filter(employee=employee, status="active").update(status="expired")
+        return super()._create(model_class, *args, **kwargs)
 
 
 class AttendanceFactory(factory.django.DjangoModelFactory):
@@ -104,7 +118,6 @@ class SalarySlipFactory(factory.django.DjangoModelFactory):
     allowance_amount = Decimal("0.00")
     reward_amount_total = Decimal("0.00")
     discipline_deduction_total = Decimal("0.00")
-    union_fee_2pct = Decimal("0.00")
     gross_pay = Decimal("0.00")
     deductions = Decimal("0.00")
     net_pay = Decimal("0.00")

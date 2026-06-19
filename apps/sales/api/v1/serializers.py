@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.sales.models import SalesInvoice, SalesInvoiceLine, SalesOrder, SalesOrderLine
+from apps.sales.models import SalesOrder, SalesOrderLine
 
 
 # --- ORDER SERIALIZERS ---
@@ -10,7 +10,16 @@ class SalesOrderLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrderLine
-        fields = ["id", "item", "item_name", "item_code", "quantity", "unit_price", "line_total"]
+        fields = [
+            "id",
+            "item",
+            "item_name",
+            "item_code",
+            "quantity",
+            "unit_price",
+            "line_total",
+            "receipt_fulfillment_rate",
+        ]
         read_only_fields = ["id", "line_total"]
 
 
@@ -29,13 +38,24 @@ class SalesOrderSerializer(serializers.ModelSerializer):
             "status",
             "total_amount",
             "advance_paid_amount",
+            "receipt_fulfillment_rate",
+            "payment_fulfillment_rate",
             "created_at",
             "updated_at",
             "lines",
             "invoices",
             "stock_entries",
         ]
-        read_only_fields = ["id", "status", "total_amount", "advance_paid_amount", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "total_amount",
+            "advance_paid_amount",
+            "receipt_fulfillment_rate",
+            "payment_fulfillment_rate",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_invoices(self, obj):
         return [
@@ -71,48 +91,3 @@ class SalesOrderInputSerializer(serializers.Serializer):
 
 class SalesOrderDeliverInputSerializer(serializers.Serializer):
     source_warehouse_id = serializers.UUIDField()
-
-
-# --- INVOICE SERIALIZERS ---
-class SalesInvoiceLineSerializer(serializers.ModelSerializer):
-    item_name = serializers.CharField(source="item.item_name", read_only=True)
-    item_code = serializers.CharField(source="item.item_code", read_only=True)
-
-    class Meta:
-        model = SalesInvoiceLine
-        fields = ["id", "item", "item_name", "item_code", "quantity", "unit_price", "vat_tax", "line_total"]
-        read_only_fields = ["id", "line_total"]
-
-
-class SalesInvoiceSerializer(serializers.ModelSerializer):
-    customer_name = serializers.CharField(source="customer.customer_name", read_only=True)
-    lines = SalesInvoiceLineSerializer(many=True, read_only=True)
-    stock_entry_name = serializers.CharField(source="stock_entry.name", read_only=True)
-
-    class Meta:
-        model = SalesInvoice
-        fields = [
-            "id",
-            "order",
-            "stock_entry",
-            "stock_entry_name",
-            "customer",
-            "customer_name",
-            "status",
-            "total_amount",
-            "paid_amount",
-            "created_at",
-            "updated_at",
-            "lines",
-        ]
-        read_only_fields = [
-            "id",
-            "order",
-            "stock_entry",
-            "customer",
-            "status",
-            "total_amount",
-            "paid_amount",
-            "created_at",
-            "updated_at",
-        ]

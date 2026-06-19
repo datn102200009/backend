@@ -62,9 +62,7 @@ class User(BaseModel):
     """
 
     username = models.CharField(max_length=150, unique=True)
-    email = models.EmailField(unique=True)
     password_hash = models.CharField(max_length=255)
-    role = models.ForeignKey(Role, on_delete=models.PROTECT, null=True, blank=True)
     employee_id = models.CharField(max_length=50, null=True, blank=True, unique=True)
     last_login = models.DateTimeField(null=True, blank=True)
 
@@ -123,3 +121,21 @@ class Notification(BaseModel):
 
     def __str__(self):
         return f"{self.title} - {self.user.username}"
+
+
+class UserPermission(BaseModel):
+    """
+    Junction table for User and Permission relationship (direct user-level permissions).
+    """
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="direct_permissions")
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="users")
+
+    class Meta:
+        db_table = "user_permission"
+        unique_together = ("user", "permission")
+        verbose_name = "User Permission"
+        verbose_name_plural = "User Permissions"
+
+    def __str__(self):
+        return f"{self.user.username} - {self.permission.code}"

@@ -12,7 +12,7 @@ from apps.master_data.services import item_create, item_delete, item_update
 @pytest.mark.django_db
 class TestItemServices:
     def test_item_create_success(self):
-        item = item_create(item_code="NEW-001", item_name="New Item")
+        item = item_create(item_code="NEW-001", item_name="New Item", minimum_threshold=10.0)
         assert item.id is not None
         assert item.item_code == "NEW-001"
         assert Item.objects.filter(item_code="NEW-001").exists()
@@ -20,7 +20,7 @@ class TestItemServices:
     def test_item_create_duplicate_code(self):
         ItemFactory(item_code="DUP-001")
         with pytest.raises(ValidationError) as exc:
-            item_create(item_code="DUP-001", item_name="Duplicate")
+            item_create(item_code="DUP-001", item_name="Duplicate", minimum_threshold=10.0)
         assert "item_code" in exc.value.message_dict
 
     def test_item_update_success(self):
@@ -59,4 +59,4 @@ class TestItemServices:
     def test_item_create_race_condition(self, mock_save):
         mock_save.side_effect = IntegrityError("Unique constraint failed")
         with pytest.raises(IntegrityError):
-            item_create(item_code="RACE-001", item_name="Race")
+            item_create(item_code="RACE-001", item_name="Race", minimum_threshold=10.0)

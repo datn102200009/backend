@@ -15,8 +15,11 @@ from apps.manufacturing.api.v1.views import (
     work_order_cancel_view,
     work_order_complete_view,
     work_order_create_view,
+    work_order_declare_preview_view,
     work_order_declare_production_view,
+    work_order_delete_pending_view,
     work_order_detail_view,
+    work_order_fixed_assets_update_view,
     work_order_list_view,
 )
 
@@ -41,6 +44,11 @@ urlpatterns = [
         name="work-order-declare",
     ),
     path(
+        "work-order/<uuid:work_order_id>/declare-preview/",
+        work_order_declare_preview_view,
+        name="work-order-declare-preview",
+    ),
+    path(
         "work-order/<uuid:work_order_id>/complete/",
         work_order_complete_view,
         name="work-order-complete",
@@ -50,10 +58,20 @@ urlpatterns = [
         work_order_cancel_view,
         name="work-order-cancel",
     ),
+    path(
+        "work-order/<uuid:work_order_id>/pending-delete/",
+        work_order_delete_pending_view,
+        name="work-order-pending-delete",
+    ),
     path("work-order/list/", work_order_list_view, name="work-order-list"),
     path(
         "work-order/<uuid:work_order_id>/",
         work_order_detail_view,
         name="work-order-detail",
+    ),
+    path(
+        "work-order/<uuid:work_order_id>/fixed-assets/",
+        work_order_fixed_assets_update_view,
+        name="work-order-fixed-assets-update",
     ),
 ]

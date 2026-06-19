@@ -23,8 +23,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
     source_warehouse_name = serializers.CharField(source="source_warehouse.name", read_only=True)
     target_warehouse_id = serializers.UUIDField(read_only=True, allow_null=True)
     target_warehouse_name = serializers.CharField(source="target_warehouse.name", read_only=True)
-    qc_status = serializers.SerializerMethodField()
-    latest_cert = serializers.SerializerMethodField()
 
     class Meta:
         model = StockEntryDetail
@@ -39,8 +37,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "source_warehouse_name",
             "target_warehouse_id",
             "target_warehouse_name",
-            "qc_status",
-            "latest_cert",
         ]
         read_only_fields = [
             "id",
@@ -53,36 +49,6 @@ class StockEntryDetailSerializer(serializers.ModelSerializer):
             "target_warehouse_id",
             "target_warehouse_name",
         ]
-
-    def get_qc_status(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return cert.result
-        return "PENDING"
-
-    def get_latest_cert(self, obj):
-        from apps.finance.models import TechnicalCertification
-
-        cert = (
-            TechnicalCertification.objects.filter(item=obj.item, stock_entry=obj.parent)
-            .order_by("-issue_date", "-id")
-            .first()
-        )
-        if cert:
-            return {
-                "id": str(cert.id),
-                "cert_id": cert.cert_id,
-                "result": cert.result,
-                "remarks": cert.remarks,
-                "issue_date": cert.issue_date.isoformat() if cert.issue_date else None,
-            }
-        return None
 
 
 class StockEntryDetailCreateSerializer(serializers.Serializer):
@@ -105,6 +71,7 @@ class StockEntrySerializer(serializers.ModelSerializer):
     details = StockEntryDetailSerializer(many=True, read_only=True)
     created_at_formatted = serializers.DateTimeField(source="created_at", format="%Y-%m-%d %H:%M:%S", read_only=True)
     posting_date_formatted = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    posted_at_formatted = serializers.DateTimeField(source="posted_at", format="%Y-%m-%d %H:%M:%S", read_only=True)
     purchase_order_id = serializers.UUIDField(read_only=True, allow_null=True)
     sales_order_id = serializers.UUIDField(read_only=True, allow_null=True)
     vendor_name = serializers.CharField(source="purchase_order.vendor.supplier_name", read_only=True, allow_null=True)
@@ -120,6 +87,8 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "purpose",
             "posting_date",
             "posting_date_formatted",
+            "posted_at",
+            "posted_at_formatted",
             "remarks",
             "status",
             "purchase_order_id",
@@ -139,6 +108,7 @@ class StockEntrySerializer(serializers.ModelSerializer):
             "created_at_formatted",
             "updated_at",
             "posting_date_formatted",
+            "posted_at_formatted",
         ]
 
 
@@ -146,7 +116,6 @@ class StockInCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu nhập kho."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     remarks = serializers.CharField(required=False, allow_blank=True)
     details = StockEntryDetailCreateSerializer(many=True)
 
@@ -165,7 +134,6 @@ class StockIssueCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu xuất kho."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     source_warehouse_id = serializers.UUIDField()
     remarks = serializers.CharField(required=False, allow_blank=True)
     details = StockEntryDetailCreateSerializer(many=True)
@@ -185,7 +153,6 @@ class StockTransferCreateSerializer(serializers.Serializer):
     """Serializer để tạo phiếu chuyển kho nội bộ."""
 
     name = serializers.CharField(max_length=255)
-    posting_date = serializers.DateTimeField()
     source_warehouse_id = serializers.UUIDField()
     target_warehouse_id = serializers.UUIDField()
     remarks = serializers.CharField(required=False, allow_blank=True)

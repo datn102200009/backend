@@ -55,7 +55,6 @@ class TestStockIssueCreate:
         stock_entry = stock_issue_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             source_warehouse_id=str(data["warehouse"].id),
             details=[
                 {
@@ -90,7 +89,6 @@ class TestStockIssueCreate:
             stock_issue_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(data["warehouse"].id),
                 details=[
                     {
@@ -109,7 +107,6 @@ class TestStockIssueCreate:
             stock_issue_create(
                 user=user,
                 name="SI-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(data["warehouse"].id),
                 details=[
                     {
