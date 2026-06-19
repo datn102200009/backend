@@ -10,6 +10,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import RolePermission
+from apps.inventory.models import StockEntry
 from apps.inventory.tests.factories import (
     BOMFactory,
     BOMItemFactory,
@@ -42,7 +43,6 @@ class TestStockInAPI:
 
         payload = {
             "name": "SI-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "remarks": "Nhập kho",
             "details": [
                 {
@@ -69,7 +69,6 @@ class TestStockInAPI:
 
         payload = {
             "name": "SI-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "details": [
                 {
                     "item_id": str(data["item"].id),
@@ -95,7 +94,6 @@ class TestStockInAPI:
 
         payload = {
             "name": "SI-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "details": [
                 {
                     "item_id": str(data["item"].id),
@@ -118,7 +116,6 @@ class TestStockInAPI:
 
         payload = {
             "name": "SI-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "details": [],  # Không có chi tiết
         }
 
@@ -162,7 +159,6 @@ class TestStockIssueAPI:
 
         payload = {
             "name": "SO-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "source_warehouse_id": str(warehouse.id),
             "details": [
                 {
@@ -198,7 +194,6 @@ class TestStockTransferAPI:
 
         payload = {
             "name": "ST-2024-001",
-            "posting_date": datetime.now().isoformat(),
             "source_warehouse_id": str(warehouse1.id),
             "target_warehouse_id": str(warehouse2.id),
             "details": [
@@ -329,3 +324,43 @@ class TestStockLedgerAPI:
         assert "results" in response.data
         assert response.data["count"] == 1
         assert len(response.data["results"]) == 1
+
+
+@pytest.mark.django_db
+class TestStockEntryDeleteAPI:
+    """Test suite cho API hủy (xóa) phiếu kho."""
+
+    def test_delete_draft_success(self, authenticated_api_client):
+        """Test xóa cứng phiếu kho draft thành công."""
+        entry = StockEntryFactory(purpose="receipt", status="draft")
+
+        response = authenticated_api_client.post(
+            f"/api/v1/inventory/stock-entry/{entry.id}/delete/",
+        )
+
+        assert response.status_code == 204
+        assert not StockEntry.objects.filter(id=entry.id).exists()
+
+    def test_delete_posted_failed(self, authenticated_api_client):
+        """Test không cho phép xóa phiếu đã duyệt."""
+        entry = StockEntryFactory(purpose="receipt", status="posted")
+
+        response = authenticated_api_client.post(
+            f"/api/v1/inventory/stock-entry/{entry.id}/delete/",
+        )
+
+        assert response.status_code == 400
+        assert "Chỉ có thể hủy" in response.data["error"]
+        assert StockEntry.objects.filter(id=entry.id).exists()
+
+    def test_delete_no_permission(self, api_client, regular_user):
+        """Test lỗi phân quyền khi xóa."""
+        entry = StockEntryFactory(purpose="receipt", status="draft")
+        api_client.force_authenticate(user=regular_user)
+
+        response = api_client.post(
+            f"/api/v1/inventory/stock-entry/{entry.id}/delete/",
+        )
+
+        assert response.status_code == 403
+        assert StockEntry.objects.filter(id=entry.id).exists()

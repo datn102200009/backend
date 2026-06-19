@@ -60,7 +60,6 @@ class TestCompleteStockInFlow:
         stock_entry = stock_in_create(
             user=user,
             name="SI-2024-001",
-            posting_date=datetime.now(),
             details=[
                 {
                     "item_id": str(items[0].id),
@@ -138,7 +137,6 @@ class TestCompleteStockIssueFlow:
         stock_entry = stock_issue_create(
             user=user,
             name="SO-2024-001",
-            posting_date=datetime.now(),
             source_warehouse_id=str(warehouse.id),
             details=[
                 {
@@ -199,7 +197,6 @@ class TestCompleteStockTransferFlow:
         stock_entry = stock_transfer_create(
             user=user,
             name="ST-2024-001",
-            posting_date=datetime.now(),
             source_warehouse_id=str(warehouse1.id),
             target_warehouse_id=str(warehouse2.id),
             details=[
@@ -261,7 +258,6 @@ class TestCompleteAPIFlow:
         # STEP 1: Tạo phiếu qua API
         payload = {
             "name": "SI-API-001",
-            "posting_date": datetime.now().isoformat(),
             "remarks": "API test",
             "details": [
                 {
@@ -328,7 +324,6 @@ class TestComplexScenarios:
             entry = stock_in_create(
                 user=user,
                 name=f"SI-{i+1}",
-                posting_date=datetime.now(),
                 details=[
                     {
                         "item_id": str(item.id),
@@ -354,7 +349,6 @@ class TestComplexScenarios:
         issue_entry = stock_issue_create(
             user=user,
             name="SO-1",
-            posting_date=datetime.now(),
             source_warehouse_id=str(warehouse1.id),
             details=[
                 {
@@ -378,7 +372,6 @@ class TestComplexScenarios:
         transfer_entry = stock_transfer_create(
             user=user,
             name="ST-1",
-            posting_date=datetime.now(),
             source_warehouse_id=str(warehouse1.id),
             target_warehouse_id=str(warehouse2.id),
             details=[

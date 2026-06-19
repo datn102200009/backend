@@ -5,14 +5,18 @@ from rest_framework.views import APIView
 
 from apps.finance.services import (
     payroll_approve_slip,
+    payroll_bulk_approve,
     payroll_bulk_approve_and_pay,
+    payroll_bulk_pay,
     payroll_pay_slip,
     payroll_reject_slip,
 )
 from apps.hrm.api.v1.serializers import SalarySlipOutputSerializer
 
 from .serializers import (
+    SalarySlipBulkApproveInputSerializer,
     SalarySlipBulkApprovePayInputSerializer,
+    SalarySlipBulkPayInputSerializer,
     SalarySlipPaymentInputSerializer,
     SalarySlipRejectInputSerializer,
 )
@@ -63,6 +67,40 @@ class SalarySlipBulkApprovePayAPIView(APIView):
         payment_method = serializer.validated_data.get("payment_method", "bank_transfer")
 
         slips = payroll_bulk_approve_and_pay(
+            salary_period=salary_period,
+            payment_method=payment_method,
+            creator=request.user,
+        )
+        out_serializer = SalarySlipOutputSerializer(slips, many=True)
+        return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+class SalarySlipBulkApproveAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = SalarySlipBulkApproveInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        salary_period = serializer.validated_data["salary_period"]
+
+        slips = payroll_bulk_approve(
+            salary_period=salary_period,
+            creator=request.user,
+        )
+        out_serializer = SalarySlipOutputSerializer(slips, many=True)
+        return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+class SalarySlipBulkPayAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = SalarySlipBulkPayInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        salary_period = serializer.validated_data["salary_period"]
+        payment_method = serializer.validated_data.get("payment_method", "bank_transfer")
+
+        slips = payroll_bulk_pay(
             salary_period=salary_period,
             payment_method=payment_method,
             creator=request.user,

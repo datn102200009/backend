@@ -27,7 +27,6 @@ def stock_in_create(
     *,
     user: User,
     name: str,
-    posting_date: str,
     details: List[Dict[str, Any]],
     remarks: Optional[str] = None,
 ) -> StockEntry:
@@ -37,7 +36,6 @@ def stock_in_create(
     Args:
         user: User thực hiện hành động
         name: Tên phiếu nhập
-        posting_date: Ngày hạch toán
         details: Danh sách chi tiết [{"item_id": "...", "quantity": 10, "target_warehouse_id": "..."}]
         remarks: Ghi chú
 
@@ -63,7 +61,7 @@ def stock_in_create(
     stock_entry = StockEntry.objects.create(
         name=name,
         purpose="receipt",
-        posting_date=posting_date,
+        posting_date=None,
         remarks=remarks,
         status="draft",
     )
@@ -123,6 +121,12 @@ def stock_in_approve(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
 
+    from django.utils import timezone
+
+    now = timezone.now()
+    stock_entry.posting_date = now
+    stock_entry.posted_at = now
+
     # Khóa các dòng sản phẩm (Item) liên quan theo thứ tự ID tăng dần để ngăn race condition và deadlock
     detail_item_ids = list(stock_entry.details.values_list("item_id", flat=True))
     Item.objects.select_for_update().filter(id__in=detail_item_ids).order_by("id")
@@ -143,7 +147,7 @@ def stock_in_approve(
 
     # Cập nhật trạng thái
     stock_entry.status = "posted"
-    stock_entry.save()
+    stock_entry.save(update_fields=["posting_date", "posted_at", "status", "updated_at"])
 
     # Kích hoạt tính toán lại trạng thái Đơn mua hàng liên kết (nếu có)
     if stock_entry.purchase_order:
@@ -171,7 +175,6 @@ def stock_issue_create(
     *,
     user: User,
     name: str,
-    posting_date: str,
     source_warehouse_id: str,
     details: List[Dict[str, Any]],
     remarks: Optional[str] = None,
@@ -182,7 +185,6 @@ def stock_issue_create(
     Args:
         user: User thực hiện hành động
         name: Tên phiếu xuất
-        posting_date: Ngày hạch toán
         source_warehouse_id: ID của kho nguồn
         details: Danh sách chi tiết [{"item_id": "...", "quantity": 10}]
         remarks: Ghi chú
@@ -243,7 +245,7 @@ def stock_issue_create(
     stock_entry = StockEntry.objects.create(
         name=name,
         purpose="issue",
-        posting_date=posting_date,
+        posting_date=None,
         remarks=remarks,
         status="draft",
     )
@@ -296,6 +298,12 @@ def stock_issue_approve(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
 
+    from django.utils import timezone
+
+    now = timezone.now()
+    stock_entry.posting_date = now
+    stock_entry.posted_at = now
+
     # Ghi sổ cái cho từng chi tiết (âm tính vì là xuất kho)
     # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
     details = list(stock_entry.details.select_related("item", "source_warehouse").all())
@@ -327,7 +335,7 @@ def stock_issue_approve(
 
     # Cập nhật trạng thái
     stock_entry.status = "posted"
-    stock_entry.save()
+    stock_entry.save(update_fields=["posting_date", "posted_at", "status", "updated_at"])
 
     # Kích hoạt tính toán lại trạng thái Đơn bán hàng liên kết (nếu có)
     if stock_entry.sales_order:
@@ -355,7 +363,6 @@ def stock_transfer_create(
     *,
     user: User,
     name: str,
-    posting_date: str,
     source_warehouse_id: str,
     target_warehouse_id: str,
     details: List[Dict[str, Any]],
@@ -367,7 +374,6 @@ def stock_transfer_create(
     Args:
         user: User thực hiện hành động
         name: Tên phiếu chuyển
-        posting_date: Ngày hạch toán
         source_warehouse_id: ID của kho nguồn
         target_warehouse_id: ID của kho đích
         details: Danh sách chi tiết [{"item_id": "...", "quantity": 10}]
@@ -419,7 +425,7 @@ def stock_transfer_create(
     stock_entry = StockEntry.objects.create(
         name=name,
         purpose="transfer",
-        posting_date=posting_date,
+        posting_date=None,
         remarks=remarks,
         status="draft",
     )
@@ -482,6 +488,12 @@ def stock_transfer_approve(
             f"Chỉ có thể phê duyệt phiếu ở trạng thái Draft. Phiếu hiện tại: {stock_entry.status}"
         )
 
+    from django.utils import timezone
+
+    now = timezone.now()
+    stock_entry.posting_date = now
+    stock_entry.posted_at = now
+
     # Sắp xếp các chi tiết theo item_id trước khi thực hiện khóa hàng loạt để tránh deadlock
     details = list(stock_entry.details.select_related("item", "source_warehouse", "target_warehouse").all())
     details.sort(key=lambda d: d.item_id)
@@ -526,7 +538,7 @@ def stock_transfer_approve(
 
     # Cập nhật trạng thái
     stock_entry.status = "posted"
-    stock_entry.save()
+    stock_entry.save(update_fields=["posting_date", "posted_at", "status", "updated_at"])
 
     # Ghi log
     create_system_log(
@@ -813,3 +825,55 @@ def stock_entry_reverse(
     )
 
     return reverse_entry
+
+
+@transaction.atomic
+def stock_entry_delete(
+    *,
+    user: User,
+    stock_entry_id: str,
+) -> None:
+    """
+    Xóa cứng (hard-delete) một phiếu kho ở trạng thái Draft.
+    Cascade sẽ tự động xóa các StockEntryDetail liên quan.
+    """
+    if not user or not user.is_authenticated:
+        raise ValidationException("User không hợp lệ hoặc chưa được xác thực")
+
+    stock_entry = StockEntry.objects.select_for_update().filter(id=stock_entry_id).first()
+    if not stock_entry:
+        raise NotFoundException(f"Stock Entry với ID {stock_entry_id} không tồn tại")
+
+    if stock_entry.status != "draft":
+        raise ValidationException(
+            f"Chỉ có thể hủy (xóa) phiếu kho ở trạng thái Draft. " f"Phiếu hiện tại: {stock_entry.status}"
+        )
+
+    # Xác định quyền dựa theo purpose
+    purpose = stock_entry.purpose
+    if purpose == "receipt":
+        permission = "inventory.stock_in"
+    elif purpose == "issue":
+        permission = "inventory.stock_issue"
+    elif purpose == "transfer":
+        permission = "inventory.stock_transfer"
+    else:
+        permission = "inventory.stock_in"
+
+    PermissionChecker.check_permission(user, permission)
+
+    # Ghi log trước khi xóa
+    create_system_log(
+        user=user,
+        action="delete",
+        table_name="stock_entry",
+        record_id=str(stock_entry.id),
+        new_value={
+            "name": stock_entry.name,
+            "purpose": stock_entry.purpose,
+            "status": stock_entry.status,
+            "is_hard_deleted": True,
+        },
+    )
+
+    stock_entry.delete()

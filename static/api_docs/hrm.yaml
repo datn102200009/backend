@@ -1393,7 +1393,16 @@ paths:
                     items:
                       type: string
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Lỗi nghiệp vụ. Có thể do:
+            - Không có phiếu lương nào ở trạng thái `calculated`
+            - Kỳ lương thuộc tháng hiện tại (chỉ được submit các kỳ từ tháng trước trở về trước)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Không thể gửi duyệt hàng loạt phiếu lương kỳ 2026-06 (tháng hiện tại). Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
@@ -1418,7 +1427,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/SalarySlip'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: |
+            Lỗi nghiệp vụ. Có thể do:
+            - Phiếu lương không ở trạng thái `calculated`
+            - Kỳ lương thuộc tháng hiện tại (chỉ được submit các kỳ từ tháng trước trở về trước)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Không thể gửi duyệt phiếu lương của kỳ 2026-06 (tháng hiện tại). Chỉ được phép thao tác với các kỳ từ tháng trước trở về trước."
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':

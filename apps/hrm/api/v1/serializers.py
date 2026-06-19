@@ -338,12 +338,6 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
         choices=[("active", "Active"), ("inactive", "Inactive")], default="active"
     )
 
-    # User accounts fields
-    create_user = serializers.BooleanField(default=False)
-    username = serializers.CharField(max_length=150, required=False)
-    password = serializers.CharField(max_length=128, required=False)
-    role_id = serializers.UUIDField(required=False, allow_null=True)
-
     def validate_employee_id(self, value):
         if value:
             import re
@@ -351,14 +345,6 @@ class EmployeeCreateInputSerializer(serializers.Serializer):
             if not re.match(r"^NV\d{4,}$", value):
                 raise serializers.ValidationError("Mã nhân viên phải có format NV#### (ví dụ: NV0001)")
         return value
-
-    def validate(self, attrs):
-        if attrs.get("create_user"):
-            if not attrs.get("username") or not attrs.get("password"):
-                raise serializers.ValidationError(
-                    {"username": "Username và password là bắt buộc khi create_user là True."}
-                )
-        return attrs
 
 
 class EmployeeWithContractCreateInputSerializer(EmployeeCreateInputSerializer):

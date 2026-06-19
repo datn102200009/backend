@@ -2,7 +2,9 @@ from django.urls import path
 
 from .salary_slip_views import (
     SalarySlipApproveAPIView,
+    SalarySlipBulkApproveAPIView,
     SalarySlipBulkApprovePayAPIView,
+    SalarySlipBulkPayAPIView,
     SalarySlipPayAPIView,
     SalarySlipRejectAPIView,
 )
@@ -50,6 +52,8 @@ urlpatterns = [
     path(
         "salary-slips/bulk-approve-pay/", SalarySlipBulkApprovePayAPIView.as_view(), name="salary-slip-bulk-approve-pay"
     ),
+    path("salary-slips/bulk-approve/", SalarySlipBulkApproveAPIView.as_view(), name="salary-slip-bulk-approve"),
+    path("salary-slips/bulk-pay/", SalarySlipBulkPayAPIView.as_view(), name="salary-slip-bulk-pay"),
     path("salary-slips/<uuid:id>/approve/", SalarySlipApproveAPIView.as_view(), name="salary-slip-approve"),
     path("salary-slips/<uuid:id>/reject/", SalarySlipRejectAPIView.as_view(), name="salary-slip-reject"),
     path("salary-slips/<uuid:id>/pay/", SalarySlipPayAPIView.as_view(), name="salary-slip-pay"),

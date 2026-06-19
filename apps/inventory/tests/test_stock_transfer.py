@@ -50,7 +50,6 @@ class TestStockTransferCreate:
         stock_entry = stock_transfer_create(
             user=user,
             name="ST-2024-001",
-            posting_date=datetime.now(),
             source_warehouse_id=str(data["warehouse1"].id),
             target_warehouse_id=str(data["warehouse2"].id),
             details=[
@@ -77,7 +76,6 @@ class TestStockTransferCreate:
             stock_transfer_create(
                 user=user,
                 name="ST-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(data["warehouse1"].id),
                 target_warehouse_id=str(data["warehouse2"].id),
                 details=[
@@ -97,7 +95,6 @@ class TestStockTransferCreate:
             stock_transfer_create(
                 user=user,
                 name="ST-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(data["warehouse1"].id),
                 target_warehouse_id=str(data["warehouse1"].id),
                 details=[
@@ -124,7 +121,6 @@ class TestStockTransferCreate:
             stock_transfer_create(
                 user=user,
                 name="ST-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(warehouse1.id),
                 target_warehouse_id=str(warehouse2.id),
                 details=[
@@ -146,7 +142,6 @@ class TestStockTransferCreate:
             stock_transfer_create(
                 user=user,
                 name="ST-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id=str(data["warehouse1"].id),
                 target_warehouse_id=str(data["warehouse2"].id),
                 details=[
@@ -168,7 +163,6 @@ class TestStockTransferCreate:
             stock_transfer_create(
                 user=user,
                 name="ST-2024-001",
-                posting_date=datetime.now(),
                 source_warehouse_id="00000000-0000-0000-0000-000000000000",
                 target_warehouse_id=str(data["warehouse2"].id),
                 details=[

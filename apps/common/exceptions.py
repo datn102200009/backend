@@ -11,6 +11,7 @@ from rest_framework.views import exception_handler
 from apps.common.xlib.exceptions import (
     BaseAppException,
     ConflictException,
+    InvalidCredentialsException,
     NotFoundException,
     PermissionException,
     ValidationException,
@@ -48,6 +49,11 @@ def custom_exception_handler(exc, context):
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_409_CONFLICT,
+            )
+        elif isinstance(exc, InvalidCredentialsException):
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
         else:
             return Response(

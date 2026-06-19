@@ -223,12 +223,40 @@ components:
                 type: string
               depreciation_method:
                 type: string
+        production_item_code:
+          type: string
+        production_item_name:
+          type: string
+        production_uom:
+          type: string
+          nullable: true
+        materials:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkOrderMaterial'
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    WorkOrderMaterial:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        item_code:
+          type: string
+        item_name:
+          type: string
+        uom:
+          type: string
+          nullable: true
+        required_qty:
+          type: number
+        consumed_qty:
+          type: number
     WorkOrderInput:
       type: object
       required:
@@ -313,6 +341,9 @@ components:
           type: string
         item_name:
           type: string
+        uom:
+          type: string
+          nullable: true
         required_qty:
           type: number
         available_qty:
@@ -334,6 +365,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkOrder'
+    MaterialPreviewDeclareItem:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        item_code:
+          type: string
+        item_name:
+          type: string
+        uom:
+          type: string
+          nullable: true
+        required_qty:
+          type: number
+        available_qty:
+          type: number
+        missing_qty:
+          type: number
+        is_sufficient:
+          type: boolean
+    WorkOrderDeclarePreviewRequest:
+      type: object
+      required:
+        - produced_qty
+      properties:
+        produced_qty:
+          type: number
+          minimum: 0.01
 security:
   - bearerAuth: []
 paths:
@@ -578,6 +638,43 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /manufacturing/work-order/{work_order_id}/declare-preview/:
+    post:
+      summary: Xem trước nguyên liệu cần tiêu hao khi nhập liệu sản xuất
+      parameters:
+        - in: path
+          name: work_order_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkOrderDeclarePreviewRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MaterialPreviewDeclareItem'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
   /manufacturing/work-order/{work_order_id}/complete/:
     post:
       summary: Hoàn thành lệnh sản xuất
@@ -621,6 +718,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkOrder'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /manufacturing/work-order/{work_order_id}/pending-delete/:
+    delete:
+      summary: Xóa lệnh sản xuất Chờ phê duyệt (nháp)
+      parameters:
+        - in: path
+          name: work_order_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted successfully
         '400':
           $ref: '#/components/responses/BadRequestError'
         '404':

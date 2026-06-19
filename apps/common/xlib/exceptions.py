@@ -31,3 +31,9 @@ class ConflictException(BaseAppException):
     """Raised when there is a data conflict."""
 
     pass
+
+
+class InvalidCredentialsException(BaseAppException):
+    """Raised when authentication fails."""
+
+    pass

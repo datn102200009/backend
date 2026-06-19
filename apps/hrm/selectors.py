@@ -139,3 +139,16 @@ def count_active_contracts(employee, exclude_contract_id: Optional[str] = None) 
     if exclude_contract_id:
         qs = qs.exclude(id=exclude_contract_id)
     return qs.count()
+
+
+def is_current_salary_period(salary_period: str, reference_date: Optional[object] = None) -> bool:
+    """
+    Kiểm tra kỳ lương (YYYY-MM) có phải tháng hiện tại hay không.
+    Mặc định tham chiếu theo timezone.now().date() của server.
+    """
+    from datetime import date
+
+    from django.utils import timezone
+
+    ref = reference_date or timezone.now().date()
+    return salary_period == f"{ref.year:04d}-{ref.month:02d}"

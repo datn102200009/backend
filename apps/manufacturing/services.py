@@ -86,6 +86,12 @@ def bom_create(
     if str(item.id) in item_ids:
         raise ValidationException("Linh kiện không được trùng với sản phẩm thành phẩm")
 
+    # Kiểm tra linh kiện trùng lặp trong danh sách
+    if len(item_ids) != len(set(item_ids)):
+        raise ValidationException(
+            "Danh sách linh kiện không được chứa linh kiện trùng lặp. Vui lòng gộp số lượng trước khi lưu."
+        )
+
     # Tạo BOM Header
     bom = BOM.objects.create(
         name=name,
@@ -197,6 +203,12 @@ def bom_update(
         # Kiểm tra không có linh kiện trùng với thành phẩm
         if str(bom.item_id) in item_ids:
             raise ValidationException("Linh kiện không được trùng với sản phẩm thành phẩm")
+
+        # Kiểm tra linh kiện trùng lặp trong danh sách
+        if len(item_ids) != len(set(item_ids)):
+            raise ValidationException(
+                "Danh sách linh kiện không được chứa linh kiện trùng lặp. Vui lòng gộp số lượng trước khi lưu."
+            )
 
         # Xóa items cũ → chèn items mới
         bom.items.all().delete()
@@ -408,6 +420,9 @@ def work_order_create(
     if quantity <= 0:
         raise ValidationException("Số lượng sản xuất phải lớn hơn 0")
 
+    if planned_end_date and planned_end_date < planned_start_date:
+        raise ValidationException("Ngày kết thúc dự kiến phải sau hoặc bằng ngày bắt đầu dự kiến.")
+
     source = Warehouse.objects.filter(id=source_warehouse_id).first()
     target = Warehouse.objects.filter(id=target_warehouse_id).first()
     production = Warehouse.objects.filter(id=production_warehouse_id).first()
@@ -618,7 +633,60 @@ def work_order_declare_production(
         raise ValidationException("Số lượng sản phẩm hoàn thành phải lớn hơn 0")
 
     if work_order.produced_qty + produced_qty > work_order.quantity:
-        raise ValidationException("Số lượng nhập liệu vượt quá yêu cầu của lệnh sản xuất")
+        remaining = work_order.quantity - work_order.produced_qty
+        raise ValidationException(
+            f"Số lượng nhập liệu vượt quá số lượng còn lại cần sản xuất. "
+            f"Còn lại: {remaining}, đã nhập: {produced_qty}."
+        )
+
+    bom_items = list(work_order.bom.items.select_related("item").all())
+    if not bom_items:
+        raise ValidationException(f"Định mức '{work_order.bom.name}' không có linh kiện nào.")
+
+    item_ids = sorted(list(set(str(bi.item_id) for bi in bom_items)))
+
+    from django.db import connection
+    from django.db.models import Sum
+
+    # 1. Khóa các dòng StockLedger của các item trong production_warehouse
+    if connection.vendor == "postgresql":
+        locked_rows = list(
+            StockLedger.objects.select_for_update(nowait=False)
+            .filter(item_id__in=item_ids, warehouse=work_order.production_warehouse)
+            .order_by("item_id", "id")
+        )
+    else:
+        locked_rows = list(
+            StockLedger.objects.select_for_update()
+            .filter(item_id__in=item_ids, warehouse=work_order.production_warehouse)
+            .order_by("item_id", "id")
+        )
+
+    # 2. Tính tồn kho khả dụng
+    stock_balances = (
+        StockLedger.objects.filter(item_id__in=item_ids, warehouse=work_order.production_warehouse)
+        .values("item_id")
+        .annotate(balance=Sum("actual_quantity"))
+    )
+    balance_map = {str(s["item_id"]): s["balance"] or Decimal("0.00") for s in stock_balances}
+
+    # 3. Validate TOÀN BỘ trước khi ghi BẤT KỲ dòng nào
+    errors = []
+    for bom_item in bom_items:
+        required_qty = bom_item.quantity * (Decimal(str(produced_qty)) / work_order.bom.quantity)
+        available = balance_map.get(str(bom_item.item_id), Decimal("0.00"))
+        if available < required_qty:
+            errors.append(
+                f"- {bom_item.item.item_name} ({bom_item.item.item_code}): "
+                f"cần {required_qty}, tồn kho Bán Thành Phẩm chỉ có {available}"
+            )
+
+    if errors:
+        error_msg = (
+            "Không đủ nguyên liệu tại Kho Bán Thành Phẩm "
+            f"({work_order.production_warehouse.name}) để sản xuất {produced_qty} sản phẩm:\n" + "\n".join(errors)
+        )
+        raise ValidationException(error_msg)
 
     stock_entry_name = f"MFG-{work_order.name}-{int(timezone.now().timestamp())}"
     stock_entry = StockEntry.objects.create(
@@ -633,8 +701,8 @@ def work_order_declare_production(
     details = []
     ledgers = []
 
-    for bom_item in work_order.bom.items.all():
-        consumed_qty = bom_item.quantity * (produced_qty / work_order.bom.quantity)
+    for bom_item in bom_items:
+        consumed_qty = bom_item.quantity * (Decimal(str(produced_qty)) / work_order.bom.quantity)
         details.append(
             StockEntryDetail(
                 parent=stock_entry,
@@ -814,5 +882,26 @@ def work_order_cancel(
         record_id=str(work_order.id),
         new_value={"status": "cancelled"},
     )
-
     return work_order
+
+
+@transaction.atomic
+def work_order_delete_pending_approval(*, user: User, work_order_id: str) -> None:
+    PermissionChecker.check_permission(user, "manufacturing.work_order_cancel")
+    work_order = WorkOrder.objects.select_for_update().filter(id=work_order_id).first()
+    if not work_order:
+        raise NotFoundException("Lệnh sản xuất không tồn tại")
+    if work_order.status != "pending_approval":
+        raise ValidationException(
+            "Chỉ có thể xóa lệnh đang ở trạng thái 'Chờ phê duyệt'. "
+            f"Lệnh hiện tại đang ở trạng thái '{work_order.status}'."
+        )
+    name = work_order.name
+    work_order.delete()
+    create_system_log(
+        user=user,
+        action="delete",
+        table_name="work_order",
+        record_id=work_order_id,
+        old_value={"name": name},
+    )

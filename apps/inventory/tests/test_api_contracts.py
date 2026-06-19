@@ -44,7 +44,6 @@ class TestStockInAPIContract:
             "/api/v1/inventory/stock-in/create/",
             data={
                 "name": "SI-001",
-                "posting_date": datetime.now().isoformat(),
                 "details": [
                     {
                         "item_id": str(contract_setup_data["item"].id),
@@ -78,7 +77,7 @@ class TestStockInAPIContract:
         assert isinstance(data["id"], str)  # UUID
         assert isinstance(data["name"], str)
         assert data["status"] == "draft"
-        assert isinstance(data["posting_date"], str)
+        assert data["posting_date"] is None
         assert isinstance(data["details"], list)
         assert len(data["details"]) == 1
 
@@ -104,7 +103,6 @@ class TestStockInAPIContract:
             "/api/v1/inventory/stock-in/create/",
             data={
                 "name": "SI-APPROVE",
-                "posting_date": datetime.now().isoformat(),
                 "details": [
                     {
                         "item_id": str(contract_setup_data["item"].id),
@@ -213,7 +211,6 @@ class TestErrorResponseContract:
             "/api/v1/inventory/stock-in/create/",
             data={
                 "name": "",  # Empty name
-                "posting_date": datetime.now().isoformat(),
                 "details": [],  # No details
             },
             format="json",
@@ -252,7 +249,6 @@ class TestDataTypeConsistency:
             "/api/v1/inventory/stock-in/create/",
             data={
                 "name": "SI-QUANTITY-TEST",
-                "posting_date": datetime.now().isoformat(),
                 "details": [
                     {
                         "item_id": str(item.id),
@@ -280,7 +276,6 @@ class TestDataTypeConsistency:
             "/api/v1/inventory/stock-in/create/",
             data={
                 "name": "SI-ID-TEST",
-                "posting_date": datetime.now().isoformat(),
                 "details": [
                     {
                         "item_id": str(item.id),
@@ -318,7 +313,6 @@ class TestStockTransferContractWithDoubleTransaction:
             "/api/v1/inventory/stock-transfer/create/",
             data={
                 "name": "ST-CONTRACT",
-                "posting_date": datetime.now().isoformat(),
                 "source_warehouse_id": str(w1.id),
                 "target_warehouse_id": str(w2.id),
                 "details": [

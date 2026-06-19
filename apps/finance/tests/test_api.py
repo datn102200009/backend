@@ -92,24 +92,24 @@ class TestFinancePayrollAPIViews:
         emp3 = EmployeeFactory(employee_id="EMP_API_7")
         SalarySlipFactory(
             employee=emp1,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="pending_finance_review",
             net_pay=Decimal("3000000.00"),
         )
         SalarySlipFactory(
             employee=emp2,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="calculated",
             net_pay=Decimal("4000000.00"),
         )
         SalarySlipFactory(
             employee=emp3,
-            salary_period="2026-06",
+            salary_period="2026-05",
             status="approved",
             net_pay=Decimal("2000000.00"),
         )
         url = reverse("salary-slip-bulk-approve-pay")
-        data = {"salary_period": "2026-06", "payment_method": "cash"}
+        data = {"salary_period": "2026-05", "payment_method": "cash"}
 
         # Act
         response = authenticated_client.post(url, data)
@@ -117,4 +117,61 @@ class TestFinancePayrollAPIViews:
         # Assert
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) == 2
+        mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.change_salaryslip")
+
+    def test_bulk_approve_salary_slip_api(self, mock_permission_checker, authenticated_client):
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP_API_8")
+        emp2 = EmployeeFactory(employee_id="EMP_API_9")
+        SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-05",
+            status="pending_finance_review",
+            net_pay=Decimal("3000000.00"),
+        )
+        SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-05",
+            status="calculated",
+            net_pay=Decimal("4000000.00"),
+        )
+        url = reverse("salary-slip-bulk-approve")
+        data = {"salary_period": "2026-05"}
+
+        # Act
+        response = authenticated_client.post(url, data)
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 1
+        assert response.data[0]["status"] == "approved"
+        mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.payroll_approve")
+
+    def test_bulk_pay_salary_slip_api(self, mock_permission_checker, authenticated_client):
+        # Arrange
+        emp1 = EmployeeFactory(employee_id="EMP_API_10")
+        emp2 = EmployeeFactory(employee_id="EMP_API_11")
+        SalarySlipFactory(
+            employee=emp1,
+            salary_period="2026-05",
+            status="approved",
+            net_pay=Decimal("3000000.00"),
+        )
+        SalarySlipFactory(
+            employee=emp2,
+            salary_period="2026-05",
+            status="calculated",
+            net_pay=Decimal("4000000.00"),
+        )
+        url = reverse("salary-slip-bulk-pay")
+        data = {"salary_period": "2026-05", "payment_method": "bank_transfer"}
+
+        # Act
+        response = authenticated_client.post(url, data)
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 1
+        assert response.data[0]["status"] == "paid"
+        assert response.data[0]["payment_method"] == "bank_transfer"
         mock_permission_checker.assert_any_call(authenticated_client.handler._force_user, "finance.change_salaryslip")

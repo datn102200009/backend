@@ -114,14 +114,14 @@ class TestFixedAssetServices:
             accumulated_depreciation=Decimal("0.00"),
         )
 
-        # 10000 - 2000 = 8000 depreciable. Monthly = 800
+        # NOTE: salvage_value is ignored, depreciable_value = 10000. Monthly = 1000
         logs = run_fixed_asset_depreciation(user=user, period="2026-06")
         assert len(logs) == 1
-        assert logs[0].depreciation_amount == Decimal("800.00")
+        assert logs[0].depreciation_amount == Decimal("1000.00")
         assert logs[0].period == "2026-06"
 
         asset.refresh_from_db()
-        assert asset.accumulated_depreciation == Decimal("800.00")
+        assert asset.accumulated_depreciation == Decimal("1000.00")
         assert asset.remaining_life_months == 9
 
     def test_run_depreciation_uop(self, user):
@@ -133,7 +133,7 @@ class TestFixedAssetServices:
             depreciation_method="unit_of_production",
             useful_life_months=None,
             remaining_life_months=None,
-            designed_capacity=Decimal("1000.00"),  # (6000-1000)/1000 = 5 VND per unit
+            designed_capacity=Decimal("1000.00"),  # NOTE: salvage_value is ignored, 6000/1000 = 6 VND per unit
             accumulated_depreciation=Decimal("0.00"),
         )
         # Link mold to active BOM (without mold FK) and create WorkOrder linked to mold
@@ -157,11 +157,11 @@ class TestFixedAssetServices:
         # Run depreciation
         logs = run_fixed_asset_depreciation(user=user, period="2026-06")
         assert len(logs) == 1
-        # 150 units * 5 VND/unit = 750 VND
-        assert logs[0].depreciation_amount == Decimal("750.00")
+        # 150 units * 6 VND/unit = 900 VND
+        assert logs[0].depreciation_amount == Decimal("900.00")
 
         mold.refresh_from_db()
-        assert mold.accumulated_depreciation == Decimal("750.00")
+        assert mold.accumulated_depreciation == Decimal("900.00")
         assert mold.remaining_life_months is None
 
     def test_run_depreciation_twice_fails(self, user):
@@ -229,19 +229,20 @@ class TestFixedAssetServices:
         assert asset.status == "idle"
 
     def test_fixed_asset_request_dispose_success(self, user):
+        from django.utils import timezone
+
         from apps.finance.models import CashFlowTransaction
 
         asset = FixedAssetFactory(status="idle")
         updated = fixed_asset_request_dispose(
             user=user,
             asset_id=str(asset.id),
-            disposal_date="2026-06-15",
             disposal_value=Decimal("500.00"),
             remarks="Dispose it",
         )
         assert updated.status == "pending_dispose"
         assert updated.disposal_value == Decimal("500.00")
-        assert str(updated.disposal_date) == "2026-06-15"
+        assert updated.disposal_date is None
 
         # Verify Cash Flow transaction auto-created
         tx = CashFlowTransaction.objects.filter(
@@ -249,26 +250,32 @@ class TestFixedAssetServices:
         ).first()
         assert tx is not None
         assert tx.status == "pending_approval"
+        assert tx.payment_date == timezone.now().date()
 
         # Approve cash flow to auto-dispose (hook)
         cash_flow_approve(user=user, tx_id=str(tx.id))
         updated.refresh_from_db()
         assert updated.status == "disposed"
+        assert updated.disposal_date == timezone.now().date()
+
+        tx.refresh_from_db()
+        assert tx.payment_date == timezone.now().date()
 
     def test_fixed_asset_request_dispose_success_zero_value(self, user):
+        from django.utils import timezone
+
         from apps.finance.models import CashFlowTransaction
 
         asset = FixedAssetFactory(status="idle")
         updated = fixed_asset_request_dispose(
             user=user,
             asset_id=str(asset.id),
-            disposal_date="2026-06-15",
             disposal_value=Decimal("0.00"),
             remarks="Zero value",
         )
         assert updated.status == "disposed"
         assert updated.disposal_value == Decimal("0.00")
-        assert str(updated.disposal_date) == "2026-06-15"
+        assert updated.disposal_date == timezone.now().date()
 
         # Verify no cash flow transaction created
         assert not CashFlowTransaction.objects.filter(fixed_asset=updated).exists()
@@ -279,7 +286,6 @@ class TestFixedAssetServices:
             fixed_asset_request_dispose(
                 user=user,
                 asset_id=str(asset.id),
-                disposal_date="2026-06-15",
                 disposal_value=Decimal("500.00"),
             )
 
@@ -333,7 +339,6 @@ class TestFixedAssetServices:
         updated = fixed_asset_request_dispose(
             user=user,
             asset_id=str(asset.id),
-            disposal_date="2026-06-15",
             disposal_value=Decimal("3000.00"),
         )
         assert updated.status == "pending_dispose"
@@ -440,14 +445,14 @@ class TestFixedAssetServices:
             depreciation_method="straight_line",
             useful_life_months=10,
             remaining_life_months=1,
-            accumulated_depreciation=Decimal("7200.00"),
+            accumulated_depreciation=Decimal("9000.00"),
         )
         logs = run_fixed_asset_depreciation(user=user, period="2026-06")
         assert len(logs) == 1
-        assert logs[0].depreciation_amount == Decimal("800.00")
+        assert logs[0].depreciation_amount == Decimal("1000.00")
 
         asset.refresh_from_db()
-        assert asset.accumulated_depreciation == Decimal("8000.00")
+        assert asset.accumulated_depreciation == Decimal("10000.00")
         assert asset.remaining_life_months == 0
 
     def test_run_depreciation_uop_stops_when_fully_depreciated(self, user):
@@ -459,7 +464,7 @@ class TestFixedAssetServices:
             useful_life_months=None,
             remaining_life_months=None,
             designed_capacity=Decimal("1000.00"),
-            accumulated_depreciation=Decimal("5000.00"),
+            accumulated_depreciation=Decimal("6000.00"),
         )
         bom = BOMFactory(item=finished_good, is_active=True)
         from apps.inventory.tests.factories import WorkOrderFactory
@@ -489,7 +494,7 @@ class TestFixedAssetServices:
             useful_life_months=None,
             remaining_life_months=None,
             designed_capacity=Decimal("1000.00"),
-            accumulated_depreciation=Decimal("4500.00"),  # 500 VND remaining depreciable value
+            accumulated_depreciation=Decimal("5500.00"),  # 500 VND remaining depreciable value
         )
         bom = BOMFactory(item=finished_good, is_active=True)
         from apps.inventory.tests.factories import WorkOrderFactory
@@ -507,13 +512,13 @@ class TestFixedAssetServices:
             parent=entry, item=finished_good, quantity=Decimal("200.00"), target_warehouse=warehouse
         )
 
-        # 200 units * 5 VND/unit = 1000 VND, but cap at 500 VND
+        # 200 units * 6 VND/unit = 1200 VND, but cap at 500 VND
         logs = run_fixed_asset_depreciation(user=user, period="2026-06")
         assert len(logs) == 1
         assert logs[0].depreciation_amount == Decimal("500.00")
 
         mold.refresh_from_db()
-        assert mold.accumulated_depreciation == Decimal("5000.00")
+        assert mold.accumulated_depreciation == Decimal("6000.00")
 
     def test_run_depreciation_uop_cap_then_no_more_log(self, user):
         finished_good = ItemFactory()
@@ -524,7 +529,7 @@ class TestFixedAssetServices:
             useful_life_months=None,
             remaining_life_months=None,
             designed_capacity=Decimal("1000.00"),
-            accumulated_depreciation=Decimal("5000.00"),  # fully depreciated
+            accumulated_depreciation=Decimal("6000.00"),  # fully depreciated
         )
         bom = BOMFactory(item=finished_good, is_active=True)
         from apps.inventory.tests.factories import WorkOrderFactory

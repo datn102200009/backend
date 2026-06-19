@@ -68,7 +68,6 @@ class TestEmployeeServices:
             "email": "vna@example.com",
             "phone": "0123456789",
             "gender": "male",
-            "create_user": False,
         }
         contract_data = {
             "contract_no": "HDLD-NV9999",
@@ -97,55 +96,6 @@ class TestEmployeeServices:
         assert log.new_value["employee_id"] == "NV9999"
         assert log.new_value["full_name"] == "Nguyen Van A"
 
-    def test_employee_create_with_user(self):
-        # Arrange
-        role = RoleFactory(name="Employee")
-        data = {
-            "employee_id": "NV8888",
-            "full_name": "Tran Thi B",
-            "email": "ttb@example.com",
-            "phone": "0987654321",
-            "gender": "female",
-            "create_user": True,
-            "username": "tranthib",
-            "password": "SecurePassword123",
-            "role_id": str(role.id),
-        }
-        contract_data = {
-            "contract_no": "HDLD-NV8888",
-            "contract_type": "definite_term",
-            "start_date": date(2025, 1, 1),
-            "end_date": date(2026, 1, 1),
-            "salary_base": Decimal("12000000.00"),
-        }
-        admin = UserFactory(username="admin_creator")
-
-        # Act
-        employee, contract = employee_create_with_contract(data=data, contract_data=contract_data, creator=admin)
-
-        # Assert
-        assert employee is not None
-        assert employee.employee_id == "NV8888"
-        assert contract is not None
-        assert contract.contract_no == "HDLD-NV8888"
-
-        # Verify User was created and linked
-        user = User.objects.filter(employee_id="NV8888").first()
-        assert user is not None
-        assert user.username == "tranthib"
-        assert user.email == "ttb@example.com"
-        assert user.role == role
-        assert check_password("SecurePassword123", user.password_hash)
-
-        # Verify audit logs (should log both employee creation and user creation)
-        emp_log = SystemLog.objects.filter(table_name="employee", record_id=str(employee.id), user=admin).first()
-        assert emp_log is not None
-        assert emp_log.action == "create"
-
-        user_log = SystemLog.objects.filter(table_name="user", record_id=str(user.id), user=admin).first()
-        assert user_log is not None
-        assert user_log.action == "create"
-
     def test_employee_create_with_contract(self):
         # Arrange
         data = {
@@ -154,7 +104,6 @@ class TestEmployeeServices:
             "email": "lvc@example.com",
             "phone": "0912345678",
             "gender": "male",
-            "create_user": False,
         }
         contract_data = {
             "contract_no": "HDLD-2026-NV7",
@@ -305,13 +254,12 @@ class TestContractServices:
         # Assert
         terminated_contract.refresh_from_db()
         employee.refresh_from_db()
-        user.refresh_from_db()
 
         assert terminated_contract.status == "terminated"
         assert terminated_contract.end_date == date(2026, 6, 30)
         assert employee.employment_status == "inactive"
         assert employee.leave_date == date(2026, 6, 30)
-        assert user.is_active is False
+        assert not User.objects.filter(id=user.id).exists()
 
         # Verify Document was created
         doc = EmployeeDocument.objects.filter(employee=employee, doc_type="resignation_letter").first()
@@ -332,10 +280,10 @@ class TestContractServices:
         assert employee_log.new_value["employment_status"] == "inactive"
 
         user_log = SystemLog.objects.filter(
-            table_name="user", record_id=str(user.id), action="update", user=admin
+            table_name="user", record_id=str(user.id), action="delete", user=admin
         ).first()
         assert user_log is not None
-        assert user_log.new_value["is_active"] is False
+        assert user_log.old_value["username"] == "bobsmith"
 
 
 @pytest.mark.django_db
@@ -1880,7 +1828,7 @@ class TestPR4Services:
     def test_payroll_submit(self):
         employee = EmployeeFactory()
         admin = UserFactory(username="admin_pr4_test9")
-        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-05", status="calculated")
 
         submitted_slip = payroll_submit_for_review(salary_slip_id=str(slip.id), user=admin)
         assert submitted_slip.status == "pending_finance_review"
@@ -1981,16 +1929,33 @@ class TestPR4Services:
         assert slip1.status == "calculated"
         assert slip2.status == "calculated"
 
+    def test_payroll_bulk_calculate_calculated_slips(self):
+        # Arrange
+        employee = EmployeeFactory(salary_base=Decimal("12000000.00"))
+        admin = UserFactory(username="admin_pr_bulk_recalc")
+        slip = SalarySlipFactory(employee=employee, salary_period="2026-06", status="calculated")
+        EmploymentContractFactory(
+            employee=employee, start_date=date(2026, 6, 1), end_date=date(2026, 6, 30), status="active"
+        )
+
+        # Act
+        result = payroll_bulk_calculate(salary_period="2026-06", creator=admin)
+
+        # Assert
+        assert result["count"] == 1
+        slip.refresh_from_db()
+        assert slip.status == "calculated"
+
     def test_payroll_bulk_submit_for_review(self):
         # Arrange
         employee1 = EmployeeFactory()
         employee2 = EmployeeFactory()
         admin = UserFactory(username="admin_pr_bulk_2")
-        slip1 = SalarySlipFactory(employee=employee1, salary_period="2026-06", status="calculated")
-        slip2 = SalarySlipFactory(employee=employee2, salary_period="2026-06", status="calculated")
+        slip1 = SalarySlipFactory(employee=employee1, salary_period="2026-05", status="calculated")
+        slip2 = SalarySlipFactory(employee=employee2, salary_period="2026-05", status="calculated")
 
         # Act
-        result = payroll_bulk_submit_for_review(salary_period="2026-06", user=admin)
+        result = payroll_bulk_submit_for_review(salary_period="2026-05", user=admin)
 
         # Assert
         assert result["count"] == 2
@@ -2001,7 +1966,7 @@ class TestPR4Services:
 
         # Check validation exception when none is in calculated state
         with pytest.raises(ValidationException, match="Không có phiếu lương nào ở trạng thái 'calculated'"):
-            payroll_bulk_submit_for_review(salary_period="2026-06", user=admin)
+            payroll_bulk_submit_for_review(salary_period="2026-05", user=admin)
 
 
 @pytest.mark.django_db
@@ -2355,8 +2320,7 @@ class TestDisciplineRecordTerminationSideEffects:
 
         discipline_record_approve(user=admin, discipline_id=str(discipline.id))
 
-        user.refresh_from_db()
-        assert user.is_active is False
+        assert not User.objects.filter(id=user.id).exists()
 
     def test_discipline_approve_termination_sets_employee_inactive(self):
         employee = EmployeeFactory(
@@ -2437,13 +2401,12 @@ class TestDisciplineRecordTerminationSideEffects:
         discipline_record_approve(user=admin, discipline_id=str(discipline.id))
 
         employee.refresh_from_db()
-        user.refresh_from_db()
         discipline.refresh_from_db()
 
         assert discipline.status == "approved"
         assert employee.employment_status == "inactive"
         assert employee.leave_date == date(2026, 6, 15)
-        assert user.is_active is False
+        assert not User.objects.filter(id=user.id).exists()
 
         doc = EmployeeDocument.objects.filter(employee=employee, doc_type="disciplinary_minutes").first()
         assert doc is not None
@@ -2567,7 +2530,7 @@ class TestDisciplineRecordTerminationSideEffects:
             table_name="employment_contract", record_id=str(contract.id), action="update"
         ).exists()
         assert SystemLog.objects.filter(table_name="employee", record_id=str(employee.id), action="update").exists()
-        assert SystemLog.objects.filter(table_name="user", record_id=str(user.id), action="update").exists()
+        assert SystemLog.objects.filter(table_name="user", record_id=str(user.id), action="delete").exists()
 
     def test_discipline_approve_termination_transaction_atomic(self):
         employee = EmployeeFactory(

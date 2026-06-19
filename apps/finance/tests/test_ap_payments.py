@@ -44,12 +44,7 @@ class TestAPPayments:
         assert tx.payment_type == "pay"
         assert tx.amount == Decimal("200.00")
         assert tx.purchase_invoice == invoice
-        assert tx.status == "pending_approval"
-
-        # Approve the payment
-        from apps.finance.services import cash_flow_approve
-
-        cash_flow_approve(user=user, tx_id=str(tx.id))
+        assert tx.status == "posted"
 
         invoice.refresh_from_db()
         assert invoice.status == PurchaseInvoice.Status.PARTIAL
@@ -62,8 +57,8 @@ class TestAPPayments:
             amount=Decimal("300.00"),
             payment_method="bank_transfer",
         )
-        cash_flow_approve(user=user, tx_id=str(tx2.id))
 
+        assert tx2.status == "posted"
         invoice.refresh_from_db()
         assert invoice.status == PurchaseInvoice.Status.PAID
         assert invoice.paid_amount == Decimal("500.00")
@@ -82,14 +77,6 @@ class TestAPPayments:
 
         response = client.post(url, {"amount": "200.00", "payment_method": "bank_transfer"})
         assert response.status_code == status.HTTP_200_OK
-
-        # Since paying creates a transaction in pending_approval, we approve it manually to verify behavior
-        from apps.finance.models import CashFlowTransaction
-
-        tx = CashFlowTransaction.objects.first()
-        from apps.finance.services import cash_flow_approve
-
-        cash_flow_approve(user=user, tx_id=str(tx.id))
 
         invoice.refresh_from_db()
         assert invoice.status == PurchaseInvoice.Status.PARTIAL
