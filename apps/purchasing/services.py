@@ -279,7 +279,7 @@ def purchase_order_update_status(order: PurchaseOrder) -> None:
 
 
 @transaction.atomic
-def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
+def purchase_order_approve(*, user: User, order_id: str, due_date: Optional[Any] = None) -> PurchaseOrder:
     """
     Duyệt Đơn mua hàng (Purchase Order):
     1. Chuyển trạng thái PO sang PENDING.
@@ -294,6 +294,18 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
 
     if order.status != PurchaseOrder.Status.DRAFT:
         raise ValidationException("Chỉ có thể duyệt đơn hàng đang ở trạng thái Nháp.")
+
+    # Xử lý due_date
+    from datetime import datetime, timedelta
+
+    from django.utils import timezone
+
+    if due_date and isinstance(due_date, str):
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+
+    due_date_val = due_date or order.due_date
+    if not due_date_val:
+        due_date_val = timezone.now().date() + timedelta(days=30)
 
     # 1. Chuyển trạng thái đơn hàng sang PENDING
     order.status = PurchaseOrder.Status.PENDING
@@ -328,6 +340,7 @@ def purchase_order_approve(*, user: User, order_id: str) -> PurchaseOrder:
         status=PurchaseInvoice.Status.UNPAID,
         total_amount=order.total_amount,
         paid_amount=Decimal("0.00"),
+        due_date=due_date_val,
     )
     for line in order.lines.all():
         PurchaseInvoiceLine.objects.create(
@@ -838,6 +851,8 @@ def shipment_complete(
     if total_logistic_fees < 0:
         raise ValidationException("Chi phí logistic không được âm.")
 
+    # Kiểm tra xem lô hàng đã có stock entry đã ghi sổ chưa
+    # (có thể từ lần hoàn tất trước bị reject duyệt chi phí)
     has_posted_stock_entry = shipment.stock_entries.filter(status="posted").exists()
 
     if has_posted_stock_entry:

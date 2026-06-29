@@ -3,9 +3,18 @@ from decimal import Decimal
 
 from apps.common.xlib.exceptions import NotFoundException, PermissionException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
+from apps.crm import selectors as crm_selectors
+from apps.finance import selectors as finance_selectors
+from apps.hrm.models import LeaveRequest
+from apps.inventory import selectors as inv_selectors
+from apps.manufacturing import selectors as mfg_selectors
+from apps.master_data import selectors as md_selectors
+from apps.master_data.models import Employee, Item, Warehouse
+from apps.procurement import selectors as proc_selectors
+from apps.purchasing import selectors as purchasing_selectors
+from apps.sales import selectors as sales_selectors
 
 # ===== master_data =====
-from apps.master_data import selectors as md_selectors
 
 
 def search_items_handler(args, user):
@@ -34,7 +43,6 @@ def get_item_detail_handler(args, user):
 
 
 # ===== inventory =====
-from apps.inventory import selectors as inv_selectors
 
 
 def get_inventory_balance_handler(args, user):
@@ -43,8 +51,6 @@ def get_inventory_balance_handler(args, user):
     warehouse_code = args.get("warehouse_code", "").strip() or None
     if not item_code:
         raise ValidationException("item_code không được trống")
-
-    from apps.master_data.models import Item, Warehouse
 
     try:
         item = Item.objects.get(item_code=item_code)
@@ -96,7 +102,6 @@ def list_stock_entries_handler(args, user):
 
 
 # ===== hrm =====
-from apps.hrm.models import LeaveRequest
 
 
 def search_employees_handler(args, user):
@@ -105,8 +110,6 @@ def search_employees_handler(args, user):
     limit = min(int(args.get("limit", 10)), 50)
     if not query:
         raise ValidationException("query không được trống")
-
-    from apps.master_data.models import Employee
 
     qs = Employee.objects.filter(full_name__icontains=query) | Employee.objects.filter(employee_id__icontains=query)
     qs = qs.distinct()[:limit]
@@ -130,7 +133,7 @@ def list_leave_requests_handler(args, user):
     status = args.get("status")
     employee_code = args.get("employee_code")
     limit = min(int(args.get("limit", 20)), 50)
-    qs = LeaveRequest.objects.all().order_by("-created_at")
+    qs = LeaveRequest.objects.select_related("employee").all().order_by("-created_at")
     if status:
         qs = qs.filter(status=status)
     if employee_code:
@@ -153,7 +156,6 @@ def list_leave_requests_handler(args, user):
 
 
 # ===== sales =====
-from apps.sales import selectors as sales_selectors
 
 
 def list_sales_orders_handler(args, user):
@@ -193,7 +195,6 @@ def get_customer_debt_handler(args, user):
 
 
 # ===== crm =====
-from apps.crm import selectors as crm_selectors
 
 
 def list_customers_handler(args, user):
@@ -220,7 +221,6 @@ def list_customers_handler(args, user):
 
 
 # ===== purchasing =====
-from apps.purchasing import selectors as purchasing_selectors
 
 
 def list_purchase_orders_handler(args, user):
@@ -250,7 +250,6 @@ def list_purchase_orders_handler(args, user):
 
 
 # ===== procurement =====
-from apps.procurement import selectors as proc_selectors
 
 
 def list_suppliers_handler(args, user):
@@ -275,7 +274,6 @@ def list_suppliers_handler(args, user):
 
 
 # ===== manufacturing =====
-from apps.manufacturing import selectors as mfg_selectors
 
 
 def list_work_orders_handler(args, user):
@@ -312,7 +310,6 @@ def list_boms_handler(args, user):
 
 
 # ===== finance =====
-from apps.finance import selectors as finance_selectors
 
 
 def list_cash_flows_handler(args, user):

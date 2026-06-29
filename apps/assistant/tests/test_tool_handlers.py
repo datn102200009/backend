@@ -6,6 +6,7 @@ from apps.assistant.llm.tool_handlers import (
     get_customer_debt_handler,
     get_inventory_balance_handler,
     get_item_detail_handler,
+    list_leave_requests_handler,
     list_sales_orders_handler,
     search_items_handler,
 )
@@ -79,3 +80,17 @@ class TestChatbotToolHandlers:
         args = {"query": "test"}
         with pytest.raises(PermissionException):
             search_items_handler(args, self.user)
+
+    @patch("apps.common.xlib.permissions.PermissionChecker.check_permission")
+    def test_list_leave_requests_handler(self, mock_check):
+        mock_check.return_value = None
+        from apps.hrm.tests.factories import LeaveRequestFactory
+
+        LeaveRequestFactory(status="approved")
+
+        args = {"status": "approved"}
+        result = list_leave_requests_handler(args, self.user)
+        assert "count" in result
+        assert "requests" in result
+        assert result["count"] == 1
+        assert result["requests"][0]["status"] == "approved"
