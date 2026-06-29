@@ -1,25 +1,6 @@
-"""
-Test configuration for accounts app.
-"""
-
 import pytest
 
-
-@pytest.fixture
-def django_db_setup(django_db_setup, django_db_blocker):
-    """
-    Database setup for tests.
-    """
-    with django_db_blocker.unblock():
-        pass
-
-
-@pytest.fixture
-def api_client():
-    """Return DRF API client."""
-    from rest_framework.test import APIClient
-
-    return APIClient()
+from apps.common.tests.conftest import admin_user, api_client, mock_permission, regular_user
 
 
 @pytest.fixture

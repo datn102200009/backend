@@ -432,6 +432,10 @@ components:
         paid_amount:
           type: number
           format: double
+        due_date:
+          type: string
+          format: date
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -1078,6 +1082,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -1183,6 +1192,11 @@ paths:
         - Sales Invoices
       parameters:
         - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
           in: query
           required: false
           schema:

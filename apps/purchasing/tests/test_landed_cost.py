@@ -80,7 +80,7 @@ class TestLandedCost:
             total_logistic_fees=Decimal("1500000.00"),
         )
 
-        assert updated_shipment.status == Shipment.Status.COMPLETED
+        assert updated_shipment.status == Shipment.Status.PENDING_APPROVAL
         assert updated_shipment.total_logistic_fees == Decimal("1500000.00")
 
         # Check posted StockEntry
@@ -95,6 +95,13 @@ class TestLandedCost:
         cf = CashFlowTransaction.objects.filter(purchase_order=order, category="Chi phí vận chuyển lô hàng").first()
         assert cf is not None
         assert cf.amount == Decimal("1500000.00")
+
+        # Test approving cashflow transitions shipment to COMPLETED
+        from apps.finance.services import cash_flow_approve
+
+        cash_flow_approve(user=user, tx_id=str(cf.id))
+        updated_shipment.refresh_from_db()
+        assert updated_shipment.status == Shipment.Status.COMPLETED
 
     def test_shipment_complete_validation_negative_fees(self, setup_data):
         user, vendor, item, warehouse = setup_data
@@ -269,7 +276,7 @@ class TestLandedCost:
         messages = [r.message for r in caplog.records]
         assert any("shipment_complete: start" in m for m in messages)
         assert any("created StockEntry" in m for m in messages)
-        assert any("completed shipment_id" in m for m in messages)
+        assert any("completed/submitted shipment_id" in m for m in messages)
 
     def test_shipment_serializer_remaining_quantity_after_other_shipment(self, setup_data):
         """Số lượng còn lại phải trừ đi lượng đã nhận ở shipment trước."""

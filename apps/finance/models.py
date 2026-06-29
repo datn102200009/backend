@@ -150,6 +150,14 @@ class CashFlowTransaction(BaseModel):
     fixed_asset = models.ForeignKey(
         "FixedAsset", on_delete=models.SET_NULL, null=True, blank=True, related_name="cash_flows"
     )
+    shipment = models.ForeignKey(
+        "purchasing.Shipment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_flows",
+        verbose_name="Lô hàng",
+    )
 
     amount = models.DecimalField(max_digits=15, decimal_places=2)
     payment_date = models.DateField()

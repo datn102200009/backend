@@ -1,4 +1,4 @@
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -35,6 +35,7 @@ class SalesOrderListCreateAPIView(APIView):
             user=request.user,
             customer_id=str(serializer.validated_data["customer_id"]),
             advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
+            due_date=serializer.validated_data.get("due_date"),
             lines=serializer.validated_data["lines"],
         )
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -57,6 +58,7 @@ class SalesOrderDetailUpdateDeleteAPIView(APIView):
             order_id=str(pk),
             customer_id=str(serializer.validated_data["customer_id"]),
             advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
+            due_date=serializer.validated_data.get("due_date"),
             lines=serializer.validated_data["lines"],
         )
         return Response(SalesOrderSerializer(order).data)
@@ -82,12 +84,26 @@ class SalesOrderDeliverAPIView(APIView):
         return Response(SalesInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
 
 
+class SalesOrderApproveInputSerializer(serializers.Serializer):
+    due_date = serializers.DateField(required=True)
+
+    def validate_due_date(self, value):
+        from django.utils import timezone
+
+        if value < timezone.now().date():
+            raise serializers.ValidationError("Hạn thanh toán không thể ở quá khứ.")
+        return value
+
+
 class SalesOrderApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "sales.update_order")
-        order = sales_order_approve(user=request.user, order_id=str(pk))
+        serializer = SalesOrderApproveInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        due_date = serializer.validated_data["due_date"]
+        order = sales_order_approve(user=request.user, order_id=str(pk), due_date=due_date)
         return Response(SalesOrderSerializer(order).data, status=status.HTTP_200_OK)
 
 

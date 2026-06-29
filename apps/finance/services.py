@@ -34,7 +34,7 @@ def _apply_cash_flow_effect(tx: CashFlowTransaction, amount: Decimal):
     from apps.sales.models import SalesInvoice, SalesOrder
     from apps.sales.services import sales_order_update_status
 
-    if tx.purchase_order_id:
+    if tx.purchase_order_id and tx.category != "Chi phí vận chuyển lô hàng":
         po = PurchaseOrder.objects.select_for_update().filter(id=tx.purchase_order_id).first()
         if not po:
             raise NotFoundException("Đơn mua hàng tham chiếu không tồn tại.")
@@ -324,6 +324,19 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
         new_value={"status": tx.status, "approved_by": str(user.id)},
     )
 
+    if tx.category == "Chi phí vận chuyển lô hàng" and tx.shipment_id:
+        shipment = tx.shipment
+        shipment.status = "completed"
+        shipment.total_logistic_fees = tx.amount
+        shipment.save()
+        create_system_log(
+            user=user,
+            action="approve_logistics",
+            table_name="shipment",
+            record_id=str(shipment.id),
+            new_value={"status": shipment.status, "total_logistic_fees": str(shipment.total_logistic_fees)},
+        )
+
     return tx
 
 
@@ -416,6 +429,19 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
         record_id=str(tx.id),
         new_value={"status": "rejected", "rejected_by": str(user.id)},
     )
+
+    if tx.category == "Chi phí vận chuyển lô hàng" and tx.shipment_id:
+        shipment = tx.shipment
+        shipment.status = "inspecting"
+        shipment.save()
+        create_system_log(
+            user=user,
+            action="reject_logistics",
+            table_name="shipment",
+            record_id=str(shipment.id),
+            new_value={"status": shipment.status},
+        )
+
     return tx
 
 

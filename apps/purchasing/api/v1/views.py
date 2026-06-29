@@ -1,4 +1,4 @@
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -52,6 +52,7 @@ class PurchaseOrderListCreateAPIView(APIView):
             vendor_id=serializer.validated_data["vendor_id"],
             advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             expected_delivery_date=serializer.validated_data.get("expected_delivery_date"),
+            due_date=serializer.validated_data.get("due_date"),
             lines=serializer.validated_data["lines"],
         )
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -75,6 +76,7 @@ class PurchaseOrderDetailUpdateDeleteAPIView(APIView):
             vendor_id=serializer.validated_data["vendor_id"],
             advance_paid_amount=serializer.validated_data.get("advance_paid_amount", 0),
             expected_delivery_date=serializer.validated_data.get("expected_delivery_date"),
+            due_date=serializer.validated_data.get("due_date"),
             lines=serializer.validated_data["lines"],
         )
         return Response(PurchaseOrderSerializer(order).data)
@@ -100,12 +102,26 @@ class PurchaseOrderReceiveAPIView(APIView):
         return Response(PurchaseInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
 
 
+class PurchaseOrderApproveInputSerializer(serializers.Serializer):
+    due_date = serializers.DateField(required=True)
+
+    def validate_due_date(self, value):
+        from django.utils import timezone
+
+        if value < timezone.now().date():
+            raise serializers.ValidationError("Hạn thanh toán không thể ở quá khứ.")
+        return value
+
+
 class PurchaseOrderApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk, *args, **kwargs):
         PermissionChecker.check_permission(request.user, "purchasing.update_order")
-        order = purchase_order_approve(user=request.user, order_id=str(pk))
+        serializer = PurchaseOrderApproveInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        due_date = serializer.validated_data["due_date"]
+        order = purchase_order_approve(user=request.user, order_id=str(pk), due_date=due_date)
         return Response(PurchaseOrderSerializer(order).data, status=status.HTTP_200_OK)
 
 

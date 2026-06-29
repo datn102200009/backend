@@ -6,7 +6,7 @@ All write operations for Sales Orders and Sales Invoices.
 
 import uuid
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from django.db import transaction
 
@@ -24,7 +24,12 @@ from apps.sales.selectors import check_customer_overdue_debts, get_customer_curr
 
 @transaction.atomic
 def sales_order_create(
-    *, user: User, customer_id: str, lines: List[Dict[str, Any]], advance_paid_amount: Decimal = Decimal("0.00")
+    *,
+    user: User,
+    customer_id: str,
+    lines: List[Dict[str, Any]],
+    advance_paid_amount: Decimal = Decimal("0.00"),
+    due_date: Optional[Any] = None,
 ) -> SalesOrder:
     """
     Khởi tạo Đơn bán hàng (Sales Order). Không yêu cầu Kho hàng tại bước này.
@@ -35,7 +40,16 @@ def sales_order_create(
     if not customer:
         raise NotFoundException(f"Khách hàng với ID {customer_id} không tồn tại.")
 
-    order = SalesOrder.objects.create(customer=customer, status=SalesOrder.Status.DRAFT)
+    from datetime import date, datetime, timedelta
+
+    from django.utils import timezone
+
+    if due_date and isinstance(due_date, str):
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+
+    due_date_val = due_date or (timezone.now().date() + timedelta(days=30))
+
+    order = SalesOrder.objects.create(customer=customer, status=SalesOrder.Status.DRAFT, due_date=due_date_val)
 
     total_amount = Decimal("0.00")
     for line in lines:
@@ -78,6 +92,7 @@ def sales_order_update(
     customer_id: str,
     lines: List[Dict[str, Any]],
     advance_paid_amount: Decimal = Decimal("0.00"),
+    due_date: Optional[Any] = None,
 ) -> SalesOrder:
     """
     Cập nhật Đơn bán hàng. Chỉ cho phép khi ở trạng thái Draft.
@@ -95,6 +110,15 @@ def sales_order_update(
     if not customer:
         raise NotFoundException(f"Khách hàng với ID {customer_id} không tồn tại.")
 
+    from datetime import date, datetime, timedelta
+
+    from django.utils import timezone
+
+    if due_date and isinstance(due_date, str):
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+
+    due_date_val = due_date or (timezone.now().date() + timedelta(days=30))
+
     # Kiểm tra dòng tiền tạm thời để validate
     temp_total_amount = Decimal("0.00")
     for line in lines:
@@ -108,6 +132,7 @@ def sales_order_update(
     order.customer = customer
     order.status = SalesOrder.Status.DRAFT
     order.advance_paid_amount = advance_paid_amount
+    order.due_date = due_date_val
 
     # Xóa các line cũ và tạo mới
     order.lines.all().delete()
@@ -285,7 +310,7 @@ def validate_sales_order_credit(sales_order_id: str) -> tuple[bool, str]:
 
 
 @transaction.atomic
-def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
+def sales_order_approve(*, user: User, order_id: str, due_date=None) -> SalesOrder:
     """
     Duyệt Đơn bán hàng (Sales Order):
     1. Kiểm tra hạn mức tín dụng & công nợ phải thu (AR).
@@ -359,6 +384,15 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
             parent=stock_entry, item=line.item, quantity=line.quantity, source_warehouse=None
         )
 
+    if not due_date:
+        due_date = order.due_date
+    if not due_date:
+        import datetime
+
+        from django.utils import timezone
+
+        due_date = timezone.now().date() + datetime.timedelta(days=30)
+
     # 3. Tạo Hóa đơn bán hàng (Sales Invoice)
     invoice = SalesInvoice.objects.create(
         order=order,
@@ -367,6 +401,7 @@ def sales_order_approve(*, user: User, order_id: str) -> SalesOrder:
         status=SalesInvoice.Status.UNPAID,
         total_amount=order.total_amount,
         paid_amount=Decimal("0.00"),
+        due_date=due_date,
     )
     for line in order.lines.all():
         SalesInvoiceLine.objects.create(

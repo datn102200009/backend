@@ -99,6 +99,27 @@ class TestPurchaseAPIViews:
             assert "total_amount" in response.data
             assert "id" in response.data
 
+    def test_purchase_order_approve_api(self, authenticated_client):
+        from decimal import Decimal
+
+        from apps.purchasing.tests.factories import PurchaseOrderLineFactory
+
+        order = PurchaseOrderFactory(status="draft")
+        PurchaseOrderLineFactory(order=order, quantity=Decimal("10.00"), unit_price=Decimal("100.00"))
+        order.total_amount = Decimal("1000.00")
+        order.save()
+
+        url = reverse("purchase-order-approve", kwargs={"pk": order.id})
+        data = {"due_date": "2026-12-31"}
+
+        response = authenticated_client.post(url, data, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        order.refresh_from_db()
+        assert order.status == "pending"
+        invoice = order.invoices.first()
+        assert invoice is not None
+        assert str(invoice.due_date) == "2026-12-31"
+
 
 class TestShipmentAPIViews:
     @pytest.fixture
@@ -163,7 +184,7 @@ class TestShipmentAPIViews:
         mock_permission_checker.assert_any_call(user, "purchasing.allocate_landed_cost")
 
         shipment.refresh_from_db()
-        assert shipment.status == Shipment.Status.COMPLETED
+        assert shipment.status == Shipment.Status.PENDING_APPROVAL
         assert shipment.total_logistic_fees == Decimal("15000.00")
 
     def test_shipment_complete_invalid_status(self, setup_data):

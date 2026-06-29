@@ -95,3 +95,19 @@ class TestPurchaseInvoiceServices:
 
         with pytest.raises(ValidationException):
             purchase_order_approve(user=user, order_id=str(order.id))
+
+    def test_purchase_order_approve_with_due_date(self, setup_data):
+        user, vendor, item, warehouse = setup_data
+        lines = [{"item_id": str(item.id), "quantity": Decimal("10.00"), "unit_price": Decimal("50.00")}]
+        order = purchase_order_create(user=user, vendor_id=str(vendor.id), lines=lines)
+
+        due_date = "2026-12-31"
+        order = purchase_order_approve(user=user, order_id=str(order.id), due_date=due_date)
+
+        assert order.status == PurchaseOrder.Status.PENDING
+
+        invoice = order.invoices.first()
+        assert invoice is not None
+        from datetime import datetime
+
+        assert invoice.due_date == datetime.strptime(due_date, "%Y-%m-%d").date()
