@@ -163,7 +163,7 @@ class TestShipmentAPIViews:
         mock_permission_checker.assert_any_call(user, "purchasing.allocate_landed_cost")
 
         shipment.refresh_from_db()
-        assert shipment.status == Shipment.Status.COMPLETED
+        assert shipment.status == Shipment.Status.PENDING_APPROVAL
         assert shipment.total_logistic_fees == Decimal("15000.00")
 
     def test_shipment_complete_invalid_status(self, setup_data):

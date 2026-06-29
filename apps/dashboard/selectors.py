@@ -234,7 +234,7 @@ def get_purchasing_draft_orders():
     }
 
 
-# 9. purchasing_pending_logistic_fees (Lô Hàng Chờ Duyệt)
+# 9. purchasing_pending_logistic_fees (Lô Hàng Đang Tiếp Nhận)
 def get_purchasing_pending_logistic_fees():
     from django.db.models import Case, IntegerField, Value, When
 
@@ -251,6 +251,29 @@ def get_purchasing_pending_logistic_fees():
         )
         .order_by("status_priority", "-created_at")
     )
+    total_count = shipments_qs.count()
+    results = [
+        {
+            "id": str(s.id),
+            "shipment_num": s.shipment_num,
+            "name": s.name,
+            "status": s.status,
+            "purchase_order_id": str(s.purchase_order_id) if s.purchase_order_id else None,
+            "purchase_order_name": str(s.purchase_order_id)[:8].upper() if s.purchase_order_id else None,
+            "remarks": s.remarks,
+            "created_at": s.created_at.isoformat(),
+        }
+        for s in shipments_qs[:5]
+    ]
+    return {
+        "total_count": total_count,
+        "top_items": results,
+    }
+
+
+# 9b. purchasing_pending_approval_shipments (Lô Hàng Chờ Duyệt Chi Phí)
+def get_purchasing_pending_approval_shipments():
+    shipments_qs = Shipment.objects.filter(status=Shipment.Status.PENDING_APPROVAL).order_by("-created_at")
     total_count = shipments_qs.count()
     results = [
         {
@@ -1239,6 +1262,7 @@ SELECTORS_MAP = {
     "purchasing_active_po_count": get_purchasing_active_po_count,
     "purchasing_draft_orders": get_purchasing_draft_orders,
     "purchasing_pending_logistic_fees": get_purchasing_pending_logistic_fees,
+    "purchasing_pending_approval_shipments": get_purchasing_pending_approval_shipments,
     "inventory_low_stock": get_warehouse_low_stock_alerts,
     "inventory_pending_entries": get_inventory_pending_entries,
     "finance_cashflow_overview": get_finance_cashflow_overview,

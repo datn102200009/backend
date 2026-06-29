@@ -39,6 +39,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "total_amount",
             "advance_paid_amount",
             "expected_delivery_date",
+            "due_date",
             "receipt_fulfillment_rate",
             "payment_fulfillment_rate",
             "created_at",
@@ -88,7 +89,15 @@ class PurchaseOrderInputSerializer(serializers.Serializer):
         max_digits=15, decimal_places=2, required=False, default=0, min_value=0
     )
     expected_delivery_date = serializers.DateField(required=False, allow_null=True)
+    due_date = serializers.DateField(required=True)
     lines = serializers.ListField(child=PurchaseOrderLineInputSerializer(), allow_empty=False)
+
+    def validate_due_date(self, value):
+        from django.utils import timezone
+
+        if value < timezone.now().date():
+            raise serializers.ValidationError("Hạn thanh toán không thể ở quá khứ.")
+        return value
 
 
 class PurchaseOrderReceiveInputSerializer(serializers.Serializer):
@@ -109,6 +118,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
     stock_entries = serializers.SerializerMethodField()
     stock_entries_details = serializers.SerializerMethodField()
     purchase_order_lines = serializers.SerializerMethodField()
+    cash_flows = serializers.SerializerMethodField()
 
     class Meta:
         from apps.purchasing.models import Shipment
@@ -125,10 +135,23 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "remarks",
             "stock_entries",
             "stock_entries_details",
+            "cash_flows",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "status", "created_at", "updated_at"]
+
+    def get_cash_flows(self, obj):
+        return [
+            {
+                "id": str(cf.id),
+                "name": cf.name,
+                "status": cf.status,
+                "amount": float(cf.amount),
+                "remarks": cf.remarks,
+            }
+            for cf in obj.cash_flows.all()
+        ]
 
     def get_stock_entries(self, obj):
         return [

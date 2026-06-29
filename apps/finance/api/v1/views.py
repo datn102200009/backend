@@ -320,6 +320,18 @@ class PurchaseInvoiceListAPIView(APIView):
             else:
                 invoices = invoices.filter(status=status_filter)
 
+        search_query = request.query_params.get("search")
+        if search_query:
+            from django.db.models import Q
+
+            clean_search = search_query.strip()
+            if all(c in "0123456789abcdef-ABCDEF" for c in clean_search) and len(clean_search) >= 4:
+                invoices = invoices.filter(
+                    Q(id__startswith=clean_search.lower()) | Q(order__id__startswith=clean_search.lower())
+                )
+            else:
+                invoices = invoices.filter(vendor__supplier_name__icontains=clean_search)
+
         from rest_framework.pagination import PageNumberPagination
 
         paginator = PageNumberPagination()
@@ -360,6 +372,18 @@ class SalesInvoiceListAPIView(APIView):
                 invoices = invoices.filter(status__in=status_list)
             else:
                 invoices = invoices.filter(status=status_filter)
+
+        search_query = request.query_params.get("search")
+        if search_query:
+            from django.db.models import Q
+
+            clean_search = search_query.strip()
+            if all(c in "0123456789abcdef-ABCDEF" for c in clean_search) and len(clean_search) >= 4:
+                invoices = invoices.filter(
+                    Q(id__startswith=clean_search.lower()) | Q(order__id__startswith=clean_search.lower())
+                )
+            else:
+                invoices = invoices.filter(customer__customer_name__icontains=clean_search)
 
         from rest_framework.pagination import PageNumberPagination
 

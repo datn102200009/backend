@@ -838,6 +838,54 @@ def shipment_complete(
     if total_logistic_fees < 0:
         raise ValidationException("Chi phí logistic không được âm.")
 
+    has_posted_stock_entry = shipment.stock_entries.filter(status="posted").exists()
+
+    if has_posted_stock_entry:
+        # Nếu đã có phiếu nhập kho (ví dụ: đã nhận hàng nhưng bị từ chối duyệt chi phí logistics và gửi duyệt lại)
+        # Chỉ ghi nhận chi phí logistics mới và tạo dòng tiền mới chờ duyệt, không tạo lại StockEntry
+        if total_logistic_fees > 0:
+            try:
+                cf = CashFlowTransaction.objects.create(
+                    name=f"CF-PAY-LOG-{shipment.shipment_num[:10]}-{str(uuid.uuid4())[:4]}",
+                    payment_type="pay",
+                    category="Chi phí vận chuyển lô hàng",
+                    payment_method="bank_transfer",
+                    amount=total_logistic_fees,
+                    payment_date=timezone.now().date(),
+                    purchase_order=po,
+                    shipment=shipment,
+                    status="pending_approval",
+                    remarks=f"Thanh toán chi phí logistic dồn tích cho Lô Hàng {shipment.shipment_num} (Gửi duyệt lại)",
+                )
+                logger.info(
+                    "shipment_complete: created CashFlow id=%s amount=%s for shipment_id=%s (resubmission)",
+                    cf.id,
+                    total_logistic_fees,
+                    shipment.id,
+                )
+            except Exception:
+                logger.exception("shipment_complete: failed to create CashFlow for shipment_id=%s", shipment.id)
+                raise
+            shipment.status = Shipment.Status.PENDING_APPROVAL
+        else:
+            shipment.status = Shipment.Status.COMPLETED
+
+        shipment.total_logistic_fees = total_logistic_fees
+        shipment.save()
+
+        create_system_log(
+            user=user,
+            action="update",
+            table_name="shipment",
+            record_id=str(shipment.id),
+            new_value={
+                "status": shipment.status,
+                "total_logistic_fees": str(total_logistic_fees),
+                "resubmitted": True,
+            },
+        )
+        return shipment
+
     # Tính trước tổng đã nhập cho toàn bộ các dòng trong PO
     already_received_map: dict[str, Decimal] = {}
     received_rows = (
@@ -949,6 +997,7 @@ def shipment_complete(
                 amount=total_logistic_fees,
                 payment_date=timezone.now().date(),
                 purchase_order=po,
+                shipment=shipment,
                 status="pending_approval",
                 remarks=f"Thanh toán chi phí logistic dồn tích cho Lô Hàng {shipment.shipment_num}",
             )
@@ -961,9 +1010,11 @@ def shipment_complete(
         except Exception:
             logger.exception("shipment_complete: failed to create CashFlow for shipment_id=%s", shipment.id)
             raise
+        shipment.status = Shipment.Status.PENDING_APPROVAL
+    else:
+        shipment.status = Shipment.Status.COMPLETED
 
-    # Bước 4: Cập nhật Shipment status
-    shipment.status = Shipment.Status.COMPLETED
+    # Bước 4: Cập nhật Shipment status & fees
     shipment.total_logistic_fees = total_logistic_fees
     shipment.save()
 
@@ -971,7 +1022,7 @@ def shipment_complete(
     purchase_order_update_status(po)
 
     logger.info(
-        "shipment_complete: completed shipment_id=%s total_logistic_fees=%s",
+        "shipment_complete: completed/submitted shipment_id=%s total_logistic_fees=%s",
         shipment.id,
         total_logistic_fees,
     )
