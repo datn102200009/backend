@@ -1,14 +1,14 @@
-"""
-Test configuration for hrm app.
-"""
+"""Test configuration for hrm app."""
+
+from unittest.mock import patch
 
 import pytest
 
+from apps.common.tests.conftest import admin_user, api_client, mock_permission, regular_user
 
-@pytest.fixture
-def django_db_setup(django_db_setup, django_db_blocker):
-    """
-    Database setup for tests.
-    """
-    with django_db_blocker.unblock():
-        pass
+
+@pytest.fixture(autouse=True)
+def mock_check_permission():
+    with patch("apps.common.xlib.permissions.PermissionChecker.check_permission") as mock:
+        mock.return_value = True
+        yield mock

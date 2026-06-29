@@ -23,6 +23,12 @@ from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory,
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 
 
+@pytest.fixture(autouse=True)
+def mock_check_permission():
+    # Do not mock permission checks in security tests
+    yield
+
+
 def create_user_with_permission(permission_code: str):
     role = RoleFactory()
     permission, _ = Permission.objects.get_or_create(code=permission_code, defaults={"name": f"Test {permission_code}"})
