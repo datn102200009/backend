@@ -14,7 +14,9 @@ class ToolDefinition:
 
 # ===== TOOL_HANDLERS — import từ tool_handlers.py =====
 from apps.assistant.llm.tool_handlers import (
+    get_business_workflow_handler,
     get_customer_debt_handler,
+    get_document_detail_handler,
     get_inventory_balance_handler,
     get_item_detail_handler,
     list_boms_handler,
@@ -92,8 +94,22 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["draft", "submitted", "cancelled"], "default": "submitted"},
-                "purpose": {"type": "string", "enum": ["receipt", "issue", "transfer", "manufacture"]},
+                "status": {
+                    "type": "string",
+                    "dynamic_choices": ("inventory", "StockEntry", "status"),
+                    "default": "submitted",
+                },
+                "purpose": {"type": "string", "dynamic_choices": ("inventory", "StockEntry", "purpose")},
+                "start_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày bắt đầu lọc (YYYY-MM-DD)",
+                },
+                "end_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày kết thúc lọc (YYYY-MM-DD)",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
         },
@@ -120,7 +136,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["draft", "submitted", "approved", "rejected"]},
+                "status": {"type": "string", "dynamic_choices": ("hrm", "LeaveRequest", "status")},
                 "employee_code": {"type": "string", "maxLength": 50},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
@@ -134,8 +150,18 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["draft", "submitted", "approved", "cancelled"]},
+                "status": {"type": "string", "dynamic_choices": ("sales", "SalesOrder", "status")},
                 "customer_id": {"type": "string", "format": "uuid"},
+                "start_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày bắt đầu lọc (YYYY-MM-DD)",
+                },
+                "end_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày kết thúc lọc (YYYY-MM-DD)",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
         },
@@ -174,8 +200,18 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["draft", "submitted", "approved", "cancelled"]},
+                "status": {"type": "string", "dynamic_choices": ("purchasing", "PurchaseOrder", "status")},
                 "supplier_id": {"type": "string", "format": "uuid"},
+                "start_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày bắt đầu lọc (YYYY-MM-DD)",
+                },
+                "end_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày kết thúc lọc (YYYY-MM-DD)",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
         },
@@ -201,7 +237,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"]},
+                "status": {"type": "string", "dynamic_choices": ("master_data", "WorkOrder", "status")},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
         },
@@ -227,7 +263,17 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["draft", "approved", "posted"]},
+                "status": {"type": "string", "dynamic_choices": ("finance", "CashFlowTransaction", "status")},
+                "start_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày bắt đầu lọc (YYYY-MM-DD)",
+                },
+                "end_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Optional. Ngày kết thúc lọc (YYYY-MM-DD)",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
             },
         },
@@ -240,25 +286,109 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
         parameters_schema={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["active", "disposed", "fully_depreciated"]},
+                "status": {"type": "string", "dynamic_choices": ("finance", "FixedAsset", "status")},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
             },
         },
         handler=list_fixed_assets_handler,
     ),
+    "get_document_detail": ToolDefinition(
+        name="get_document_detail",
+        description="Lấy chi tiết đầy đủ thông tin của một tài liệu hoặc thực thể trong hệ thống (đơn mua/bán hàng, phiếu kho, hóa đơn, sản phẩm, nhân viên...) theo ID.",
+        required_permission="assistant.chat",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "type": "string",
+                    "enum": [
+                        "purchase_order",
+                        "sales_order",
+                        "stock_entry",
+                        "purchase_invoice",
+                        "sales_invoice",
+                        "cash_flow",
+                        "item",
+                        "employee",
+                        "warehouse",
+                        "supplier",
+                        "customer",
+                        "work_order",
+                        "bom",
+                        "leave_request",
+                    ],
+                    "description": "Tên loại đối tượng cần lấy chi tiết",
+                },
+                "document_id": {
+                    "type": "string",
+                    "description": "ID dạng UUID hoặc Mã định danh (Code/Name) của đối tượng",
+                },
+            },
+            "required": ["model_name", "document_id"],
+        },
+        handler=get_document_detail_handler,
+    ),
+    "get_business_workflow": ToolDefinition(
+        name="get_business_workflow",
+        description="Lấy tài liệu hướng dẫn quy trình nghiệp vụ (workflow) và thao tác giao diện thực tế của hệ thống ERP Xuân Hòa.",
+        required_permission="assistant.chat",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": [
+                        "system_accounts",
+                        "manufacturing_bom",
+                        "inventory",
+                        "purchasing_sales",
+                        "finance_accounting",
+                        "hrm_payroll",
+                    ],
+                    "description": "Chủ đề nghiệp vụ cần tra cứu quy trình",
+                }
+            },
+            "required": ["topic"],
+        },
+        handler=get_business_workflow_handler,
+    ),
 }
 
 
 def list_tools_for_llm() -> list[dict]:
-    """Trả về JSON Schema cho tool format (chuẩn nội bộ, mỗi provider tự convert sang native format của mình)."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters_schema,
-            },
-        }
-        for t in TOOL_REGISTRY.values()
-    ]
+    """Trả về JSON Schema cho tool format, tự động resolve dynamic choices từ Django Model."""
+    import copy
+
+    from django.apps import apps
+
+    tools = []
+    for t in TOOL_REGISTRY.values():
+        # Copy schema để không ghi đè làm hỏng định nghĩa gốc trong memory
+        schema = copy.deepcopy(t.parameters_schema)
+        properties = schema.get("properties", {})
+
+        for prop_name, prop_data in properties.items():
+            if isinstance(prop_data, dict) and "dynamic_choices" in prop_data:
+                app_label, model_name, field_name = prop_data["dynamic_choices"]
+                try:
+                    model = apps.get_model(app_label, model_name)
+                    field = model._meta.get_field(field_name)
+                    if field and field.choices:
+                        prop_data["enum"] = [c[0] for c in field.choices]
+                except Exception:
+                    # Fallback/bỏ qua nếu không load được Model (vd trong unit test chưa setup app)
+                    pass
+                # Xoá marker dynamic_choices để không làm lỗi JSON schema gửi cho LLM
+                del prop_data["dynamic_choices"]
+
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": schema,
+                },
+            }
+        )
+    return tools
