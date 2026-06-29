@@ -2,6 +2,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Permission, RolePermission
+from apps.common.tests.conftest import admin_user, mock_permission, regular_user
 from apps.inventory.tests.factories import RoleFactory, UserFactory
 
 
