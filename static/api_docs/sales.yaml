@@ -39,6 +39,7 @@ components:
       type: object
       required:
         - customer_id
+        - due_date
         - lines
       properties:
         customer_id:
@@ -48,6 +49,9 @@ components:
           type: number
           format: double
           minimum: 0
+        due_date:
+          type: string
+          format: date
         lines:
           type: array
           minItems: 1
@@ -109,6 +113,9 @@ components:
         advance_paid_amount:
           type: number
           format: double
+        due_date:
+          type: string
+          format: date
         receipt_fulfillment_rate:
           type: number
           format: double
@@ -354,6 +361,19 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - due_date
+              properties:
+                due_date:
+                  type: string
+                  format: date
+                  description: Hạn thanh toán của hóa đơn
       responses:
         '200':
           description: Đơn bán hàng đã được duyệt thành công.

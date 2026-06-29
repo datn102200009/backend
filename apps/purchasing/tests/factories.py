@@ -38,6 +38,7 @@ class PurchaseInvoiceFactory(factory.django.DjangoModelFactory):
     status = PurchaseInvoice.Status.UNPAID
     total_amount = fuzzy.FuzzyDecimal(100.00, 10000.00, 2)
     paid_amount = 0
+    due_date = factory.LazyFunction(lambda: timezone.now().date())
     created_at = factory.LazyFunction(timezone.now)
     updated_at = factory.LazyFunction(timezone.now)
 

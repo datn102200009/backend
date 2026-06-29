@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 from apps.common.models import BaseModel
 from apps.crm.models import Customer
@@ -22,6 +23,7 @@ class SalesOrder(BaseModel):
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     advance_paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã ứng trước")
+    due_date = models.DateField(default=timezone.now, verbose_name="Hạn thanh toán")
     receipt_fulfillment_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ giao hàng tổng (%)"
     )
@@ -88,6 +90,7 @@ class SalesInvoice(BaseModel):
     )
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã thanh toán")
+    due_date = models.DateField(default=timezone.now, verbose_name="Hạn thanh toán")
 
     class Meta:
         db_table = "sales_invoice"

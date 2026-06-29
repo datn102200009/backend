@@ -38,6 +38,7 @@ class SalesOrderSerializer(serializers.ModelSerializer):
             "status",
             "total_amount",
             "advance_paid_amount",
+            "due_date",
             "receipt_fulfillment_rate",
             "payment_fulfillment_rate",
             "created_at",
@@ -86,7 +87,15 @@ class SalesOrderInputSerializer(serializers.Serializer):
     advance_paid_amount = serializers.DecimalField(
         max_digits=15, decimal_places=2, required=False, default=0, min_value=0
     )
+    due_date = serializers.DateField(required=True)
     lines = serializers.ListField(child=SalesOrderLineInputSerializer(), allow_empty=False)
+
+    def validate_due_date(self, value):
+        from django.utils import timezone
+
+        if value < timezone.now().date():
+            raise serializers.ValidationError("Hạn thanh toán không thể ở quá khứ.")
+        return value
 
 
 class SalesOrderDeliverInputSerializer(serializers.Serializer):

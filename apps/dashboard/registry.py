@@ -47,8 +47,15 @@ WIDGETS_REGISTRY = {
         "permission": "purchasing.view_shipment",
         "type": "kpi_list",
         "size": "1x2",
-        "title": "Lô Hàng Chờ Duyệt",
+        "title": "Lô Hàng Đang Tiếp Nhận",
         "quick_links": ["/purchasing?tab=shipment&status=draft"],
+    },
+    "purchasing_pending_approval_shipments": {
+        "permission": "purchasing.view_shipment",
+        "type": "kpi_list",
+        "size": "1x2",
+        "title": "Lô Hàng Chờ Duyệt Chi Phí",
+        "quick_links": ["/purchasing?tab=shipment&status=pending_approval"],
     },
     "inventory_low_stock": {
         "permission": "inventory.view",

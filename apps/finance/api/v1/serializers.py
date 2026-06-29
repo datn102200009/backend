@@ -229,6 +229,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             "status",
             "total_amount",
             "paid_amount",
+            "due_date",
             "created_at",
             "updated_at",
             "lines",
@@ -241,6 +242,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             "status",
             "total_amount",
             "paid_amount",
+            "due_date",
             "created_at",
             "updated_at",
         ]

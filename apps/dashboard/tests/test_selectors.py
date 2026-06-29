@@ -23,6 +23,7 @@ from apps.dashboard.selectors import (
     get_manufacturing_pending_wo_approval,
     get_purchasing_active_po_count,
     get_purchasing_draft_orders,
+    get_purchasing_pending_approval_shipments,
     get_purchasing_pending_logistic_fees,
     get_sales_draft_orders,
     get_sales_pending_credit_bypass,
@@ -118,6 +119,13 @@ class TestDashboardSelectors:
         assert res["total_count"] == 1
         assert len(res["top_items"]) == 1
         assert res["top_items"][0]["shipment_num"] == "SHIP-02"
+
+    def test_purchasing_pending_approval_shipments(self):
+        Shipment.objects.create(shipment_num="SHIP-03", name="Lô hàng 3", status=Shipment.Status.PENDING_APPROVAL)
+        res = get_purchasing_pending_approval_shipments()
+        assert res["total_count"] == 1
+        assert len(res["top_items"]) == 1
+        assert res["top_items"][0]["shipment_num"] == "SHIP-03"
 
     def test_inventory_pending_entries(self):
         uom = UOMFactory()

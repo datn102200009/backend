@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.crm",
     "apps.procurement",
     "apps.dashboard",
+    "apps.assistant",
 ]
 
 MIDDLEWARE = [
@@ -156,6 +157,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/day",
         "user": "1000/day",
+        "chatbot": "30/hour",
     },
     "EXCEPTION_HANDLER": "apps.common.exceptions.custom_exception_handler",
 }
@@ -238,3 +240,20 @@ LOGGING = {
         },
     },
 }
+
+# ===== Chatbot AI Agent - Strategy Pattern cho LLM Provider =====
+# Chọn provider qua env var. Hiện tại chỉ support "gemini", sau có thể thêm "openai", "anthropic".
+LLM_PROVIDER = config("LLM_PROVIDER", default="gemini")
+
+# ===== Gemini config =====
+GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
+GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-3.1-flash-lite")
+GEMINI_TIMEOUT_SECONDS = config("GEMINI_TIMEOUT_SECONDS", default=30, cast=int)
+GEMINI_MAX_TOKENS = config("GEMINI_MAX_TOKENS", default=2000, cast=int)
+
+# ===== Shared config =====
+LLM_MAX_HISTORY_MESSAGES = config("LLM_MAX_HISTORY_MESSAGES", default=10, cast=int)
+LLM_MAX_TOOL_ROUNDS = config("LLM_MAX_TOOL_ROUNDS", default=3, cast=int)
+
+CHATBOT_USER_MESSAGE_MAX_CHARS = config("CHATBOT_USER_MESSAGE_MAX_CHARS", default=4000, cast=int)
+CHATBOT_RATE_LIMIT_PER_HOUR = config("CHATBOT_RATE_LIMIT_PER_HOUR", default=30, cast=int)

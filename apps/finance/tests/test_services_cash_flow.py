@@ -120,11 +120,22 @@ class TestCashFlowServices:
 
     def test_apply_cash_flow_effect_rejects_overpayment_for_transport_fee(self, user):
         """
-        Verify: Bypass bị bỏ. CF vận chuyển vượt PO khi approve sẽ raise ValidationException.
+        Verify: CF vận chuyển liên kết với Shipment khi duyệt sẽ cập nhật trạng thái Shipment sang completed
+        và KHÔNG ảnh hưởng đến po.advance_paid_amount.
         """
         from apps.finance.services import cash_flow_approve
+        from apps.purchasing.models import Shipment
 
         po = PurchaseOrderFactory(total_amount=Decimal("1000.00"), advance_paid_amount=0)
+
+        # Tạo shipment ở trạng thái pending_approval
+        shipment = Shipment.objects.create(
+            shipment_num="SHIP-TEST-999",
+            name="Lô hàng kiểm thử",
+            purchase_order=po,
+            status="pending_approval",
+            total_logistic_fees=Decimal("600.00"),
+        )
 
         tx1 = CashFlowTransaction.objects.create(
             name="CF-TR-1",
@@ -135,24 +146,13 @@ class TestCashFlowServices:
             payment_date="2023-10-01",
             status="pending_approval",
             purchase_order=po,
-        )
-
-        tx2 = CashFlowTransaction.objects.create(
-            name="CF-TR-2",
-            payment_type="pay",
-            category="Chi phí vận chuyển lô hàng",
-            payment_method="bank_transfer",
-            amount=Decimal("600.00"),
-            payment_date="2023-10-01",
-            status="pending_approval",
-            purchase_order=po,
+            shipment=shipment,
         )
 
         # Approve CF 1 -> success
         cash_flow_approve(user=user, tx_id=str(tx1.id))
         po.refresh_from_db()
-        assert po.advance_paid_amount == Decimal("600.00")
+        shipment.refresh_from_db()
 
-        # Approve CF 2 -> must raise ValidationException
-        with pytest.raises(ValidationException, match="vượt quá giá trị đơn mua hàng"):
-            cash_flow_approve(user=user, tx_id=str(tx2.id))
+        assert po.advance_paid_amount == Decimal("0.00")  # Không được ảnh hưởng
+        assert shipment.status == "completed"  # Trạng thái lô hàng chuyển sang completed

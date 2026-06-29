@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 from apps.common.models import BaseModel
 from apps.master_data.models import Item
@@ -22,6 +23,7 @@ class PurchaseOrder(BaseModel):
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     advance_paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã ứng trước")
     expected_delivery_date = models.DateField(null=True, blank=True, verbose_name="Ngày giao hàng dự kiến")
+    due_date = models.DateField(default=timezone.now, verbose_name="Hạn thanh toán")
     receipt_fulfillment_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=0.00, verbose_name="Tiến độ nhận hàng tổng (%)"
     )
@@ -61,6 +63,7 @@ class Shipment(BaseModel):
     class Status(models.TextChoices):
         DRAFT = "draft", "Nháp (Chờ hàng về)"
         INSPECTING = "inspecting", "Đang tiếp nhận"
+        PENDING_APPROVAL = "pending_approval", "Chờ duyệt"
         COMPLETED = "completed", "Hoàn tất"
 
     shipment_num = models.CharField(max_length=100, unique=True, verbose_name="Mã lô hàng")
@@ -122,7 +125,7 @@ class PurchaseInvoice(BaseModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNPAID, verbose_name="Trạng thái")
     total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Tổng tiền")
     paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Đã thanh toán")
-    due_date = models.DateField(null=True, blank=True, verbose_name="Hạn thanh toán")
+    due_date = models.DateField(default=timezone.now, verbose_name="Hạn thanh toán")
 
     class Meta:
         db_table = "purchase_invoice"

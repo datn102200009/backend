@@ -42,8 +42,9 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
 
-# Disable rate limiting for testing/development
+# Disable rate limiting for testing/development, but keep chatbot limit for test coverage
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "anon": "1000000/day",
     "user": "1000000/day",
+    "chatbot": "30/hour",
 }
