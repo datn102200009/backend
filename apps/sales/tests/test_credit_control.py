@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
-from apps.accounts.models import Permission, Role, RolePermission
+from apps.accounts.models import Permission, UserPermission
 from apps.common.xlib.exceptions import PermissionException, ValidationException
 from apps.common.xlib.permissions import PermissionChecker
 from apps.inventory.tests.factories import CustomerFactory, ItemFactory, UserFactory
@@ -189,15 +189,15 @@ class TestCreditControl:
         side_effect=PermissionChecker.check_permission,
     )
     def test_approve_credit_bypass_permissions(self, mock_check):
-        # Tạo role CFO và gán quyền
-        cfo_role = Role.objects.create(name="CFO", description="Chief Financial Officer")
+        from apps.accounts.models import UserPermission
+
         perm, _ = Permission.objects.get_or_create(
-            code="sales.approve_credit_bypass", defaults={"name": "Phê duyệt tín dụng đặc cách"}
+            code="finance.approve_credit_bypass", defaults={"name": "Phê duyệt tín dụng đặc cách (Finance)"}
         )
-        RolePermission.objects.create(role=cfo_role, permission=perm)
 
         # User CFO
-        cfo_user = UserFactory(role=cfo_role)
+        cfo_user = UserFactory()
+        UserPermission.objects.create(user=cfo_user, permission=perm)
         # User Sales
         sales_user = UserFactory()
 

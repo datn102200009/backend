@@ -22,7 +22,7 @@ def auth_login(*, username: str, password: str) -> dict:
     Returns:
         Dict: Thông tin access, refresh token và thông tin user
     """
-    # Tim user theo username
+    # Tìm user theo username
     user = User.objects.filter(username=username).first()
     generic_invalid_msg = "Tài khoản hoặc mật khẩu không chính xác."
 
@@ -46,6 +46,12 @@ def auth_login(*, username: str, password: str) -> dict:
         emp = Employee.objects.filter(employee_id=user.employee_id).first()
         if emp:
             full_name = emp.full_name
+
+    # Update last login timestamp
+    from django.utils import timezone
+
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
 
     # Tạo JWT token
     refresh = RefreshToken.for_user(user)
@@ -118,6 +124,7 @@ def user_create(
             "employee_id": employee_id,
             "direct_permissions": direct_permissions or [],
         },
+        allowed_permissions=[],
     )
     return user
 
@@ -169,6 +176,7 @@ def user_update(
         new_value={
             "direct_permissions": direct_permissions or [],
         },
+        allowed_permissions=[],
     )
     return user
 
@@ -206,6 +214,7 @@ def user_change_password(
         table_name="user",
         record_id=str(user.id),
         new_value={"message": "Mật khẩu đã được cập nhật thành công."},
+        allowed_permissions=[],
     )
 
 
@@ -240,4 +249,5 @@ def user_delete(
         record_id=str(user_id),
         old_value={"username": username},
         new_value=None,
+        allowed_permissions=[],
     )

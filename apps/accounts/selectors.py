@@ -1,13 +1,70 @@
-from apps.accounts.models import Role, User
+from datetime import date
+from typing import Optional, Tuple
+
+from django.db.models import Q, QuerySet
+
+from apps.accounts.models import User
 from apps.master_data.models import Employee
 
 
-def role_list():
+def get_user_permissions(user: User) -> list[str]:
+    """Lấy danh sách permissions của user."""
+    return list(user.direct_permissions.values_list("permission__code", flat=True))
+
+
+def system_log_list(
+    user: User,
+    limit: int = 20,
+    offset: int = 0,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    action: Optional[str] = None,
+    search: Optional[str] = None,
+) -> Tuple[QuerySet, int]:
     """
-    Trả về danh sách tất cả các vai trò (roles) trong hệ thống,
-    sắp xếp theo tên vai trò.
+    Lấy danh sách logs theo permissions của user.
     """
-    return Role.objects.all().order_by("name")
+    from apps.accounts.models import SystemLog
+
+    user_permissions = get_user_permissions(user)
+    is_admin = "accounts.view_system_log" in user_permissions
+
+    queryset = SystemLog.objects.select_related("user")
+
+    if not is_admin:
+        if user_permissions:
+            from django.db import connection
+
+            if connection.vendor == "sqlite":
+                q_obj = Q()
+                for perm in user_permissions:
+                    q_obj |= Q(allowed_permissions__icontains=f'"{perm}"')
+                queryset = queryset.filter(q_obj)
+            else:
+                queryset = queryset.filter(allowed_permissions__has_any_keys=user_permissions)
+        else:
+            return SystemLog.objects.none(), 0
+
+    if start_date:
+        queryset = queryset.filter(timestamp__date__gte=start_date)
+    if end_date:
+        queryset = queryset.filter(timestamp__date__lte=end_date)
+    if action:
+        queryset = queryset.filter(action=action)
+    if search:
+        queryset = queryset.filter(
+            Q(table_name__icontains=search)
+            | Q(action__icontains=search)
+            | Q(record_id__icontains=search)
+            | Q(record_code__icontains=search)
+            | Q(user_repr__icontains=search)
+            | Q(user__username__icontains=search)
+        )
+
+    total_count = queryset.count()
+    queryset = queryset.order_by("-timestamp")[offset : offset + limit]
+
+    return queryset, total_count
 
 
 def user_list(*, search: str = None):

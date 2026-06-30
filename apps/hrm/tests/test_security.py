@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.accounts.models import Permission, RolePermission
+from apps.accounts.models import Permission, UserPermission
 from apps.common.xlib.exceptions import PermissionException
 from apps.hrm.services import (
     attendance_batch_record,
@@ -20,7 +20,7 @@ from apps.hrm.services import (
     reward_record_create,
 )
 from apps.hrm.tests.factories import EmployeeFactory, EmploymentContractFactory, LeaveRequestFactory, SalarySlipFactory
-from apps.inventory.tests.factories import RoleFactory, UserFactory
+from apps.inventory.tests.factories import UserFactory
 
 
 @pytest.fixture(autouse=True)
@@ -30,10 +30,10 @@ def mock_check_permission():
 
 
 def create_user_with_permission(permission_code: str):
-    role = RoleFactory()
     permission, _ = Permission.objects.get_or_create(code=permission_code, defaults={"name": f"Test {permission_code}"})
-    RolePermission.objects.create(role=role, permission=permission)
-    return UserFactory(role=role)
+    user = UserFactory()
+    UserPermission.objects.create(user=user, permission=permission)
+    return user
 
 
 @pytest.mark.django_db

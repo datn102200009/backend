@@ -9,14 +9,17 @@ def seed_chatbot_permission(apps, schema_editor):
     )
 
     # Gán quyền cho role Admin và/hoặc admin user theo đúng project rules
-    Role = apps.get_model("accounts", "Role")
-    RolePermission = apps.get_model("accounts", "RolePermission")
-    admin_role = Role.objects.filter(name="Admin").first()
-    if admin_role:
-        RolePermission.objects.get_or_create(
-            role=admin_role,
-            permission=perm,
-        )
+    try:
+        Role = apps.get_model("accounts", "Role")
+        RolePermission = apps.get_model("accounts", "RolePermission")
+        admin_role = Role.objects.filter(name="Admin").first()
+        if admin_role:
+            RolePermission.objects.get_or_create(
+                role=admin_role,
+                permission=perm,
+            )
+    except LookupError:
+        pass
 
     User = apps.get_model("accounts", "User")
     UserPermission = apps.get_model("accounts", "UserPermission")

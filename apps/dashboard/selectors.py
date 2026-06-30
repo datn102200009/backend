@@ -678,9 +678,12 @@ def get_finance_cashflow_overview():
         "period_label": "4 tuần gần nhất",
     }
 
+    current_week_monday = today - timedelta(days=today.weekday())
+    chart_start_date = current_week_monday - timedelta(weeks=3)
+
     # 2. Weekly data - aggregate với Sum trước, KHÔNG cast float trong Python
     txs_agg = (
-        CashFlowTransaction.objects.filter(payment_date__gte=start_date, status="posted")
+        CashFlowTransaction.objects.filter(payment_date__gte=chart_start_date, payment_date__lte=today, status="posted")
         .annotate(week=TruncWeek("payment_date"))
         .values("week", "payment_type")
         .annotate(total=Sum("amount"))
@@ -689,9 +692,9 @@ def get_finance_cashflow_overview():
 
     weeks_data = {}
     for i in range(4):
-        w_start = start_date + timedelta(weeks=i)
-        w_start_monday = w_start - timedelta(days=w_start.weekday())
-        label = f"Tuần {w_start_monday.strftime('%d/%m')}"
+        w_start_monday = current_week_monday - timedelta(weeks=3 - i)
+        w_end_sunday = w_start_monday + timedelta(days=6)
+        label = f"{w_start_monday.strftime('%d/%m')} - {w_end_sunday.strftime('%d/%m')}"
         weeks_data[w_start_monday] = {
             "week_label": label,
             "receive": Decimal("0"),

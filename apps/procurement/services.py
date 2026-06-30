@@ -38,6 +38,7 @@ def supplier_create(
         table_name="supplier",
         record_id=str(supplier.id),
         new_value={"name": name, "supplier_name": supplier_name},
+        allowed_permissions=["procurement.supplier_view"],
     )
     return supplier
 
@@ -77,6 +78,7 @@ def supplier_update(
         table_name="supplier",
         record_id=str(supplier.id),
         new_value={"name": name, "supplier_name": supplier_name},
+        allowed_permissions=["procurement.supplier_view"],
     )
     return supplier
 
@@ -97,4 +99,10 @@ def supplier_delete(*, user: User, supplier_id: str) -> None:
 
     supplier.delete()
 
-    create_system_log(user=user, action="delete", table_name="supplier", record_id=str(supplier_id))
+    create_system_log(
+        user=user,
+        action="delete",
+        table_name="supplier",
+        record_id=str(supplier_id),
+        allowed_permissions=["procurement.supplier_view"],
+    )

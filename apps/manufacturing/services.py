@@ -126,6 +126,7 @@ def bom_create(
             "quantity": str(bom.quantity),
             "items_count": len(items),
         },
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return bom
@@ -239,6 +240,7 @@ def bom_update(
         record_id=str(bom.id),
         old_value=old_value,
         new_value=new_value,
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return bom
@@ -286,6 +288,7 @@ def bom_delete(*, user: User, bom_id: str) -> None:
         table_name="bom",
         record_id=bom_id,
         old_value=log_data,
+        allowed_permissions=["manufacturing.view_log"],
     )
 
 
@@ -385,6 +388,7 @@ def work_order_set_fixed_assets(
         table_name="work_order",
         record_id=str(work_order.id),
         new_value={"fixed_assets_count": len(fixed_asset_ids)},
+        allowed_permissions=["manufacturing.view_log"],
     )
     return work_order
 
@@ -467,6 +471,7 @@ def work_order_create(
             "quantity": str(work_order.quantity),
             "status": work_order.status,
         },
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return work_order
@@ -605,6 +610,7 @@ def work_order_approve(
         table_name="work_order",
         record_id=str(work_order.id),
         new_value={"status": "in_progress"},
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return work_order
@@ -762,6 +768,7 @@ def work_order_declare_production(
             "stock_entry": stock_entry.name,
             "status": work_order.status,
         },
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return work_order
@@ -851,6 +858,7 @@ def work_order_complete(
         table_name="work_order",
         record_id=str(work_order.id),
         new_value={"status": "completed"},
+        allowed_permissions=["manufacturing.view_log"],
     )
 
     return work_order
@@ -881,6 +889,7 @@ def work_order_cancel(
         table_name="work_order",
         record_id=str(work_order.id),
         new_value={"status": "cancelled"},
+        allowed_permissions=["manufacturing.view_log"],
     )
     return work_order
 
@@ -904,4 +913,5 @@ def work_order_delete_pending_approval(*, user: User, work_order_id: str) -> Non
         table_name="work_order",
         record_id=work_order_id,
         old_value={"name": name},
+        allowed_permissions=["manufacturing.view_log"],
     )

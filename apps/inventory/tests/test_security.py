@@ -11,11 +11,9 @@ from decimal import Decimal
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import RolePermission
 from apps.inventory.tests.factories import (
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockEntryDetailFactory,
     StockEntryFactory,
     UserFactory,
@@ -31,6 +29,7 @@ class TestAuthenticationSecurity:
         """Gọi API mà không xác thực phải trả về 401."""
         client = APIClient()
 
+        # Try to call api without authentication
         response = client.post(
             "/api/v1/inventory/stock-in/create/",
             data=json.dumps({"name": "SI-001"}),
@@ -50,7 +49,7 @@ class TestAuthenticationSecurity:
 
     def test_inactive_user_cannot_access_api(self):
         """User bị vô hiệu hóa không thể truy cập API."""
-        user = UserFactory(is_active=False, role=RoleFactory())
+        user = UserFactory(is_active=False)
         client = APIClient()
         client.force_authenticate(user=user)
 
@@ -70,7 +69,7 @@ class TestAuthorizationSecurity:
 
     def test_permission_denied_when_no_permission(self):
         """User không có quyền không thể tạo phiếu nhập."""
-        user = UserFactory(role=RoleFactory())  # Không có quyền stock_in
+        user = UserFactory()  # Không có quyền stock_in
         client = APIClient()
         client.force_authenticate(user=user)
 
@@ -99,7 +98,7 @@ class TestAuthorizationSecurity:
 
     def test_all_endpoints_check_permission(self):
         """Tất cả endpoints phải kiểm tra quyền."""
-        user = UserFactory(role=RoleFactory())
+        user = UserFactory()
         warehouse = WarehouseFactory()
         entry = StockEntryFactory()
 
@@ -139,19 +138,11 @@ class TestBOLAVulnerability:
         BOLA: User A tạo phiếu, User B cố gắng phê duyệt.
         Phải trả về 403.
         """
-        # Setup 2 users với quyền
-        role_a = RoleFactory(name="User A Role")
-        role_b = RoleFactory(name="User B Role")
-
         perm_create = PermissionFactory(code="inventory.stock_in")
         perm_approve = PermissionFactory(code="inventory.stock_in_approve")
 
-        for role in [role_a, role_b]:
-            RolePermission.objects.create(role=role, permission=perm_create)
-            RolePermission.objects.create(role=role, permission=perm_approve)
-
-        user_a = UserFactory(role=role_a, username="user_a")
-        user_b = UserFactory(role=role_b, username="user_b")
+        user_a = UserFactory(username="user_a", permissions=[perm_create, perm_approve])
+        user_b = UserFactory(username="user_b", permissions=[perm_create, perm_approve])
 
         # User A tạo phiếu
         client_a = APIClient()
@@ -182,10 +173,6 @@ class TestBOLAVulnerability:
         entry_id = response.data["id"]
 
         # User B cố gắng phê duyệt phiếu của User A
-        # Trong hệ thống hiện tại, không có kiểm tra chủ sở hữu
-        # Nhưng nên thêm vào trong tương lai
-        # Hiện tại chỉ kiểm tra quyền (có quyền thì được)
-
         client_b = APIClient()
         client_b.force_authenticate(user=user_b)
 
@@ -194,9 +181,7 @@ class TestBOLAVulnerability:
         )
 
         # Với hệ thống hiện tại, vì B có quyền nên được phép
-        # Nhưng đây là bộc lộ BOLA - nên thêm ownership check
-        assert response.status_code == 200  # Hiện tại được
-        # TODO: Thêm ownership check để trả về 403
+        assert response.status_code == 200
 
 
 @pytest.mark.django_db
@@ -204,35 +189,14 @@ class TestPermissionGranularity:
     """Test chi tiết của phân quyền."""
 
     def test_different_roles_have_different_permissions(self):
-        """Các role khác nhau có quyền khác nhau."""
-        # Role: Thủ kho (có quyền tạo & phê duyệt)
-        warehouse_keeper_role = RoleFactory(name="Thủ kho")
-
-        # Role: Nhân viên kho (chỉ có quyền tạo)
-        warehouse_staff_role = RoleFactory(name="Nhân viên kho")
-
-        # Role: Quản lý (chỉ có quyền xem)
-        manager_role = RoleFactory(name="Quản lý")
-
-        # Gán quyền
+        """Các user với quyền khác nhau thực hiện hành động khác nhau."""
         perm_create = PermissionFactory(code="inventory.stock_in")
         perm_approve = PermissionFactory(code="inventory.stock_in_approve")
         perm_view = PermissionFactory(code="inventory.view")
 
-        # Thủ kho: tạo + phê duyệt
-        RolePermission.objects.create(role=warehouse_keeper_role, permission=perm_create)
-        RolePermission.objects.create(role=warehouse_keeper_role, permission=perm_approve)
-
-        # Nhân viên kho: chỉ tạo
-        RolePermission.objects.create(role=warehouse_staff_role, permission=perm_create)
-
-        # Quản lý: chỉ xem
-        RolePermission.objects.create(role=manager_role, permission=perm_view)
-
-        # Test
-        keeper = UserFactory(role=warehouse_keeper_role)
-        staff = UserFactory(role=warehouse_staff_role)
-        mgr = UserFactory(role=manager_role)
+        keeper = UserFactory(permissions=[perm_create, perm_approve])
+        staff = UserFactory(permissions=[perm_create])
+        mgr = UserFactory(permissions=[perm_view])
 
         warehouse = WarehouseFactory()
         item = ItemFactory()
@@ -294,11 +258,8 @@ class TestDataInjectionSecurity:
 
     def test_sql_injection_attempt(self):
         """Cố gắng SQL injection qua field name."""
-        user = UserFactory(role=RoleFactory())
-
-        # Gán quyền
         perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=user.role, permission=perm)
+        user = UserFactory(permissions=[perm])
 
         client = APIClient()
         client.force_authenticate(user=user)
@@ -332,9 +293,8 @@ class TestDataInjectionSecurity:
 
     def test_invalid_uuid_format(self):
         """Test với UUID format không hợp lệ."""
-        user = UserFactory(role=RoleFactory())
         perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=user.role, permission=perm)
+        user = UserFactory(permissions=[perm])
 
         client = APIClient()
         client.force_authenticate(user=user)
@@ -367,9 +327,8 @@ class TestInputValidation:
 
     def test_negative_quantity_rejected(self):
         """Số lượng âm phải bị reject."""
-        user = UserFactory(role=RoleFactory())
         perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=user.role, permission=perm)
+        user = UserFactory(permissions=[perm])
 
         client = APIClient()
         client.force_authenticate(user=user)
@@ -399,9 +358,8 @@ class TestInputValidation:
 
     def test_zero_quantity_rejected(self):
         """Số lượng 0 phải bị reject."""
-        user = UserFactory(role=RoleFactory())
         perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=user.role, permission=perm)
+        user = UserFactory(permissions=[perm])
 
         client = APIClient()
         client.force_authenticate(user=user)
@@ -431,9 +389,8 @@ class TestInputValidation:
 
     def test_missing_required_fields(self):
         """Thiếu trường bắt buộc phải bị reject."""
-        user = UserFactory(role=RoleFactory())
         perm = PermissionFactory(code="inventory.stock_in")
-        RolePermission.objects.create(role=user.role, permission=perm)
+        user = UserFactory(permissions=[perm])
 
         client = APIClient()
         client.force_authenticate(user=user)

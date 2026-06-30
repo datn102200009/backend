@@ -11,14 +11,12 @@ import pytest
 from django.db.models import Sum
 from rest_framework.test import APIClient
 
-from apps.accounts.models import RolePermission
 from apps.inventory.models import StockEntry, StockLedger
 from apps.inventory.tests.factories import (
     BOMFactory,
     BOMItemFactory,
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockLedgerFactory,
     UserFactory,
     WarehouseFactory,
