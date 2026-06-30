@@ -22,7 +22,7 @@ def auth_login(*, username: str, password: str) -> dict:
     Returns:
         Dict: Thông tin access, refresh token và thông tin user
     """
-    # Tim user theo username
+    # Tìm user theo username
     user = User.objects.filter(username=username).first()
     generic_invalid_msg = "Tài khoản hoặc mật khẩu không chính xác."
 

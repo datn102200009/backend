@@ -38,7 +38,7 @@ def system_log_list(
             if connection.vendor == "sqlite":
                 q_obj = Q()
                 for perm in user_permissions:
-                    q_obj |= Q(allowed_permissions__icontains=perm)
+                    q_obj |= Q(allowed_permissions__icontains=f'"{perm}"')
                 queryset = queryset.filter(q_obj)
             else:
                 queryset = queryset.filter(allowed_permissions__has_any_keys=user_permissions)
