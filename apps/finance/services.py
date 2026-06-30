@@ -242,6 +242,12 @@ def cash_flow_create(
         table_name="cash_flow_transaction",
         record_id=str(transaction_obj.id),
         new_value={"type": payment_type, "amount": str(amount), "status": transaction_obj.status},
+        allowed_permissions=["finance.view_log"]
+        + (
+            ["sales.view_log"]
+            if payment_type == "receive"
+            else (["hrm.view_log"] if category == "Salary" else ["purchasing.view_log"])
+        ),
     )
 
     return transaction_obj
@@ -285,6 +291,7 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
                     table_name="fixed_asset",
                     record_id=str(asset.id),
                     new_value={"status": "idle", "purchase_date": str(asset.purchase_date)},
+                    allowed_permissions=["finance.view_log"],
                 )
             else:
                 import logging
@@ -307,6 +314,7 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
                     table_name="fixed_asset",
                     record_id=str(asset.id),
                     new_value={"status": "disposed", "disposal_date": str(asset.disposal_date)},
+                    allowed_permissions=["finance.view_log"],
                 )
             else:
                 import logging
@@ -322,6 +330,7 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
         table_name="cash_flow_transaction",
         record_id=str(tx.id),
         new_value={"status": tx.status, "approved_by": str(user.id)},
+        allowed_permissions=["finance.view_log"],
     )
 
     if tx.category == "Chi phí vận chuyển lô hàng" and tx.shipment_id:
@@ -335,6 +344,7 @@ def cash_flow_approve(*, user: User, tx_id: str) -> CashFlowTransaction:
             table_name="shipment",
             record_id=str(shipment.id),
             new_value={"status": shipment.status, "total_logistic_fees": str(shipment.total_logistic_fees)},
+            allowed_permissions=["finance.view_log"],
         )
 
     return tx
@@ -391,6 +401,7 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
                     "deleted": True,
                     "reason": "Từ chối đơn duyệt mua",
                 },
+                allowed_permissions=["finance.view_log"],
             )
         elif tx.payment_type == "receive" and asset.status == "pending_dispose":
             # Không duyệt thanh lý: trở về idle
@@ -413,6 +424,7 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
                     "disposal_date": str(old_disposal_date) if old_disposal_date is not None else None,
                 },
                 new_value={"status": "idle", "disposal_value": None, "disposal_date": None},
+                allowed_permissions=["finance.view_log"],
             )
 
     tx.status = "rejected"
@@ -428,6 +440,7 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
         table_name="cash_flow_transaction",
         record_id=str(tx.id),
         new_value={"status": "rejected", "rejected_by": str(user.id)},
+        allowed_permissions=["finance.view_log"],
     )
 
     if tx.category == "Chi phí vận chuyển lô hàng" and tx.shipment_id:
@@ -440,6 +453,7 @@ def cash_flow_reject(*, user: User, tx_id: str, remarks: str = "") -> CashFlowTr
             table_name="shipment",
             record_id=str(shipment.id),
             new_value={"status": shipment.status},
+            allowed_permissions=["finance.view_log"],
         )
 
     return tx
@@ -489,6 +503,7 @@ def cash_flow_reverse(
             "is_reversal": True,
             "original_tx_id": str(original_tx.id),
         },
+        allowed_permissions=["finance.view_log"],
     )
 
     return reverse_tx
@@ -627,6 +642,7 @@ def fixed_asset_create(
         table_name="fixed_asset",
         record_id=str(asset.id),
         new_value={"asset_code": asset_code, "original_value": str(original_value)},
+        allowed_permissions=["finance.view_log"],
     )
 
     # Tự tạo PO + PI + CF pending_approval
@@ -706,6 +722,7 @@ def fixed_asset_request_dispose(
             table_name="fixed_asset",
             record_id=str(asset.id),
             new_value={"status": "pending_dispose", "disposal_value": str(disposal_value)},
+            allowed_permissions=["finance.view_log"],
         )
     # LUỒNG 2: Thanh lý 0 đồng (mua lại phế liệu/hủy bỏ không thu hồi tiền) → chuyển thẳng sang disposed
     #   - KHÔNG tạo CF (không có dòng tiền)
@@ -723,6 +740,7 @@ def fixed_asset_request_dispose(
             table_name="fixed_asset",
             record_id=str(asset.id),
             new_value={"status": "disposed", "disposal_value": "0.00"},
+            allowed_permissions=["finance.view_log"],
         )
     return asset
 
@@ -866,6 +884,7 @@ def fixed_asset_update(
         table_name="fixed_asset",
         record_id=str(asset.id),
         new_value={"asset_name": asset.asset_name, "useful_life_months": asset.useful_life_months},
+        allowed_permissions=["finance.view_log"],
     )
     return asset
 
@@ -1040,6 +1059,7 @@ def run_fixed_asset_depreciation(*, user: User, period: str) -> list[FixedAssetD
             table_name="fixed_asset_depreciation_log",
             record_id=period,
             new_value={"period": period, "depreciated_count": len(logs)},
+            allowed_permissions=["finance.view_log"],
         )
 
     return logs
@@ -1087,6 +1107,7 @@ def pay_purchase_invoice(*, user: User, invoice_id: str, amount: Decimal, paymen
         table_name="cash_flow_transaction",
         record_id=str(tx.id),
         new_value={"status": tx.status, "approved_by": str(user.id)},
+        allowed_permissions=["finance.view_log"],
     )
 
     return tx
@@ -1137,6 +1158,7 @@ def collect_sales_invoice(*, user: User, invoice_id: str, amount: Decimal, payme
         table_name="cash_flow_transaction",
         record_id=str(tx.id),
         new_value={"status": tx.status, "approved_by": str(user.id)},
+        allowed_permissions=["finance.view_log"],
     )
 
     return tx
@@ -1280,6 +1302,7 @@ def payroll_pay_slip(*, user: User, salary_slip_id: str, payment_method: str = "
         record_id=str(slip.id),
         old_value={"status": old_status},
         new_value={"status": "paid", "payment_method": payment_method},
+        allowed_permissions=["finance.view_log"],
     )
 
     # Tạo CashFlowTransaction
@@ -1343,6 +1366,7 @@ def payroll_approve_slip(*, user: User, salary_slip_id: str) -> SalarySlip:
             "approved_by_id": str(user.id),
             "approved_at": str(slip.approved_at),
         },
+        allowed_permissions=["finance.view_log"],
     )
     return slip
 
@@ -1376,6 +1400,7 @@ def payroll_reject_slip(*, user: User, salary_slip_id: str, reason: str) -> Sala
             "status": "calculated",
             "remarks": reason,
         },
+        allowed_permissions=["finance.view_log"],
     )
     return slip
 

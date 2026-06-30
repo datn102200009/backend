@@ -16,11 +16,11 @@ WIDGETS_REGISTRY = {
         "quick_links": ["/sales?tab=orders&status=draft"],
     },
     "sales_pending_credit_bypass": {
-        "permission": "sales.approve_credit_bypass",
+        "permission": "finance.approve_credit_bypass",
         "type": "kpi_list",
         "size": "1x2",
         "title": "Đơn bán hàng chờ duyệt vượt hạn mức",
-        "quick_links": ["/sales?tab=orders&status=pending_credit_approval"],
+        "quick_links": ["/finance?tab=approvals"],
     },
     "sales_pending_fulfillment": {
         "permission": "sales.view_order",

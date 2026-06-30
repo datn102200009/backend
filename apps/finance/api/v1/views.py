@@ -428,3 +428,19 @@ class SalesInvoiceCollectAPIView(APIView):
 
         invoice = sales_invoice_detail(invoice_id=str(pk))
         return Response(SalesInvoiceSerializer(invoice).data, status=status.HTTP_200_OK)
+
+
+class FinancePendingCreditApprovalsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        PermissionChecker.check_permission(request.user, "finance.approve_credit_bypass")
+        from apps.sales.api.v1.serializers import SalesOrderSerializer
+        from apps.sales.models import SalesOrder
+
+        orders = (
+            SalesOrder.objects.filter(status=SalesOrder.Status.PENDING_CREDIT_APPROVAL)
+            .select_related("customer")
+            .order_by("-created_at")
+        )
+        return Response(SalesOrderSerializer(orders, many=True).data)

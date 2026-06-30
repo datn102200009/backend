@@ -52,6 +52,7 @@ def customer_create(
             "payment_terms": payment_terms,
             "is_credit_locked": is_credit_locked,
         },
+        allowed_permissions=["sales.view_log"],
     )
     return customer
 
@@ -108,6 +109,7 @@ def customer_update(
             "payment_terms": customer.payment_terms,
             "is_credit_locked": customer.is_credit_locked,
         },
+        allowed_permissions=["sales.view_log"],
     )
     return customer
 
@@ -128,4 +130,10 @@ def customer_delete(*, user: User, customer_id: str) -> None:
 
     customer.delete()
 
-    create_system_log(user=user, action="delete", table_name="customer", record_id=str(customer_id))
+    create_system_log(
+        user=user,
+        action="delete",
+        table_name="customer",
+        record_id=str(customer_id),
+        allowed_permissions=["sales.view_log"],
+    )

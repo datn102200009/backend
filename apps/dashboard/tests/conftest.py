@@ -1,9 +1,9 @@
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import Permission, RolePermission
+from apps.accounts.models import Permission, UserPermission
 from apps.common.tests.conftest import admin_user, mock_permission, regular_user
-from apps.inventory.tests.factories import RoleFactory, UserFactory
+from apps.inventory.tests.factories import UserFactory
 
 
 @pytest.fixture
@@ -15,12 +15,11 @@ def api_client():
 @pytest.fixture
 def authenticated_client_with_perms(api_client, db):
     """Return an authenticated client with sales order viewing permission."""
-    role = RoleFactory(name="Sales Representative")
-    user = UserFactory(username="sales_rep", password_hash="testpass", role=role)
+    user = UserFactory(username="sales_rep", password_hash="testpass")
 
     # Give sales.view_order permission
     perm, _ = Permission.objects.get_or_create(code="sales.view_order", defaults={"name": "Xem đơn hàng"})
-    RolePermission.objects.get_or_create(role=role, permission=perm)
+    UserPermission.objects.get_or_create(user=user, permission=perm)
 
     api_client.force_authenticate(user=user)
     return api_client, user

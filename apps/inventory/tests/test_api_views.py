@@ -9,14 +9,12 @@ from decimal import Decimal
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import RolePermission
 from apps.inventory.models import StockEntry
 from apps.inventory.tests.factories import (
     BOMFactory,
     BOMItemFactory,
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockEntryDetailFactory,
     StockEntryFactory,
     StockLedgerFactory,
@@ -88,7 +86,7 @@ class TestStockInAPI:
 
     def test_stock_in_create_no_permission(self, api_client, setup_data):
         """Test tạo phiếu nhập kho mà không có quyền."""
-        user = UserFactory(role=RoleFactory())
+        user = UserFactory()
         api_client.force_authenticate(user=user)
         data = setup_data
 

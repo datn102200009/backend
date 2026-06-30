@@ -2,7 +2,7 @@ from django.urls import path
 
 from apps.accounts.api.v1.views import (
     PermissionListAPIView,
-    RoleListAPIView,
+    SystemLogListAPIView,
     UserChangePasswordAPIView,
     UserDetailUpdateDeleteAPIView,
     UserListCreateAPIView,
@@ -16,7 +16,7 @@ app_name = "accounts_api_v1"
 urlpatterns = [
     path("auth/login/", auth_login_view, name="auth-login"),
     path("auth/me/", auth_me_view, name="auth-me"),
-    path("roles/", RoleListAPIView.as_view(), name="role-list"),
+    path("system-logs/", SystemLogListAPIView.as_view(), name="system-logs-list"),
     path("users/", UserListCreateAPIView.as_view(), name="user-list-create"),
     path("users/unlinked-employees/", UserUnlinkedEmployeesAPIView.as_view(), name="user-unlinked-employees"),
     path("users/<uuid:pk>/", UserDetailUpdateDeleteAPIView.as_view(), name="user-detail-update-delete"),

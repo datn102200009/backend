@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.accounts.models import Permission, RolePermission
+from apps.accounts.models import Permission
 from apps.common.xlib.exceptions import NotFoundException, PermissionException, ValidationException
 from apps.inventory.services import stock_issue_approve, stock_issue_create
 from apps.inventory.tests.factories import (
@@ -15,7 +15,6 @@ from apps.inventory.tests.factories import (
     BOMItemFactory,
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockEntryFactory,
     StockLedgerFactory,
     UserFactory,
@@ -83,7 +82,7 @@ class TestStockIssueCreate:
     def test_stock_issue_create_no_permission(self, setup_issue_data):
         """Test tạo phiếu xuất kho mà không có quyền."""
         data = setup_issue_data
-        user = UserFactory(role=RoleFactory())
+        user = UserFactory()
 
         with pytest.raises(PermissionException):
             stock_issue_create(
@@ -139,7 +138,7 @@ class TestStockIssueApprove:
 
     def test_stock_issue_approve_no_permission(self):
         """Test phê duyệt phiếu xuất kho mà không có quyền."""
-        user = UserFactory(role=RoleFactory())
+        user = UserFactory()
         entry = StockEntryFactory(purpose="issue", status="draft")
 
         with pytest.raises(PermissionException):

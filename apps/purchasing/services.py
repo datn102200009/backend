@@ -78,6 +78,7 @@ def purchase_order_create(
         table_name="purchase_order",
         record_id=str(order.id),
         new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return order
@@ -156,6 +157,7 @@ def purchase_order_update(
         table_name="purchase_order",
         record_id=str(order.id),
         new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return order
@@ -184,7 +186,12 @@ def purchase_order_delete(*, user: User, order_id: str) -> None:
     order.delete()
 
     create_system_log(
-        user=user, action="delete", table_name="purchase_order", record_id=order_id_str, new_value={"status": "deleted"}
+        user=user,
+        action="delete",
+        table_name="purchase_order",
+        record_id=order_id_str,
+        new_value={"status": "deleted"},
+        allowed_permissions=["purchasing.view_log"],
     )
 
 
@@ -362,6 +369,7 @@ def purchase_order_approve(*, user: User, order_id: str, due_date: Optional[Any]
         table_name="purchase_order",
         record_id=str(order.id),
         new_value={"status": order.status, "invoice_id": str(invoice.id)},
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return order
@@ -606,6 +614,7 @@ def purchase_order_cancel(
         table_name="purchase_order",
         record_id=str(order.id),
         new_value={"status": order.status},
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return order
@@ -649,6 +658,7 @@ def shipment_create(
         table_name="shipment",
         record_id=str(shipment.id),
         new_value={"shipment_num": shipment_num, "status": shipment.status},
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return shipment
@@ -705,6 +715,7 @@ def record_shipment_logistic_fees(*, user: User, shipment_id: str, total_logisti
             "total_logistic_fees": str(total_logistic_fees),
             "accounting_entry": f"[Hạch toán] Nợ TK 152 (Chi phí mua hàng dồn tích) / Có TK 331 (Phải trả người bán - Chi phí vận chuyển): {total_logistic_fees:,.2f}đ",
         },
+        allowed_permissions=["purchasing.view_log"],
     )
 
     return shipment
@@ -754,6 +765,7 @@ def shipment_update(
         record_id=str(shipment.id),
         old_value={"status": old_status, "remarks": old_remarks},
         new_value={"status": shipment.status, "remarks": shipment.remarks},
+        allowed_permissions=["purchasing.view_log"],
     )
     return shipment
 
@@ -801,6 +813,7 @@ def shipment_create_from_po(
         table_name="shipment",
         record_id=str(shipment.id),
         new_value={"shipment_num": shipment_num, "status": shipment.status, "purchase_order_id": str(po.id)},
+        allowed_permissions=["purchasing.view_log"],
     )
     return shipment
 
@@ -898,6 +911,7 @@ def shipment_complete(
                 "total_logistic_fees": str(total_logistic_fees),
                 "resubmitted": True,
             },
+            allowed_permissions=["purchasing.view_log"],
         )
         return shipment
 
@@ -1052,5 +1066,6 @@ def shipment_complete(
             "total_logistic_fees": str(total_logistic_fees),
             "stock_entry_id": str(stock_entry.id),
         },
+        allowed_permissions=["purchasing.view_log"],
     )
     return shipment

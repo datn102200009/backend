@@ -4,8 +4,8 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 
-from apps.accounts.models import Permission, RolePermission
-from apps.inventory.tests.factories import PermissionFactory, RoleFactory, UserFactory
+from apps.accounts.models import Permission, UserPermission
+from apps.inventory.tests.factories import PermissionFactory, UserFactory
 
 
 @pytest.mark.django_db
@@ -87,17 +87,15 @@ class TestDashboardViews:
         assert response.status_code in [status.HTTP_403_FORBIDDEN, status.HTTP_500_INTERNAL_SERVER_ERROR]
 
     def test_warehouse_keeper_widgets_rbac(self, api_client, db):
-        # Create a warehouse keeper role and user
-        role = RoleFactory(name="Warehouse Keeper")
-        user = UserFactory(username="keeper", password_hash="testpass", role=role)
+        user = UserFactory(username="keeper", password_hash="testpass")
 
         # Give inventory.view and inventory.stock_transfer permissions
         perm_view, _ = Permission.objects.get_or_create(code="inventory.view", defaults={"name": "Xem kho"})
         perm_transfer, _ = Permission.objects.get_or_create(
             code="inventory.stock_transfer", defaults={"name": "Chuyển kho"}
         )
-        RolePermission.objects.get_or_create(role=role, permission=perm_view)
-        RolePermission.objects.get_or_create(role=role, permission=perm_transfer)
+        UserPermission.objects.get_or_create(user=user, permission=perm_view)
+        UserPermission.objects.get_or_create(user=user, permission=perm_transfer)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-metadata-list")
@@ -134,10 +132,9 @@ class TestDashboardViews:
         assert isinstance(response.data["total_count"], int)
 
     def test_widget_batch_data_cashflow_overview(self, api_client, db):
-        role = RoleFactory(name="Accountant")
-        user = UserFactory(username="accountant", password_hash="testpass", role=role)
+        user = UserFactory(username="accountant", password_hash="testpass")
         perm, _ = Permission.objects.get_or_create(code="finance.view_cash_flow", defaults={"name": "Xem dòng tiền"})
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-batch-data")
@@ -152,12 +149,11 @@ class TestDashboardViews:
         assert payload["summary"]["period_label"] == "4 tuần gần nhất"
 
     def test_widget_batch_data_manufacturing_pending_wo_approval(self, api_client, db):
-        role = RoleFactory(name="Planner")
-        user = UserFactory(username="planner", password_hash="testpass", role=role)
+        user = UserFactory(username="planner", password_hash="testpass")
         perm, _ = Permission.objects.get_or_create(
             code="manufacturing.work_order_approve", defaults={"name": "Duyệt lệnh SX"}
         )
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-batch-data")
@@ -182,10 +178,9 @@ class TestDashboardViews:
         assert isinstance(data["sales_draft_orders"]["total_count"], int)
 
     def test_widget_data_detail_with_purpose_filter(self, api_client, db):
-        role = RoleFactory(name="Inventory Manager")
-        user = UserFactory(username="inv_mgr", password_hash="testpass", role=role)
+        user = UserFactory(username="inv_mgr", password_hash="testpass")
         perm, _ = Permission.objects.get_or_create(code="inventory.stock_transfer", defaults={"name": "Chuyển kho"})
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-data-detail", kwargs={"widget_code": "inventory_pending_entries"})
@@ -196,12 +191,11 @@ class TestDashboardViews:
         assert "total_count" in response.data
 
     def test_widget_batch_data_finance_pending_cashflow_approval(self, api_client, db):
-        role = RoleFactory(name="Approver")
-        user = UserFactory(username="approver", password_hash="testpass", role=role)
+        user = UserFactory(username="approver", password_hash="testpass")
         perm, _ = Permission.objects.get_or_create(
             code="finance.approve_cash_flow", defaults={"name": "Duyệt dòng tiền"}
         )
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
         api_client.force_authenticate(user=user)
         url = reverse("widget-batch-data")
