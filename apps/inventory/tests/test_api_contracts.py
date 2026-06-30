@@ -11,14 +11,12 @@ from decimal import Decimal
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import RolePermission
 from apps.inventory.models import StockEntry
 from apps.inventory.tests.factories import (
     BOMFactory,
     BOMItemFactory,
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockLedgerFactory,
     UserFactory,
     WarehouseFactory,
@@ -223,7 +221,7 @@ class TestErrorResponseContract:
 
     def test_403_permission_error_structure(self, api_client):
         """403 permission error phải có structure chuẩn."""
-        user = UserFactory(role=RoleFactory())  # No permissions
+        user = UserFactory()  # No permissions
         api_client.force_authenticate(user=user)
 
         response = api_client.post(

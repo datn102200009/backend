@@ -36,15 +36,9 @@ class PermissionChecker:
             raise PermissionException("Tài khoản người dùng đã bị vô hiệu hóa")
 
         if not hasattr(user, "_perm_cache"):
-            direct_perms = set(user.direct_permissions.values_list("permission__code", flat=True))
-            if hasattr(user, "role") and user.role:
-                role_perms = set(user.role.permissions.values_list("permission__code", flat=True))
-                direct_perms.update(role_perms)
-            user._perm_cache = direct_perms
+            user._perm_cache = set(user.direct_permissions.values_list("permission__code", flat=True))
 
         if permission_code not in user._perm_cache:
-            if hasattr(user, "role") and user.role is None and not direct_perms:
-                raise PermissionException("Người dùng không được gán vai trò")
             raise PermissionException(f"Người dùng không có quyền: {permission_code}")
 
     @staticmethod
@@ -98,11 +92,7 @@ class PermissionChecker:
             raise PermissionException("Tài khoản người dùng đã bị vô hiệu hóa")
 
         if not hasattr(user, "_perm_cache"):
-            direct_perms = set(user.direct_permissions.values_list("permission__code", flat=True))
-            if hasattr(user, "role") and user.role:
-                role_perms = set(user.role.permissions.values_list("permission__code", flat=True))
-                direct_perms.update(role_perms)
-            user._perm_cache = direct_perms
+            user._perm_cache = set(user.direct_permissions.values_list("permission__code", flat=True))
 
         user_permission_codes = user._perm_cache
 
@@ -110,13 +100,9 @@ class PermissionChecker:
             # Kiểm tra xem user có tất cả quyền hay không
             missing_permissions = set(permission_codes) - user_permission_codes
             if missing_permissions:
-                if hasattr(user, "role") and user.role is None and not user_permission_codes:
-                    raise PermissionException("Người dùng không được gán vai trò")
                 raise PermissionException(f"Người dùng thiếu quyền: {', '.join(missing_permissions)}")
         else:
             # Kiểm tra xem user có ít nhất một quyền hay không
             has_any = bool(user_permission_codes & set(permission_codes))
             if not has_any:
-                if hasattr(user, "role") and user.role is None and not user_permission_codes:
-                    raise PermissionException("Người dùng không được gán vai trò")
                 raise PermissionException(f"Người dùng không có bất kỳ quyền nào: {', '.join(permission_codes)}")

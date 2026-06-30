@@ -4,8 +4,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.api.v1.serializers import AuthLoginInputSerializer, AuthTokenOutputSerializer, RoleSerializer
-from apps.accounts.selectors import role_list
+from apps.accounts.api.v1.serializers import (
+    AuthLoginInputSerializer,
+    AuthTokenOutputSerializer,
+    SystemLogListSerializer,
+)
+from apps.accounts.selectors import system_log_list
 from apps.accounts.services import auth_login
 from apps.common.xlib.exceptions import NotFoundException, ValidationException
 
@@ -40,19 +44,64 @@ def auth_login_view(request):
     )
 
 
-class RoleListAPIView(APIView):
+class SystemLogListAPIView(APIView):
     """
-    API Lấy danh sách các vai trò (roles) trong hệ thống.
+    API Lấy danh sách logs hệ thống theo phân quyền.
 
-    GET /api/v1/accounts/roles/
+    GET /api/v1/accounts/system-logs/
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        roles = role_list()
-        serializer = RoleSerializer(roles, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        try:
+            limit = int(request.query_params.get("limit", 20))
+            offset = int(request.query_params.get("offset", 0))
+            limit = min(limit, 100)
+        except ValueError:
+            limit = 20
+            offset = 0
+
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        action = request.query_params.get("action")
+        search = request.query_params.get("search")
+
+        from datetime import datetime
+
+        parsed_start = None
+        parsed_end = None
+        if start_date:
+            try:
+                parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+
+        queryset, total_count = system_log_list(
+            user=request.user,
+            limit=limit,
+            offset=offset,
+            start_date=parsed_start,
+            end_date=parsed_end,
+            action=action,
+            search=search,
+        )
+
+        serializer = SystemLogListSerializer(queryset, many=True)
+        return Response(
+            {
+                "count": total_count,
+                "next": None,
+                "previous": None,
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 @api_view(["GET"])

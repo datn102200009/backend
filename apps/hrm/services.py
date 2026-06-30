@@ -54,6 +54,7 @@ def _delete_linked_user(*, employee: Employee, terminator: Optional[User] = None
             record_id=str(user_id),
             old_value={"username": username},
             new_value=None,
+            allowed_permissions=["hrm.view_log"],
         )
 
 
@@ -120,6 +121,7 @@ def _deactivate_employee(
             "leave_date": str(termination_date),
             "note": "Sa thải theo kỷ luật - không có HĐLĐ active",
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     _delete_linked_user(employee=employee, terminator=terminator)
@@ -151,6 +153,7 @@ def _create_termination_document(
             "title": doc.title,
             "file_url": doc.file_url,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
 
@@ -230,6 +233,7 @@ def employee_create_with_contract(
         table_name="employee",
         record_id=str(employee.id),
         new_value=employee_data_for_log,
+        allowed_permissions=["hrm.view_log"],
     )
 
     # Tạo EmploymentContract bắt buộc
@@ -277,6 +281,7 @@ def employee_create_with_contract(
         table_name="employment_contract",
         record_id=str(contract.id),
         new_value=contract_data_for_log,
+        allowed_permissions=["hrm.view_log"],
     )
 
     return employee, contract
@@ -335,6 +340,7 @@ def employee_update(
             record_id=str(employee.id),
             old_value=old_value,
             new_value=new_value,
+            allowed_permissions=["hrm.view_log"],
         )
 
     return employee
@@ -416,6 +422,7 @@ def contract_create_or_renew(
                 record_id=str(old_contract.id),
                 old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
                 new_value={"status": "expired", "end_date": str(new_end_for_old)},
+                allowed_permissions=["hrm.view_log"],
             )
         else:
             old_contract.save(update_fields=["status"])
@@ -428,6 +435,7 @@ def contract_create_or_renew(
                 record_id=str(old_contract.id),
                 old_value={"status": old_status},
                 new_value={"status": "expired"},
+                allowed_permissions=["hrm.view_log"],
             )
 
     # 2. Tạo hợp đồng mới ở trạng thái active
@@ -460,6 +468,7 @@ def contract_create_or_renew(
         table_name="employment_contract",
         record_id=str(contract.id),
         new_value=contract_log_data,
+        allowed_permissions=["hrm.view_log"],
     )
 
     # 3. Tạo tài liệu đính kèm scan hợp đồng nếu có file_url
@@ -484,6 +493,7 @@ def contract_create_or_renew(
                 "title": doc.title,
                 "file_url": doc.file_url,
             },
+            allowed_permissions=["hrm.view_log"],
         )
     return contract
 
@@ -537,6 +547,7 @@ def contract_renew(
             record_id=str(old_contract.id),
             old_value={"status": old_status, "end_date": str(old_end_date) if old_end_date else None},
             new_value={"status": "expired", "end_date": str(new_end_for_old)},
+            allowed_permissions=["hrm.view_log"],
         )
     else:
         old_contract.save(update_fields=["status"])
@@ -548,6 +559,7 @@ def contract_renew(
             record_id=str(old_contract.id),
             old_value={"status": old_status},
             new_value={"status": "expired"},
+            allowed_permissions=["hrm.view_log"],
         )
 
     # 2. Tạo HĐLĐ mới
@@ -575,6 +587,7 @@ def contract_renew(
             "renewed_from": str(old_contract.id),
             "salary_base": str(new_contract.salary_base) if new_contract.salary_base is not None else None,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     # 4. Lưu file scan hợp đồng (nếu có)
@@ -597,6 +610,7 @@ def contract_renew(
                 "title": doc.title,
                 "file_url": doc.file_url,
             },
+            allowed_permissions=["hrm.view_log"],
         )
     return {"contract": new_contract}
 
@@ -744,6 +758,7 @@ def contract_terminate(
             "status": "terminated",
             "end_date": str(termination_date),
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     # 4. Cập nhật Employee sang inactive và điền leave_date
@@ -766,6 +781,7 @@ def contract_terminate(
             "employment_status": "inactive",
             "leave_date": str(termination_date),
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     # 5. Xóa tài khoản User liên kết qua employee_id
@@ -791,6 +807,7 @@ def contract_terminate(
                 "title": doc.title,
                 "file_url": doc.file_url,
             },
+            allowed_permissions=["hrm.view_log"],
         )
 
     return contract
@@ -843,6 +860,7 @@ def employee_adjust_salary_apply(
             record_id=str(active_contract.id),
             old_value={"salary_base": str(old_salary) if old_salary else None},
             new_value={"salary_base": str(new_salary_base), "effective_date": str(today)},
+            allowed_permissions=["hrm.view_log"],
         )
         result_contract = active_contract
     else:
@@ -861,6 +879,7 @@ def employee_adjust_salary_apply(
                 record_id=str(active_contract.id),
                 old_value={"status": old_status},
                 new_value={"status": "expired", "end_date": str(active_contract.end_date)},
+                allowed_permissions=["hrm.view_log"],
             )
 
         new_contract = EmploymentContract.objects.create(
@@ -884,6 +903,7 @@ def employee_adjust_salary_apply(
                 "start_date": str(today),
                 "status": "active",
             },
+            allowed_permissions=["hrm.view_log"],
         )
         result_contract = new_contract
 
@@ -974,6 +994,7 @@ def attendance_batch_record(
                     "overtime_hours": str(overtime_hours),
                     "remarks": remarks,
                 },
+                allowed_permissions=["hrm.view_log"],
             )
         else:
             # Cập nhật nếu đã tồn tại
@@ -1006,6 +1027,7 @@ def attendance_batch_record(
                     "overtime_hours": str(overtime_hours),
                     "remarks": remarks,
                 },
+                allowed_permissions=["hrm.view_log"],
             )
 
         result.append(attendance)
@@ -1066,6 +1088,7 @@ def leave_request_create(
             "reason": reason,
             "status": "pending",
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return leave_request
@@ -1133,6 +1156,7 @@ def leave_request_approve(
             "approved_by_id": str(approved_by_user_id),
             "approved_at": str(leave_request.approved_at),
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     # Tự động tạo/cập nhật bảng Attendance cho các ngày nghỉ
@@ -1316,6 +1340,7 @@ def reward_record_create(
             "amount": str(reward.amount) if reward.amount is not None else None,
             "description": reward.description,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return reward
@@ -1399,6 +1424,7 @@ def discipline_record_create(
             "description": discipline.description,
             "file_url": discipline.file_url,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return discipline
@@ -1872,6 +1898,7 @@ def payroll_calculate_salary(
             "net_pay": str(slip.net_pay),
             "remarks": slip.remarks,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return slip
@@ -1919,6 +1946,7 @@ def public_holiday_create(
             "days": holiday.days,
             "description": holiday.description,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return holiday
@@ -1986,6 +2014,7 @@ def public_holiday_update(
             "days": holiday.days,
             "description": holiday.description,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return holiday
@@ -2022,6 +2051,7 @@ def public_holiday_delete(
         record_id=record_id,
         old_value=old_value,
         new_value={},
+        allowed_permissions=["hrm.view_log"],
     )
 
 
@@ -2062,6 +2092,7 @@ def reward_record_approve(*, user: User, reward_id: str) -> RewardRecord:
         table_name="reward_record",
         record_id=str(reward.id),
         new_value={"status": reward.status, "approved_by_id": str(user.id)},
+        allowed_permissions=["hrm.view_log"],
     )
 
     return reward
@@ -2116,6 +2147,7 @@ def discipline_record_approve(*, user: User, discipline_id: str) -> DisciplineRe
         table_name="discipline_record",
         record_id=str(discipline.id),
         new_value={"status": discipline.status, "approved_by_id": str(user.id)},
+        allowed_permissions=["hrm.view_log"],
     )
 
     if discipline.discipline_type == "termination":
@@ -2172,6 +2204,7 @@ def _handle_termination_side_effects(*, discipline: DisciplineRecord, approver: 
             "termination_date": str(discipline_date),
             "had_active_contract": had_active_contract,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
 
@@ -2304,6 +2337,7 @@ def payroll_calculate_terminated_salary(
             "is_lawful": is_lawful,
             "unused_leave_days": float(unused_leave_days),
         },
+        allowed_permissions=["hrm.view_log"],
     )
     return slip
 
@@ -2414,6 +2448,7 @@ def create_partial_salary_slip(
             "period_start": str(period_start),
             "period_end": str(period_end),
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return slip
@@ -2457,6 +2492,7 @@ def payroll_submit_for_review(
         record_id=str(slip.id),
         old_value={"status": "calculated"},
         new_value={"status": "pending_finance_review", "log": "HRM submitted for Finance review"},
+        allowed_permissions=["hrm.view_log"],
     )
 
     return slip
@@ -2637,6 +2673,7 @@ def reward_record_update(
             "description": reward.description,
             "salary_slip_id": str(reward.salary_slip_id) if reward.salary_slip_id else None,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return reward
@@ -2684,6 +2721,7 @@ def reward_record_cancel(
             "cancelled_by_id": str(user.id),
             "reason": reason,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return reward
@@ -2731,6 +2769,7 @@ def reward_record_delete(
         record_id=record_id,
         old_value=old_value,
         new_value={},
+        allowed_permissions=["hrm.view_log"],
     )
 
 
@@ -2833,6 +2872,7 @@ def discipline_record_update(
             "file_url": discipline.file_url,
             "salary_slip_id": str(discipline.salary_slip_id) if discipline.salary_slip_id else None,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return discipline
@@ -2885,6 +2925,7 @@ def discipline_record_cancel(
             "cancelled_by_id": str(user.id),
             "reason": reason,
         },
+        allowed_permissions=["hrm.view_log"],
     )
 
     return discipline
@@ -2939,4 +2980,5 @@ def discipline_record_delete(
         record_id=record_id,
         old_value=old_value,
         new_value={},
+        allowed_permissions=["hrm.view_log"],
     )

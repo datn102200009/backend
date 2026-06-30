@@ -94,6 +94,7 @@ def stock_in_create(
             "purpose": stock_entry.purpose,
             "status": stock_entry.status,
         },
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -162,6 +163,7 @@ def stock_in_approve(
         table_name="stock_entry",
         record_id=str(stock_entry.id),
         new_value={"status": stock_entry.status},
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -271,6 +273,7 @@ def stock_issue_create(
             "purpose": stock_entry.purpose,
             "source_warehouse": str(warehouse.id),
         },
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -350,6 +353,7 @@ def stock_issue_approve(
         table_name="stock_entry",
         record_id=str(stock_entry.id),
         new_value={"status": stock_entry.status},
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -453,6 +457,7 @@ def stock_transfer_create(
             "source_warehouse": str(source_warehouse.id),
             "target_warehouse": str(target_warehouse.id),
         },
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -547,6 +552,7 @@ def stock_transfer_approve(
         table_name="stock_entry",
         record_id=str(stock_entry.id),
         new_value={"status": stock_entry.status},
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -680,6 +686,7 @@ def stock_entry_update(
         table_name="stock_entry",
         record_id=str(stock_entry.id),
         new_value={"remarks": remarks},
+        allowed_permissions=["inventory.view_log"],
     )
 
     return stock_entry
@@ -721,6 +728,7 @@ def stock_entry_cancel(
         table_name="stock_entry",
         record_id=str(stock_entry.id),
         new_value={"status": "cancelled"},
+        allowed_permissions=["inventory.view_log"],
     )
     return stock_entry
 
@@ -822,6 +830,7 @@ def stock_entry_reverse(
             "is_reversal": True,
             "original_entry_id": str(original_entry.id),
         },
+        allowed_permissions=["inventory.view_log"],
     )
 
     return reverse_entry
@@ -874,6 +883,7 @@ def stock_entry_delete(
             "status": stock_entry.status,
             "is_hard_deleted": True,
         },
+        allowed_permissions=["inventory.view_log"],
     )
 
     stock_entry.delete()

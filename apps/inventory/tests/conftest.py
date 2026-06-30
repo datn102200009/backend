@@ -5,7 +5,7 @@ Test configuration for inventory app.
 import pytest
 from rest_framework.test import APIClient
 
-from apps.inventory.tests.factories import PermissionFactory, RoleFactory, UserFactory
+from apps.inventory.tests.factories import PermissionFactory, UserFactory
 
 
 @pytest.fixture
@@ -35,18 +35,22 @@ def authenticated_api_client(api_client, warehouse_keeper_user):
 @pytest.fixture
 def admin_user():
     """Fixture để tạo user admin (có tất cả quyền)."""
-    role = RoleFactory(name="Admin")
-    # Tạo user với role admin
-    user = UserFactory(role=role, username="admin")
+    from apps.accounts.models import Permission, UserPermission
+
+    user = UserFactory(username="admin")
+    # Gán tất cả permissions
+    all_perms = Permission.objects.all()
+    user_perms = [UserPermission(user=user, permission=p) for p in all_perms]
+    UserPermission.objects.bulk_create(user_perms)
     return user
 
 
 @pytest.fixture
 def warehouse_keeper_user():
     """Fixture để tạo user thủ kho (có quyền quản lý kho)."""
-    from apps.accounts.models import RolePermission
+    from apps.accounts.models import UserPermission
 
-    role = RoleFactory(name="Thủ kho")
+    user = UserFactory(username="warehouse_keeper")
 
     # Tạo và gán các permissions
     permissions = [
@@ -61,20 +65,18 @@ def warehouse_keeper_user():
 
     for code in permissions:
         perm = PermissionFactory(code=code)
-        RolePermission.objects.get_or_create(role=role, permission=perm)
+        UserPermission.objects.get_or_create(user=user, permission=perm)
 
-    user = UserFactory(role=role, username="warehouse_keeper")
     return user
 
 
 @pytest.fixture
 def regular_user():
     """Fixture để tạo user thường (chỉ có quyền xem)."""
-    from apps.accounts.models import RolePermission
+    from apps.accounts.models import UserPermission
 
-    role = RoleFactory(name="Nhân viên")
+    user = UserFactory(username="regular_user")
     perm = PermissionFactory(code="inventory.view")
-    RolePermission.objects.get_or_create(role=role, permission=perm)
+    UserPermission.objects.get_or_create(user=user, permission=perm)
 
-    user = UserFactory(role=role, username="regular_user")
     return user

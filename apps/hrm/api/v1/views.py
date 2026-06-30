@@ -527,6 +527,7 @@ def leave_request_approve_view(request, pk):
                 "approved_by_id": str(user.id),
                 "approved_at": str(leave_request.approved_at),
             },
+            allowed_permissions=["hrm.view_log"],
         )
         updated_request = leave_request
 

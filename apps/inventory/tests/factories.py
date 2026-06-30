@@ -9,22 +9,17 @@ from decimal import Decimal
 
 import factory
 
-from apps.accounts.models import Permission, Role, RolePermission, User
+from apps.accounts.models import Permission, User
 from apps.crm.models import Customer
 from apps.inventory.models import StockEntry, StockEntryDetail, StockLedger
 from apps.master_data.models import BOM, UOM, BOMItem, Item, ItemGroup, Warehouse, WorkOrder
 from apps.procurement.models import Supplier
 
 
-class RoleFactory(factory.django.DjangoModelFactory):
-    """Factory để tạo Role."""
+class RoleFactory:
+    """Mock RoleFactory to avoid import errors in existing tests."""
 
-    class Meta:
-        model = Role
-        django_get_or_create = ("name",)
-
-    name = factory.Sequence(lambda n: f"Role-{n}")
-    description = factory.Faker("text")
+    pass
 
 
 class PermissionFactory(factory.django.DjangoModelFactory):
@@ -51,21 +46,13 @@ class UserFactory(factory.django.DjangoModelFactory):
 
     @classmethod
     def _create(cls, model_class, *args, **kwargs):
-        role_passed = "role" in kwargs
-        role = kwargs.pop("role", None)
-        if not role_passed:
-            import uuid
-
-            from apps.accounts.models import Role
-
-            role = Role.objects.create(name=f"Role-{uuid.uuid4().hex[:8]}")
+        permissions = kwargs.pop("permissions", None)
+        kwargs.pop("role", None)
         user = super()._create(model_class, *args, **kwargs)
-        user.role = role
-        if role:
-            from apps.accounts.models import RolePermission, UserPermission
+        if permissions:
+            from apps.accounts.models import UserPermission
 
-            role_perms = RolePermission.objects.filter(role=role)
-            user_perms = [UserPermission(user=user, permission=rp.permission) for rp in role_perms]
+            user_perms = [UserPermission(user=user, permission=p) for p in permissions]
             UserPermission.objects.bulk_create(user_perms)
         return user
 

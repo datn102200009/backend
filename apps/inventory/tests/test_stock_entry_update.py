@@ -4,12 +4,10 @@ import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.accounts.models import RolePermission
 from apps.common.xlib.exceptions import PermissionException
 from apps.inventory.services import stock_entry_update
 from apps.inventory.tests.factories import (
     PermissionFactory,
-    RoleFactory,
     StockEntryDetailFactory,
     StockEntryFactory,
     UserFactory,
@@ -23,26 +21,16 @@ class TestStockEntryUpdatePermissions:
 
     @pytest.fixture
     def setup_users(self):
-        # Tạo các vai trò
-        role_receipt = RoleFactory(name="Thủ kho Nhập")
-        role_issue = RoleFactory(name="Thủ kho Xuất")
-        role_transfer = RoleFactory(name="Thủ kho Chuyển")
-        role_none = RoleFactory(name="Nhân viên thường")
-
         # Gán quyền tương ứng
         perm_receipt = PermissionFactory(code="inventory.stock_in")
         perm_issue = PermissionFactory(code="inventory.stock_issue")
         perm_transfer = PermissionFactory(code="inventory.stock_transfer")
 
-        RolePermission.objects.create(role=role_receipt, permission=perm_receipt)
-        RolePermission.objects.create(role=role_issue, permission=perm_issue)
-        RolePermission.objects.create(role=role_transfer, permission=perm_transfer)
-
         # Tạo người dùng
-        user_receipt = UserFactory(role=role_receipt, username="user_receipt")
-        user_issue = UserFactory(role=role_issue, username="user_issue")
-        user_transfer = UserFactory(role=role_transfer, username="user_transfer")
-        user_none = UserFactory(role=role_none, username="user_none")
+        user_receipt = UserFactory(username="user_receipt", permissions=[perm_receipt])
+        user_issue = UserFactory(username="user_issue", permissions=[perm_issue])
+        user_transfer = UserFactory(username="user_transfer", permissions=[perm_transfer])
+        user_none = UserFactory(username="user_none")
 
         return {
             "receipt": user_receipt,

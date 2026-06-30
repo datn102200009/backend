@@ -60,60 +60,6 @@ class SalarySlip(BaseModel):
         return self.name
 
 
-class TaxReport(BaseModel):
-    """
-    Tax report tracking.
-    """
-
-    report_id = models.CharField(max_length=100, unique=True)
-    tax_type = models.CharField(
-        max_length=50,
-        choices=[
-            ("vat", "VAT"),
-            ("income_tax", "Income Tax"),
-            ("corporate_tax", "Corporate Tax"),
-            ("other", "Other"),
-        ],
-    )
-    period = models.CharField(max_length=10)  # Format: YYYY-MM or YYYY-Q1
-    total_revenue = models.DecimalField(max_digits=18, decimal_places=2)
-    tax_payable_amount = models.DecimalField(max_digits=18, decimal_places=2)
-    tax_paid_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
-    due_date = models.DateField(null=True, blank=True)
-    remarks = models.TextField(null=True, blank=True)
-
-    class Meta:
-        db_table = "tax_report"
-        verbose_name = "Tax Report"
-        verbose_name_plural = "Tax Reports"
-        unique_together = ("tax_type", "period")
-
-    def __str__(self):
-        return f"{self.tax_type} - {self.period}"
-
-
-class EnvironmentFeeLog(BaseModel):
-    """
-    Environmental fee tracking.
-    """
-
-    waste_water_volume = models.DecimalField(max_digits=15, decimal_places=2)
-    gas_emission_fee_fixed = models.DecimalField(max_digits=15, decimal_places=2)
-    variable_fee = models.DecimalField(max_digits=15, decimal_places=2)
-    period = models.CharField(max_length=10)  # Format: YYYY-MM
-    total_fee = models.DecimalField(max_digits=15, decimal_places=2)
-    remarks = models.TextField(null=True, blank=True)
-
-    class Meta:
-        db_table = "environment_fee_log"
-        verbose_name = "Environment Fee Log"
-        verbose_name_plural = "Environment Fee Logs"
-        unique_together = ("period",)
-
-    def __str__(self):
-        return f"Environment Fee - {self.period}"
-
-
 class CashFlowTransaction(BaseModel):
     """
     Cash flow transaction for tracking receipts and payments.

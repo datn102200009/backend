@@ -15,6 +15,7 @@ from .views import (
     CashFlowRejectAPIView,
     DepreciationLogListAPIView,
     DepreciationRunAPIView,
+    FinancePendingCreditApprovalsAPIView,
     FixedAssetDetailAPIView,
     FixedAssetListCreateAPIView,
     FixedAssetRequestDisposeAPIView,
@@ -57,4 +58,5 @@ urlpatterns = [
     path("salary-slips/<uuid:id>/approve/", SalarySlipApproveAPIView.as_view(), name="salary-slip-approve"),
     path("salary-slips/<uuid:id>/reject/", SalarySlipRejectAPIView.as_view(), name="salary-slip-reject"),
     path("salary-slips/<uuid:id>/pay/", SalarySlipPayAPIView.as_view(), name="salary-slip-pay"),
+    path("pending-credit-approvals/", FinancePendingCreditApprovalsAPIView.as_view(), name="pending-credit-approvals"),
 ]

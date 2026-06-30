@@ -79,6 +79,7 @@ def sales_order_create(
         table_name="sales_order",
         record_id=str(order.id),
         new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
+        allowed_permissions=["sales.view_log"],
     )
 
     return order
@@ -161,6 +162,7 @@ def sales_order_update(
         table_name="sales_order",
         record_id=str(order.id),
         new_value={"status": order.status, "total": str(total_amount), "advance_paid_amount": str(advance_paid_amount)},
+        allowed_permissions=["sales.view_log"],
     )
 
     return order
@@ -189,7 +191,12 @@ def sales_order_delete(*, user: User, order_id: str) -> None:
     order.delete()
 
     create_system_log(
-        user=user, action="delete", table_name="sales_order", record_id=order_id_str, new_value={"status": "deleted"}
+        user=user,
+        action="delete",
+        table_name="sales_order",
+        record_id=order_id_str,
+        new_value={"status": "deleted"},
+        allowed_permissions=["sales.view_log"],
     )
 
 
@@ -339,6 +346,7 @@ def sales_order_approve(*, user: User, order_id: str, due_date=None) -> SalesOrd
             table_name="sales_order",
             record_id=str(order.id),
             new_value={"status": order.status, "message": f"Bị khóa tín dụng công nợ: {credit_block_reason}"},
+            allowed_permissions=["sales.view_log"],
         )
         return order
 
@@ -422,6 +430,7 @@ def sales_order_approve(*, user: User, order_id: str, due_date=None) -> SalesOrd
         table_name="sales_order",
         record_id=str(order.id),
         new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": str(stock_entry.id)},
+        allowed_permissions=["sales.view_log"],
     )
 
     return order
@@ -433,7 +442,7 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
     CFO/Admin duyệt đặc cách đơn hàng bị khóa tín dụng.
     Chuyển sang PENDING và tự động sinh StockEntry, SalesInvoice.
     """
-    PermissionChecker.check_permission(user, "sales.approve_credit_bypass")
+    PermissionChecker.check_permission(user, "finance.approve_credit_bypass")
 
     order = SalesOrder.objects.select_for_update().filter(id=order_id).first()
     if not order:
@@ -511,6 +520,7 @@ def approve_credit_bypass(*, user: User, order_id: str) -> SalesOrder:
         table_name="sales_order",
         record_id=str(order.id),
         new_value={"status": order.status, "invoice_id": str(invoice.id), "stock_entry_id": str(stock_entry.id)},
+        allowed_permissions=["sales.view_log"],
     )
 
     return order
@@ -589,6 +599,7 @@ def sales_order_cancel(*, user: User, order_id: str) -> SalesOrder:
         table_name="sales_order",
         record_id=str(order.id),
         new_value={"status": order.status},
+        allowed_permissions=["sales.view_log"],
     )
 
     return order

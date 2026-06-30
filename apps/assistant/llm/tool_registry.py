@@ -28,6 +28,7 @@ from apps.assistant.llm.tool_handlers import (
     list_sales_orders_handler,
     list_stock_entries_handler,
     list_suppliers_handler,
+    list_system_logs_handler,
     list_work_orders_handler,
     search_employees_handler,
     search_items_handler,
@@ -294,8 +295,8 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
     ),
     "get_document_detail": ToolDefinition(
         name="get_document_detail",
-        description="Lấy chi tiết đầy đủ thông tin của một tài liệu hoặc thực thể trong hệ thống (đơn mua/bán hàng, phiếu kho, hóa đơn, sản phẩm, nhân viên...) theo ID.",
-        required_permission="assistant.chat",
+        description="Lấy chi tiết đầy đủ thông tin của một tài liệu hoặc thực thể trong hệ thống (đơn mua/bán hàng, phiếu kho, hóa đơn, sản phẩm, nhân viên, nhật ký hoạt động...) theo ID.",
+        required_permission="common.use_chatbot",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -316,6 +317,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
                         "work_order",
                         "bom",
                         "leave_request",
+                        "system_log",
                     ],
                     "description": "Tên loại đối tượng cần lấy chi tiết",
                 },
@@ -331,7 +333,7 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
     "get_business_workflow": ToolDefinition(
         name="get_business_workflow",
         description="Lấy tài liệu hướng dẫn quy trình nghiệp vụ (workflow) và thao tác giao diện thực tế của hệ thống ERP Xuân Hòa.",
-        required_permission="assistant.chat",
+        required_permission="common.use_chatbot",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -351,6 +353,35 @@ TOOL_REGISTRY: dict[str, ToolDefinition] = {
             "required": ["topic"],
         },
         handler=get_business_workflow_handler,
+    ),
+    "list_system_logs": ToolDefinition(
+        name="list_system_logs",
+        description="Liệt kê nhật ký hoạt động hệ thống (system logs). Hỗ trợ tìm kiếm theo từ khoá (mã đơn hàng, tên người thực hiện...), lọc theo khoảng ngày, lọc theo hành động.",
+        required_permission="common.use_chatbot",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "search": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "Từ khoá tìm kiếm (ví dụ: tên người thực hiện, mã đơn hàng, UUID, hành động...)",
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Lọc theo hành động (ví dụ: create, update, delete, approve...)",
+                },
+                "start_date": {"type": "string", "format": "date", "description": "Ngày bắt đầu lọc (YYYY-MM-DD)"},
+                "end_date": {"type": "string", "format": "date", "description": "Ngày kết thúc lọc (YYYY-MM-DD)"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 20,
+                    "description": "Số lượng bản ghi tối đa trả về",
+                },
+            },
+        },
+        handler=list_system_logs_handler,
     ),
 }
 

@@ -7,13 +7,12 @@ from decimal import Decimal
 
 import pytest
 
-from apps.accounts.models import Permission, RolePermission
+from apps.accounts.models import Permission, UserPermission
 from apps.common.xlib.exceptions import NotFoundException, PermissionException, ValidationException
 from apps.inventory.services import stock_in_approve, stock_in_create
 from apps.inventory.tests.factories import (
     ItemFactory,
     PermissionFactory,
-    RoleFactory,
     StockEntryDetailFactory,
     StockEntryFactory,
     UserFactory,
@@ -64,7 +63,7 @@ class TestStockInCreate:
         """Test tạo phiếu nhập kho mà không có quyền."""
         warehouse = setup_data["warehouse"]
         item = setup_data["item"]
-        user = UserFactory(role=RoleFactory())  # Không có quyền
+        user = UserFactory()  # Không có quyền
 
         # Test
         with pytest.raises(PermissionException):
@@ -202,7 +201,7 @@ class TestStockInApprove:
     def test_stock_in_approve_no_permission(self, setup_stock_entry):
         """Test phê duyệt phiếu nhập kho mà không có quyền."""
         stock_entry = setup_stock_entry
-        user = UserFactory(role=RoleFactory())  # Không có quyền
+        user = UserFactory()  # Không có quyền
 
         # Test
         with pytest.raises(PermissionException):
@@ -252,7 +251,7 @@ class TestStockInApprove:
         )
 
         user = warehouse_keeper_user
-        from apps.accounts.models import RolePermission
+        from apps.accounts.models import UserPermission
         from apps.inventory.tests.factories import PermissionFactory
 
         for p in [
@@ -262,7 +261,7 @@ class TestStockInApprove:
             "purchasing.allocate_landed_cost",
         ]:
             perm = PermissionFactory(code=p)
-            RolePermission.objects.get_or_create(role=user.role, permission=perm)
+            UserPermission.objects.get_or_create(user=user, permission=perm)
 
         warehouse = WarehouseFactory()
         item = ItemFactory()

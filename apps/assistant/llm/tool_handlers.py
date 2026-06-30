@@ -419,6 +419,7 @@ MODEL_MAPPING = {
     "work_order": ("master_data", "WorkOrder", "manufacturing.work_order_view"),
     "bom": ("master_data", "BOM", "manufacturing.bom_view"),
     "leave_request": ("hrm", "LeaveRequest", "hrm.view_leaverequest"),
+    "system_log": ("accounts", "SystemLog", "common.use_chatbot"),
 }
 
 
@@ -433,7 +434,7 @@ def serialize_model_instance(instance) -> dict:
         value = getattr(instance, field_name)
         if value is None:
             data[field_name] = None
-        elif isinstance(value, (int, float, bool, str)):
+        elif isinstance(value, (int, float, bool, str, dict, list)):
             data[field_name] = value
         elif isinstance(value, Decimal):
             data[field_name] = str(value)
@@ -549,6 +550,17 @@ def get_document_detail_handler(args, user):
     except Exception:
         raise NotFoundException(f"Không tìm thấy '{model_name}' với mã/ID '{document_id}'")
 
+    # Dynamic permission checks for system log detail view
+    if model_name == "system_log":
+        from apps.accounts.selectors import get_user_permissions
+
+        user_perms = get_user_permissions(user)
+        is_admin = "accounts.view_system_log" in user_perms
+        if not is_admin:
+            allowed = instance.allowed_permissions or []
+            if not any(p in user_perms for p in allowed):
+                raise PermissionException("Bạn không có quyền xem chi tiết log này.")
+
     return serialize_model_instance(instance)
 
 
@@ -580,3 +592,26 @@ def get_business_workflow_handler(args, user):
         return {"topic": topic, "content": content}
     except Exception as e:
         raise ValidationException(f"Không thể đọc tài liệu: {str(e)}")
+
+
+def list_system_logs_handler(args, user):
+    start_date = args.get("start_date")
+    end_date = args.get("end_date")
+    action = args.get("action")
+    search = args.get("search")
+    limit = min(int(args.get("limit", 20)), 50)
+
+    from apps.accounts.selectors import system_log_list
+
+    qs = system_log_list(
+        user=user,
+        start_date=start_date,
+        end_date=end_date,
+        action=action,
+        search=search,
+    )
+
+    from apps.accounts.api.v1.serializers import SystemLogListSerializer
+
+    serializer = SystemLogListSerializer(qs[:limit], many=True)
+    return {"count": min(qs.count(), limit), "logs": serializer.data}

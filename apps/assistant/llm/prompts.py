@@ -5,11 +5,7 @@ def build_system_prompt(user, enabled_tools: list[dict]) -> str:
     """Server-side system prompt. KHÔNG nhận input từ client."""
     # Đảm bảo _perm_cache được khởi tạo giống như PermissionChecker
     if not hasattr(user, "_perm_cache"):
-        direct_perms = set(user.direct_permissions.values_list("permission__code", flat=True))
-        if hasattr(user, "role") and user.role:
-            role_perms = set(user.role.permissions.values_list("permission__code", flat=True))
-            direct_perms.update(role_perms)
-        user._perm_cache = direct_perms
+        user._perm_cache = set(user.direct_permissions.values_list("permission__code", flat=True))
 
     user_perm_count = len(user._perm_cache)
     tool_list = "\n".join(f"- **{t['function']['name']}**: {t['function']['description']}" for t in enabled_tools)
